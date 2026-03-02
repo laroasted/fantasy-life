@@ -1,19 +1,267 @@
 <!DOCTYPE html>
-<html>
-<head><title>Fantasy Life</title></head>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fantasy Life</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:linear-gradient(135deg,#0f172a,#1e293b,#0f172a);min-height:100vh;color:#e2e8f0;font-family:'Inter',system-ui,-apple-system,sans-serif}
+.header{padding:24px 16px 12px;text-align:center;border-bottom:1px solid rgba(148,163,184,.1)}
+.est{font-size:11px;letter-spacing:4px;color:#64748b;text-transform:uppercase;margin-bottom:4px}
+h1{font-size:28px;font-weight:800;background:linear-gradient(135deg,#f8fafc,#94a3b8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.season{font-size:13px;color:#64748b;margin-top:4px}
+.updated{font-size:10px;color:#475569;margin-top:4px}
+.tabs{display:flex;gap:4px;padding:12px 16px;justify-content:center}
+.tab{padding:8px 20px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;text-transform:capitalize;background:transparent;color:#64748b;transition:all .2s}
+.tab.active{background:rgba(99,102,241,.2);color:#a5b4fc}
+.refresh{padding:8px 14px;border-radius:8px;border:1px solid rgba(99,102,241,.3);cursor:pointer;font-size:12px;font-weight:600;background:transparent;color:#a5b4fc}
+.container{padding:0 12px 24px;max-width:700px;margin:0 auto}
+.pills{display:flex;flex-wrap:wrap;gap:6px;padding:8px 4px 16px;justify-content:center}
+.pill{padding:4px 10px;border-radius:12px;border:1px solid rgba(100,116,139,.2);font-size:11px;cursor:pointer;background:transparent;color:#64748b;transition:all .2s}
+.pill.active{background:rgba(99,102,241,.2);border-color:rgba(99,102,241,.4);color:#a5b4fc}
+.card{margin-bottom:6px;border-radius:12px;cursor:pointer;border:1px solid rgba(51,65,85,.3);transition:all .2s;overflow:hidden}
+.card.r0{background:linear-gradient(135deg,rgba(234,179,8,.08),rgba(15,23,42,.3));border-color:rgba(234,179,8,.2)}
+.card.r1{background:linear-gradient(135deg,rgba(203,213,225,.06),rgba(15,23,42,.3));border-color:rgba(203,213,225,.15)}
+.card.r2{background:linear-gradient(135deg,rgba(180,83,9,.06),rgba(15,23,42,.3));border-color:rgba(180,83,9,.15)}
+.card-row{padding:12px 16px;display:flex;align-items:center;gap:12px}
+.rank{width:28px;text-align:center;font-weight:700;color:#64748b;font-size:14px}
+.rank.medal{font-size:18px}
+.info{flex:1}
+.name-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.name{font-weight:700;font-size:15px;color:#f1f5f9}
+.pts{font-weight:800;font-size:18px;color:#e2e8f0}
+.pts.gold{color:#fbbf24}
+.pts-label{font-size:11px;font-weight:400;color:#64748b}
+.bar-bg{height:4px;border-radius:2px;background:rgba(51,65,85,.4);overflow:hidden}
+.bar{height:100%;border-radius:2px;transition:width .5s ease}
+.bar.gold{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+.bar.blue{background:linear-gradient(90deg,#6366f1,#818cf8)}
+.arrow{font-size:12px;color:#475569;transition:transform .2s}
+.arrow.open{transform:rotate(180deg)}
+.detail{padding:0 16px 14px;border-top:1px solid rgba(51,65,85,.3)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;padding-top:12px}
+.cell{padding:8px 10px;border-radius:8px;background:rgba(15,23,42,.4);border:1px solid rgba(51,65,85,.2)}
+.cell.lead{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.2)}
+.cell-cat{font-size:10px;color:#64748b;margin-bottom:2px}
+.cell-pick{font-size:12px;font-weight:600;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell-metric{font-size:9px;color:#94a3b8}
+.cell-pts{font-size:14px;font-weight:800;color:#a5b4fc}
+.cell-pts.lead{color:#4ade80}
+.cat-section{margin-bottom:16px}
+.cat-header{display:flex;align-items:center;gap:8px;padding:8px 4px;margin-bottom:4px}
+.cat-icon{font-size:20px}
+.cat-name{font-size:16px;font-weight:700;color:#f1f5f9}
+.cat-desc{font-size:10px;color:#64748b;margin-left:auto;max-width:180px;text-align:right}
+.cat-list{border-radius:12px;border:1px solid rgba(51,65,85,.3);background:rgba(15,23,42,.3);overflow:hidden}
+.cat-row{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;border-bottom:1px solid rgba(51,65,85,.2)}
+.cat-row:last-child{border-bottom:none}
+.cat-row.first{background:rgba(234,179,8,.05)}
+.cat-rank{width:20px;font-size:12px;font-weight:700;color:#64748b;text-align:center}
+.cat-rank.first{color:#fbbf24}
+.cat-member{width:55px;font-size:12px;font-weight:600;color:#e2e8f0}
+.cat-info{flex:1}
+.cat-pick{font-size:11px;color:#94a3b8;margin-bottom:3px}
+.cat-bar{height:3px;border-radius:2px;background:rgba(51,65,85,.4)}
+.cat-pts{font-size:13px;font-weight:700;color:#a5b4fc;min-width:28px;text-align:right}
+.cat-pts.first{color:#fbbf24}
+.cat-detail{padding:0 14px 12px 46px;background:rgba(15,23,42,.4)}
+.cat-detail-scores{display:flex;gap:16px;margin-bottom:8px;padding-top:8px}
+.cat-detail-item{text-align:center}
+.cat-detail-label{font-size:10px;color:#64748b;margin-bottom:2px}
+.cat-detail-val{font-size:16px;font-weight:700}
+.bonus-earned{font-size:11px;color:#94a3b8;padding:6px 10px;border-radius:6px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.12);margin-bottom:6px}
+.bonus-none{font-size:11px;color:#475569;font-style:italic;margin-bottom:6px}
+.bonus-rules{font-size:10px;color:#64748b;padding:6px 10px;border-radius:6px;background:rgba(51,65,85,.15);border:1px solid rgba(51,65,85,.2)}
+.bonus-rules b{color:#94a3b8}
+.footer{text-align:center;padding:16px;border-top:1px solid rgba(51,65,85,.2);font-size:11px;color:#475569}
+.loading{text-align:center;padding:60px 20px;color:#64748b;font-size:14px}
+.hidden{display:none}
+</style>
+</head>
 <body>
-  <h1>Fantasy Life Scoreboard</h1>
-  <p>Loading scores...</p>
-  <pre id="scores"></pre>
-  <script>
-    fetch('/api/scores')
-      .then(r => r.json())
-      .then(d => {
-        document.getElementById('scores').textContent = JSON.stringify(d, null, 2);
-      })
-      .catch(e => {
-        document.getElementById('scores').textContent = 'Error: ' + e.message;
-      });
-  </script>
+
+<div class="header">
+ <div class="est">Est. 2013</div>
+ <h1>FANTASY LIFE</h1>
+ <div class="season">Season: Mar 15, 2025 — Mar 14, 2026</div>
+ <div class="updated" id="updatedAt"></div>
+</div>
+
+<div class="tabs">
+ <button class="tab active" onclick="setView('standings')">Standings</button>
+ <button class="tab" onclick="setView('categories')">Categories</button>
+ <button class="refresh" onclick="loadData()">↻ Refresh</button>
+</div>
+
+<div class="container" id="standings-view">
+ <div class="pills" id="pills"></div>
+ <div id="standings-list"><div class="loading">Loading scores...</div></div>
+</div>
+
+<div class="container hidden" id="categories-view">
+ <div id="categories-list"></div>
+</div>
+
+<div class="footer">Fantasy Life • Est. 2013</div>
+
+<script>
+const IC={NFL:" ",NBA:" ",MLB:" ",NHL:" ",NCAAF:" ",NCAABB:" ",MLS:" ",F1:" ",Tennis:" ",Golf:" ",Musician:" ",Actor:" ",Actress:" ",Country:" ",Stock:" "};
+const CATS=["NFL","NBA","MLB","NHL","NCAAF","NCAABB","MLS","F1","Tennis","Golf","Musician","Actor","Actress","Country","Stock"];
+const BONUS_NOTES={NFL:"10:Win SB | 7:Lose SB | 5:Lose Conf | 3:Lose Rd2 | 2:Lose WC",NBA:"10:Win Finals | 7:Lose Finals | 5:Lose Conf | 3:Lose Rd2 | 2:Lose Rd1",MLB:"10:Win WS | 7:Lose WS | 5:Lose LCS | 3:Lose LDS | 2:Lose PI",NHL:"10:Win Cup | 7:Lose Cup | 5:Lose SF | 3:Lose Rd2 | 2:Lose Rd1",NCAAF:"10:Win NC | 7:Lose NC | 5:Lose SF | 3:Win BCS | 2:Lose BCS",NCAABB:"10:Win NC | 7:Lose NC | 5:Lose F4 | 3:Lose E8 | 2:Lose S16",MLS:"10:Win Cup | 7:Lose Final | 5:Lose SF | 3:Lose QF",F1:"3:Win Major GP | 2:2nd | 1:3rd",Tennis:"5:Win Major | 3:Lose Final | 2:Lose SF",Golf:"5:Win Major | 3:Runner-up | 2:Top 10",Musician:"7:Best Song/Album | 3:Pop/Rock/Rap Win | 1:Nom",Actor:"10:Best Actor | 7:Supporting | 3:Nom | 2:Supp Nom",Actress:"10:Best Actress | 7:Supporting | 3:Nom | 2:Supp Nom",Country:"Olympic: 10/7/5/3/2 for 1st-5th",Stock:"None"};
+
+let data=null, view="standings", sortCat=null, expanded=null, expandedCat={};
+
+async function loadData(){
+ document.getElementById("standings-list").innerHTML='<div class="loading">Loading scores...</div>';
+ try{
+  const r=await fetch("/api/scores");
+  data=await r.json();
+  document.getElementById("updatedAt").textContent=data.updatedAt?"Updated "+new Date(data.updatedAt).toLocaleString():"";
+  render();
+ }catch(e){
+  document.getElementById("standings-list").innerHTML='<div class="loading">Error loading scores: '+e.message+'</div>';
+ }
+}
+
+function setView(v){
+ view=v;
+ document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.textContent.toLowerCase()===v));
+ document.getElementById("standings-view").classList.toggle("hidden",v!=="standings");
+ document.getElementById("categories-view").classList.toggle("hidden",v!=="categories");
+ sortCat=null;
+ render();
+}
+
+function medal(i){return i===0?" ":i===1?" ":i===2?" ":null}
+function barW(v,mx){return Math.max(8,(v/mx)*100)}
+
+function render(){
+ if(!data||!data.scores) return;
+ if(view==="standings") renderStandings();
+ else renderCategories();
+}
+
+function renderStandings(){
+ const scores=data.scores;
+ let members=Object.entries(scores).map(([name,d])=>({name,total:d.total,cats:d.categories}));
+
+ if(sortCat){
+  members.sort((a,b)=>(b.cats[sortCat]?.total||0)-(a.cats[sortCat]?.total||0));
+ }else{
+  members.sort((a,b)=>b.total-a.total);
+ }
+
+ // Pills
+ let pillsHtml='<button class="pill'+(sortCat?'':' active')+'" onclick="sortCat=null;render()">Total</button>';
+ CATS.forEach(c=>{pillsHtml+='<button class="pill'+(sortCat===c?' active':'')+'" onclick="sortCat=\''+c+'\';render()">'+IC[c]+'</button>';});
+ document.getElementById("pills").innerHTML=pillsHtml;
+
+ const mx=sortCat?(members[0]?.cats[sortCat]?.total||1):(members[0]?.total||1);
+ let html="";
+
+ members.forEach((p,i)=>{
+  const sv=sortCat?(p.cats[sortCat]?.total||0):p.total;
+  const m=medal(i);
+  const isExp=expanded===p.name;
+  const rc=i<3?"r"+i:"";
+  const barCls=i===0?"gold":"blue";
+
+  html+='<div class="card '+rc+'" onclick="expanded=expanded===\''+p.name+'\'?null:\''+p.name+'\';render()">';
+  html+='<div class="card-row">';
+  html+='<div class="rank'+(m?' medal':'')+'">'+(m||i+1)+'</div>';
+  html+='<div class="info">';
+  html+='<div class="name-row"><span class="name">'+p.name+'</span><span class="pts'+(i===0?' gold':'')+'">'+sv+' <span class="pts-label">'+(sortCat?"pts":"total")+'</span></span></div>';
+  html+='<div class="bar-bg"><div class="bar '+barCls+'" style="width:'+barW(sv,mx)+'%"></div></div>';
+
+  if(sortCat&&p.cats[sortCat]){
+   html+='<div style="font-size:11px;color:#94a3b8;margin-top:4px">'+IC[sortCat]+' '+p.cats[sortCat].pick;
+   if(p.cats[sortCat].record) html+=' ('+p.cats[sortCat].record+')';
+   if(p.cats[sortCat].metric) html+=' • '+p.cats[sortCat].metric;
+   html+='</div>';
+  }
+
+  html+='</div>';
+  html+='<div class="arrow'+(isExp?' open':'')+'">▼</div>';
+  html+='</div>';
+
+  if(isExp){
+   html+='<div class="detail"><div class="grid">';
+   CATS.forEach(cat=>{
+    const d=p.cats[cat];
+    if(!d) return;
+    // Check if leading
+    const allInCat=Object.entries(scores).map(([n,s])=>({n,t:s.categories[cat]?.total||0})).sort((a,b)=>b.t-a.t);
+    const isLead=allInCat[0]?.n===p.name&&allInCat[0]?.t>0;
+    html+='<div class="cell'+(isLead?' lead':'')+'">';
+    html+='<div class="cell-cat">'+IC[cat]+' '+cat+'</div>';
+    html+='<div class="cell-pick">'+d.pick+'</div>';
+    if(d.metric) html+='<div class="cell-metric">'+d.metric+'</div>';
+    html+='<div class="cell-pts'+(isLead?' lead':'')+'">'+d.total+' pts</div>';
+    html+='</div>';
+   });
+   html+='</div></div>';
+  }
+  html+='</div>';
+ });
+
+ document.getElementById("standings-list").innerHTML=html;
+}
+
+function renderCategories(){
+ const scores=data.scores;
+ let html="";
+
+ CATS.forEach(cat=>{
+  let ranks=Object.entries(scores).map(([name,d])=>{
+   const c=d.categories[cat];
+   return{name,pick:c?.pick||"—",total:c?.total||0,baseline:c?.baseline||0,bonus:c?.bonus||0,metric:c?.metric||"",record:c?.record||""};
+  }).sort((a,b)=>b.total-a.total);
+
+  const mx=ranks[0]?.total||1;
+
+  html+='<div class="cat-section">';
+  html+='<div class="cat-header"><span class="cat-icon">'+IC[cat]+'</span><span class="cat-name">'+cat+'</span></div>';
+  html+='<div class="cat-list">';
+
+  ranks.forEach((r,i)=>{
+   const key=cat+"-"+r.name;
+   const isExp=expandedCat[key];
+   const barCls=i===0?"gold":"blue";
+
+   html+='<div>';
+   html+='<div class="cat-row'+(i===0?' first':'')+'" onclick="expandedCat[\''+key+'\']=!expandedCat[\''+key+'\'];render()">';
+   html+='<span class="cat-rank'+(i===0?' first':'')+'">'+(i+1)+'</span>';
+   html+='<span class="cat-member">'+r.name+'</span>';
+   html+='<div class="cat-info"><div class="cat-pick">'+r.pick+(r.record?' ('+r.record+')':'')+(r.metric?' • '+r.metric:'')+'</div>';
+   html+='<div class="cat-bar"><div class="bar '+barCls+'" style="width:'+barW(r.total,mx)+'%"></div></div></div>';
+   html+='<span class="cat-pts'+(i===0?' first':'')+'">'+r.total+'</span>';
+   html+='<div class="arrow'+(isExp?' open':'')+'" style="font-size:10px;color:#475569;margin-left:2px">▼</div>';
+   html+='</div>';
+
+   if(isExp){
+    html+='<div class="cat-detail">';
+    html+='<div class="cat-detail-scores">';
+    html+='<div class="cat-detail-item"><div class="cat-detail-label">Baseline</div><div class="cat-detail-val" style="color:#818cf8">'+r.baseline+'</div></div>';
+    html+='<div class="cat-detail-item"><div class="cat-detail-label">Bonus</div><div class="cat-detail-val" style="color:'+(r.bonus>0?'#4ade80':'#475569')+'">'+r.bonus+'</div></div>';
+    html+='<div class="cat-detail-item"><div class="cat-detail-label">Total</div><div class="cat-detail-val" style="color:#f1f5f9;font-weight:800">'+r.total+'</div></div>';
+    if(r.metric) html+='<div class="cat-detail-item"><div class="cat-detail-label">Metric</div><div class="cat-detail-val" style="color:#94a3b8;font-size:14px">'+r.metric+'</div></div>';
+    html+='</div>';
+    html+='<div class="bonus-none">No bonus points earned yet</div>';
+    html+='<div class="bonus-rules"><b>Bonus rules:</b> '+(BONUS_NOTES[cat]||"")+'</div>';
+    html+='</div>';
+   }
+   html+='</div>';
+  });
+
+  html+='</div></div>';
+ });
+
+ document.getElementById("categories-list").innerHTML=html;
+}
+
+// Load on page load
+loadData();
+</script>
 </body>
 </html>
