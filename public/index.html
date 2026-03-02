@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><title>Fantasy Life</title></head>
+<body>
+  <h1>Fantasy Life Scoreboard</h1>
+  <p>Loading scores...</p>
+  <pre id="scores"></pre>
+  <script>
+    fetch('/api/scores')
+      .then(r => r.json())
+      .then(d => {
+        document.getElementById('scores').textContent = JSON.stringify(d, null, 2);
+      })
+      .catch(e => {
+        document.getElementById('scores').textContent = 'Error: ' + e.message;
+      });
+  </script>
+</body>
+</html>
