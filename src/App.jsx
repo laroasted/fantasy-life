@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
-import { storageGet, storageSet, STORAGE_KEYS } from "./utils/storage";
+import { storageGet, storageSet, STORAGE_KEYS, fetchSeasonFromSupabase } from "./utils/storage";
 import Scoreboard from "./components/Scoreboard";
 import SeasonHistory from "./components/SeasonHistory";
 import DraftTool from "./components/DraftTool";
@@ -19,35 +19,69 @@ export default function App() {
   const [activeSeason, setActiveSeason] = useState(null);
   const [archivedSeasons, setArchivedSeasons] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [dataSource, setDataSource] = useState("loading"); // "supabase" | "local" | "hardcoded"
 
-  // Load season data from storage on mount
-  useEffect(() => {
-    (async () => {
-      let active = null;
-      let archived = [];
+  // Fetch season data — tries Supabase first, falls back to localStorage, then hardcoded
+  const loadSeason = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) setRefreshing(true);
 
+    // Try Supabase first
+    let active = await fetchSeasonFromSupabase(2025);
+    let source = "supabase";
+
+    if (!active) {
+      // Fall back to localStorage
+      console.warn("Supabase fetch failed, trying localStorage...");
       try {
         const r = await storageGet(STORAGE_KEYS.ACTIVE_SEASON);
-        if (r && r.value) active = JSON.parse(r.value);
+        if (r && r.value) {
+          active = JSON.parse(r.value);
+          source = "local";
+        }
       } catch (e) {
-        console.error("Failed to load active season:", e);
+        console.error("Failed to load from localStorage:", e);
       }
+    }
 
-      // Fall back to hardcoded 2025 data
-      if (!active) active = build2025();
+    // Fall back to hardcoded data
+    if (!active) {
+      console.warn("No stored data, using hardcoded build2025()...");
+      active = build2025();
+      source = "hardcoded";
+    }
 
+    setActiveSeason(active);
+    setDataSource(source);
+    setLastUpdated(new Date());
+    if (showRefreshing) setRefreshing(false);
+
+    return active;
+  }, []);
+
+  // Load on mount
+  useEffect(() => {
+    (async () => {
+      await loadSeason();
+
+      // Load archived seasons from localStorage
+      let archived = [];
       try {
         const r2 = await storageGet(STORAGE_KEYS.ARCHIVED_SEASONS);
         if (r2 && r2.value) archived = JSON.parse(r2.value);
       } catch (e) {
         console.error("Failed to load archived seasons:", e);
       }
-
-      setActiveSeason(active);
       setArchivedSeasons(archived);
       setLoaded(true);
     })();
-  }, []);
+  }, [loadSeason]);
+
+  // Refresh handler — re-fetches from Supabase
+  const handleRefresh = useCallback(async () => {
+    await loadSeason(true);
+  }, [loadSeason]);
 
   // Finalize a draft: archive current season, set new one
   const handleFinalize = useCallback(
@@ -72,7 +106,7 @@ export default function App() {
     [activeSeason, archivedSeasons]
   );
 
-  // Save settings edits (scores, picks) to storage
+  // Save settings edits to storage
   const handleSettingsSave = useCallback(async (updatedSeason) => {
     setActiveSeason(updatedSeason);
     try {
@@ -87,10 +121,23 @@ export default function App() {
     return (
       <div style={{
         background: theme.bg, minHeight: "100vh",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        color: theme.dim, fontFamily: "system-ui",
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        color: theme.dim, fontFamily: "system-ui", gap: 12,
       }}>
-        Loading...
+        <div style={{ fontSize: 32 }}>🏆</div>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>Loading scores...</div>
+        <div style={{
+          width: 120, height: 3, borderRadius: 2,
+          background: "#1e293b", overflow: "hidden",
+        }}>
+          <div style={{
+            width: "40%", height: "100%", borderRadius: 2,
+            background: "#3b82f6",
+            animation: "pulse 1.5s ease-in-out infinite",
+          }} />
+        </div>
+        <style>{`@keyframes pulse { 0%,100% { opacity: 0.4; transform: translateX(-20px); } 50% { opacity: 1; transform: translateX(80px); } }`}</style>
       </div>
     );
   }
@@ -99,7 +146,7 @@ export default function App() {
     ? new Date(activeSeason.draftDate).toLocaleDateString("en-US", {
         month: "long", day: "numeric", year: "numeric",
       })
-    : "March 1, 2025";
+    : "March 15, 2025";
   const year = activeSeason?.year || 2025;
   const memberCount = activeSeason?.memberCount || 11;
 
@@ -118,7 +165,7 @@ export default function App() {
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
             <span style={{ fontSize: 32 }}>🏆</span>
-            <div>
+            <div style={{ flex: 1 }}>
               <h1 style={{
                 fontSize: 22, fontWeight: 800, margin: 0,
                 background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
@@ -131,6 +178,27 @@ export default function App() {
                 {memberCount} Members · 15 Categories · Snake Draft
               </p>
             </div>
+            {/* Refresh button */}
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              style={{
+                background: "none", border: `1px solid ${theme.bdr}`,
+                borderRadius: 8, padding: "6px 12px",
+                color: refreshing ? theme.dim : theme.mut,
+                fontSize: 12, cursor: refreshing ? "default" : "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+                opacity: refreshing ? 0.6 : 1,
+                transition: "opacity 0.2s",
+              }}
+            >
+              <span style={{
+                display: "inline-block",
+                animation: refreshing ? "spin 1s linear infinite" : "none",
+              }}>↻</span>
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
+            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
           </div>
 
           <div style={{ display: "flex", gap: 0 }}>
@@ -161,6 +229,13 @@ export default function App() {
               <p style={{ fontSize: 12, color: theme.dim, margin: "4px 0 0" }}>
                 {draftDateStr} through {year + 1} Academy Awards · {memberCount} members
               </p>
+              {/* Data source indicator */}
+              {lastUpdated && (
+                <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6 }}>
+                  {dataSource === "supabase" ? "🟢 Live" : dataSource === "local" ? "🟡 Cached" : "🔴 Offline"}{" "}
+                  · Updated {lastUpdated.toLocaleTimeString()}
+                </p>
+              )}
             </div>
             <Scoreboard seasonData={activeSeason} />
           </div>
