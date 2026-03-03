@@ -30,9 +30,9 @@ export function generateSnakeOrder(members, totalRounds) {
 * @returns {string} Medal emoji or rank number
 */
 export function medalDisplay(index) {
- if (index === 0) return " ";
- if (index === 1) return " ";
- if (index === 2) return " ";
+ if (index === 0) return "🥇";
+ if (index === 1) return "🥈";
+ if (index === 2) return "🥉";
  return `${index + 1}`;
 }
 
