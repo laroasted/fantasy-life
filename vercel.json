@@ -10,6 +10,10 @@
     {
       "path": "/api/cron/update-stocks",
       "schedule": "0 2 * * 1-5"
+    },
+    {
+      "path": "/api/cron/update-sports",
+      "schedule": "0 6 * * *"
     }
   ]
 }
