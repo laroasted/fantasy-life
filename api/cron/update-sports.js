@@ -54,7 +54,7 @@ const ESPN_LEAGUES = {
   metric: 'points',
   metricType: 'points',
   recordType: 'pts',
-  activeMonths: [3, 4, 5, 6, 7, 8, 9, 10], // Mar–Oct
+  activeMonths: [4, 5, 6, 7, 8, 9, 10],  // Apr–Oct (skip March to avoid early-season noise)
  },
 };
 
