@@ -18,30 +18,36 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.s
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 // ESPN API endpoints for standings
+// activeMonths: months (1-12) when the regular season is active and scores should update.
+// Outside these months, the league is frozen and the cron skips it.
 const ESPN_LEAGUES = {
  NBA: {
   url: 'https://site.api.espn.com/apis/v2/sports/basketball/nba/standings',
-  metric: 'winPercent',   // we want win %
-  metricType: 'winpct',   // how to extract it
+  metric: 'winPercent',
+  metricType: 'winpct',
   recordType: 'W-L',
+  activeMonths: [10, 11, 12, 1, 2, 3, 4], // Oct–Apr
  },
  NHL: {
   url: 'https://site.api.espn.com/apis/v2/sports/hockey/nhl/standings',
-  metric: 'points',     // standings points
+  metric: 'points',
   metricType: 'points',
   recordType: 'pts',
+  activeMonths: [10, 11, 12, 1, 2, 3, 4], // Oct–Apr
  },
  MLB: {
   url: 'https://site.api.espn.com/apis/v2/sports/baseball/mlb/standings',
   metric: 'winPercent',
   metricType: 'winpct',
   recordType: 'W-L',
+  activeMonths: [4, 5, 6, 7, 8, 9],    // Apr–Sep
  },
  MLS: {
   url: 'https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings',
   metric: 'points',
   metricType: 'points',
   recordType: 'pts',
+  activeMonths: [3, 4, 5, 6, 7, 8, 9, 10], // Mar–Oct
  },
 };
 
@@ -243,8 +249,17 @@ module.exports = async function handler(req, res) {
  const seasonYear = season.year;
  const results = {};
 
+ const currentMonth = new Date().getMonth() + 1; // 1-12
+
  for (const [league, config] of Object.entries(ESPN_LEAGUES)) {
   console.log(`Processing ${league}...`);
+
+  // Check if this league's regular season is currently active
+  if (config.activeMonths && !config.activeMonths.includes(currentMonth)) {
+   console.log(` ${league}: Offseason (month ${currentMonth} not in active window) — scores frozen`);
+   results[league] = { status: 'frozen', reason: `Offseason — active months: ${config.activeMonths.join(',')}` };
+   continue;
+  }
 
   // 1. Get picks for this league from Supabase
   const { data: picks, error: pickErr } = await supabase
