@@ -24,6 +24,10 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/update-billboard",
+      "schedule": "0 3 * * 3"
+    },
+    {
       "path": "/api/cron/update-entertainment",
       "schedule": "0 3 * * 1"
     }
