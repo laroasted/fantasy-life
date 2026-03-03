@@ -81,6 +81,13 @@ export default function DraftTool({ onFinalize }) {
     setDraftOrder(sorted);
   };
 
+  const randomizeOrder = () => {
+    const shuffled = [...activeMembers]
+      .map((m) => ({ ...m, guess: null, diff: null }))
+      .sort(() => Math.random() - 0.5);
+    setDraftOrder(shuffled);
+  };
+
   const startDraft = () => {
     if (draftOrder.length < 2) return;
     const so = generateSnakeOrder(draftOrder, DRAFT_CATEGORIES.length);
@@ -234,8 +241,12 @@ export default function DraftTool({ onFinalize }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <button onClick={calculateOrder} style={{ ...buttonStyle(), flex: 1 }}>Calculate Draft Order</button>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+          <button onClick={calculateOrder} style={{ ...buttonStyle(), width: "100%" }}>Calculate Draft Order</button>
+          <button onClick={randomizeOrder}
+            style={{ ...buttonStyle(theme.srf), width: "100%", border: `1px solid ${theme.bdr}`, color: theme.dim }}>
+            🎲 Or Skip & Randomize Order
+          </button>
         </div>
 
         {draftOrder.length > 0 && (
