@@ -222,17 +222,37 @@ module.exports = async function handler(req, res) {
    const films = await getActorFilms(personId);
    await delay(250);
 
+   // Get existing film entries from Supabase (to preserve RT scores)
+   const { data: existingFilms } = await supabase
+    .from('film_entries')
+    .select('title, rotten_tom')
+    .eq('pick_id', pick.id);
+
+   const existingRT = {};
+   (existingFilms || []).forEach(f => {
+    existingRT[f.title.toLowerCase()] = Number(f.rotten_tom) || 0;
+   });
+
    const filmResults = [];
 
    for (const film of films) {
-    // Get box office
+    // Get box office from TMDB
     const boMillions = await getBoxOffice(film.tmdbId);
+    await delay(250);
+
+    // Try OMDB for RT score
+    const releaseYear = film.releaseDate.split('-')[0];
+    let rtScore = await getRTScore(film.title, releaseYear);
     await delay(200);
 
-    // Get RT score
-    const releaseYear = film.releaseDate.split('-')[0];
-    const rtScore = await getRTScore(film.title, releaseYear);
-    await delay(200);
+    // If OMDB returned 0, check existing data in Supabase
+    if (rtScore === 0) {
+     const existingVal = existingRT[film.title.toLowerCase()];
+     if (existingVal > 0) {
+      rtScore = existingVal;
+      console.log(`  ${film.title}: Using existing RT score (${rtScore}%)`);
+     }
+    }
 
     // Calculate combined score
     const score = Math.round((boMillions * rtScore / 100) * 100) / 100;
@@ -245,45 +265,85 @@ module.exports = async function handler(req, res) {
      score,
     });
 
-    console.log(`  ${film.title}: BO=$${boMillions.toFixed(1)}M, RT=${rtScore}%, Score=${score.toFixed(2)}`);
+    console.log(`  ${film.title}: BO=${boMillions.toFixed(1)}M, RT=${rtScore}%, Score=${score.toFixed(2)}`);
    }
 
    // Calculate total score
    const totalScore = filmResults.reduce((sum, f) => sum + f.score, 0);
 
    // 3. Update film_entries in Supabase
-   // Delete existing entries and insert fresh ones
+   // If TMDB found films, merge with existing; otherwise preserve existing
    if (filmResults.length > 0) {
+    // Also keep any existing films that TMDB didn't return
+    // (e.g., streaming-only films, films with manual notes)
+    const tmdbTitles = filmResults.map(f => f.title.toLowerCase());
+    const { data: currentFilms } = await supabase
+     .from('film_entries')
+     .select('*')
+     .eq('pick_id', pick.id);
+
+    const preservedFilms = (currentFilms || [])
+     .filter(f => !tmdbTitles.includes(f.title.toLowerCase()))
+     .map(f => ({
+      title: f.title,
+      releaseDate: f.release_date,
+      bo: Number(f.box_office) || 0,
+      rt: Number(f.rotten_tom) || 0,
+      score: Number(f.score) || 0,
+      note: f.note,
+     }));
+
+    const allFilms = [...filmResults, ...preservedFilms];
+
     await supabase.from('film_entries').delete().eq('pick_id', pick.id);
 
-    const filmRows = filmResults.map(f => ({
+    const filmRows = allFilms.map(f => ({
      pick_id: pick.id,
      title: f.title,
-     release_date: f.releaseDate,
+     release_date: f.releaseDate || '',
      box_office: f.bo,
      rotten_tom: f.rt,
      score: f.score,
+     note: f.note || null,
     }));
 
     const { error: filmErr } = await supabase.from('film_entries').insert(filmRows);
     if (filmErr) {
      console.error(`  Failed to update films for ${actorName}:`, filmErr.message);
     }
+
+    // Recalculate total using ALL films (TMDB + preserved)
+    const totalScore = allFilms.reduce((sum, f) => sum + f.score, 0);
+    
+    // Update the pick's metric
+    await supabase.from('picks').update({
+     metric: Math.round(totalScore * 100) / 100,
+     updated_at: new Date().toISOString(),
+    }).eq('id', pick.id);
+
+    rankings.push({
+     member: pick.member_id,
+     pick: actorName,
+     totalScore: Math.round(totalScore * 100) / 100,
+     filmCount: allFilms.length,
+     films: allFilms.map(f => `${f.title} (${f.bo}M × ${f.rt}% = ${f.score})`),
+    });
+   } else {
+    // No TMDB films found — preserve everything as-is
+    const { data: existingAll } = await supabase
+     .from('film_entries')
+     .select('score')
+     .eq('pick_id', pick.id);
+    const existingTotal = (existingAll || []).reduce((sum, f) => sum + Number(f.score || 0), 0);
+    rankings.push({
+     member: pick.member_id,
+     pick: actorName,
+     totalScore: existingTotal,
+     filmCount: 0,
+     films: [],
+     status: 'no TMDB films in FY window — preserved existing',
+    });
    }
-
-   // Update the pick's metric (totalScore) — but NOT base yet (we rank after all picks)
-   await supabase.from('picks').update({
-    metric: Math.round(totalScore * 100) / 100,
-    updated_at: new Date().toISOString(),
-   }).eq('id', pick.id);
-
-   rankings.push({
-    member: pick.member_id,
-    pick: actorName,
-    totalScore: Math.round(totalScore * 100) / 100,
-    filmCount: filmResults.length,
-    films: filmResults.map(f => `${f.title} ($${f.bo}M × ${f.rt}% = ${f.score})`),
-   });
   }
 
   // 4. Rank by total score and assign base points
