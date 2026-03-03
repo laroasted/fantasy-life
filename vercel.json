@@ -30,6 +30,10 @@
     {
       "path": "/api/cron/update-entertainment",
       "schedule": "0 3 * * 1"
+    },
+    {
+      "path": "/api/cron/update-country",
+      "schedule": "0 7 1 * *"
     }
   ]
 }

@@ -1,7 +1,7 @@
 /**
 * Fantasy Life — Daily Sports Standings Updater
 * 
-* Updates base points for NBA, NHL, MLB, MLS from ESPN standings.
+* Updates base points for NFL, NBA, NHL, MLB, MLS from ESPN standings.
 * Bonus points are NEVER touched (locked from previous season playoffs).
 * 
 * - Pulls picks from Supabase (not hardcoded) — works for any season
@@ -9,7 +9,7 @@
 * - If any fetch fails, existing data is preserved
 * 
 * Deploy as: api/cron/update-sports.js
-* Schedule: daily at 6 AM UTC (1 AM ET) to run
+* Schedule: daily at 6 AM UTC (1 AM ET)
 */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -21,6 +21,13 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 // activeMonths: months (1-12) when the regular season is active and scores should update.
 // Outside these months, the league is frozen and the cron skips it.
 const ESPN_LEAGUES = {
+ NFL: {
+  url: 'https://site.api.espn.com/apis/v2/sports/football/nfl/standings',
+  metric: 'winPercent',
+  metricType: 'winpct',
+  recordType: 'W-L',
+  activeMonths: [9, 10, 11, 12, 1],    // Sep–Jan (regular season)
+ },
  NBA: {
   url: 'https://site.api.espn.com/apis/v2/sports/basketball/nba/standings',
   metric: 'winPercent',
@@ -56,6 +63,8 @@ const NAME_ALIASES = {
  // NBA
  'T-Wolves': 'Timberwolves',
  'Wolves': 'Timberwolves',
+ // NFL
+ '49ers': 'San Francisco',
  // NHL
  // MLS
  'Red Bull': 'Red Bulls',
@@ -248,7 +257,6 @@ module.exports = async function handler(req, res) {
 
  const seasonYear = season.year;
  const results = {};
-
  const currentMonth = new Date().getMonth() + 1; // 1-12
 
  for (const [league, config] of Object.entries(ESPN_LEAGUES)) {
