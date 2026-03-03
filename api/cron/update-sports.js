@@ -9,7 +9,7 @@
 * - If any fetch fails, existing data is preserved
 * 
 * Deploy as: api/cron/update-sports.js
-* Schedule: daily at 6 AM UTC (1 AM ET)
+* Schedule: daily at 6 AM UTC (1 AM ET) to run
 */
 
 const { createClient } = require('@supabase/supabase-js');
