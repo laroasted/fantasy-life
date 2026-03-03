@@ -104,35 +104,35 @@ async function fetchTennisRankings() {
 }
 
 /**
- * Fetch Golf OWGR rankings from ESPN
+ * Fetch Golf OWGR rankings by scraping ESPN's golf rankings page.
+ * The API endpoint doesn't return data, but the HTML page does.
  * Returns array of { name, position }
  */
 async function fetchGolfRankings() {
   try {
-    // Try the rankings endpoint first
-    let res = await fetch('https://site.api.espn.com/apis/site/v2/sports/golf/pga/rankings', {
+    const res = await fetch('https://www.espn.com/golf/rankings', {
       headers: { 'User-Agent': 'Mozilla/5.0' },
     });
 
-    if (!res.ok) {
-      // Fallback: try scraping the ESPN golf rankings page structure
-      res = await fetch('https://site.web.api.espn.com/apis/site/v2/sports/golf/pga/rankings', {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // Parse golfer names and rankings from the HTML
+    // ESPN golf rankings page has links like /golf/player/_/id/9478/scottie-scheffler
+    const golfers = [];
+    const regex = /golf\/player\/_\/id\/\d+\/([^"]+)"[^>]*>([^<]+)/g;
+    let match;
+    let rank = 1;
+
+    while ((match = regex.exec(html)) !== null) {
+      const name = match[2].trim();
+      if (name && !golfers.find(g => g.name === name)) {
+        golfers.push({ name, position: rank, shortName: '' });
+        rank++;
+      }
     }
 
-    if (!res.ok) return null;
-    const data = await res.json();
-
-    const rankings = data?.rankings || [];
-    const mainRanking = rankings[0];
-    if (!mainRanking?.ranks) return null;
-
-    return mainRanking.ranks.map(entry => ({
-      name: entry.athlete?.displayName || entry.athlete?.name || '',
-      shortName: entry.athlete?.shortName || '',
-      position: entry.current || entry.rank || 999,
-    }));
+    return golfers.length > 0 ? golfers : null;
   } catch (err) {
     console.error('  Golf fetch error:', err.message);
     return null;
@@ -140,61 +140,89 @@ async function fetchGolfRankings() {
 }
 
 /**
- * Fetch F1 driver standings from ESPN
+ * Fetch F1 driver standings from ESPN.
+ * Tries the API first, falls back to scraping the standings page.
  * Returns array of { name, points }
  */
 async function fetchF1Standings() {
+  // Try API first
   try {
     const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/racing/f1/standings', {
       headers: { 'User-Agent': 'Mozilla/5.0' },
     });
+    if (res.ok) {
+      const data = await res.json();
+      const drivers = [];
+
+      // Try nested children format
+      const children = data?.children || [];
+      for (const group of children) {
+        const entries = group?.standings?.entries || [];
+        for (const entry of entries) {
+          const athlete = entry?.athlete || entry?.team;
+          if (!athlete) continue;
+          const stats = entry?.stats || [];
+          const ptsStat = stats.find(s => s.name === 'points' || s.abbreviation === 'PTS');
+          drivers.push({
+            name: athlete.displayName || athlete.name || '',
+            shortName: athlete.shortName || '',
+            points: ptsStat ? parseFloat(ptsStat.value || ptsStat.displayValue) : 0,
+          });
+        }
+      }
+
+      // Try flat standings format
+      if (drivers.length === 0) {
+        const entries = data?.standings?.entries || [];
+        for (const entry of entries) {
+          const athlete = entry?.athlete || entry?.team;
+          if (!athlete) continue;
+          const stats = entry?.stats || [];
+          const ptsStat = stats.find(s => s.name === 'points' || s.abbreviation === 'PTS');
+          drivers.push({
+            name: athlete.displayName || athlete.name || '',
+            shortName: athlete.shortName || '',
+            points: ptsStat ? parseFloat(ptsStat.value || ptsStat.displayValue) : 0,
+          });
+        }
+      }
+
+      if (drivers.length > 0) return drivers;
+    }
+  } catch (err) {
+    console.log('  F1 API failed, trying HTML fallback...');
+  }
+
+  // Fallback: scrape ESPN F1 standings page
+  try {
+    const res = await fetch('https://www.espn.com/racing/standings/_/series/f1', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
     if (!res.ok) return null;
-    const data = await res.json();
+    const html = await res.text();
 
-    // F1 standings structure: children[] → standings → entries[]
+    // Parse driver names from the standings page
     const drivers = [];
-    const children = data?.children || [];
+    // Look for driver links: /racing/driver/_/id/XXXX/name-slug
+    const regex = /racing\/driver\/_\/id\/\d+\/[^"]*"[^>]*>([^<]+)/g;
+    let match;
 
-    for (const group of children) {
-      const entries = group?.standings?.entries || [];
-      for (const entry of entries) {
-        const athlete = entry?.athlete || entry?.team;
-        if (!athlete) continue;
-
-        const stats = entry?.stats || [];
-        const ptsStat = stats.find(s =>
-          s.name === 'points' || s.abbreviation === 'PTS'
-        );
-
-        drivers.push({
-          name: athlete.displayName || athlete.name || '',
-          shortName: athlete.shortName || '',
-          points: ptsStat ? parseFloat(ptsStat.value || ptsStat.displayValue) : 0,
-        });
+    while ((match = regex.exec(html)) !== null) {
+      const name = match[1].trim();
+      if (name && !drivers.find(d => d.name === name)) {
+        drivers.push({ name, shortName: '', points: 0 });
       }
     }
 
-    // Also try flat standings format
-    if (drivers.length === 0) {
-      const entries = data?.standings?.entries || [];
-      for (const entry of entries) {
-        const athlete = entry?.athlete || entry?.team;
-        if (!athlete) continue;
-        const stats = entry?.stats || [];
-        const ptsStat = stats.find(s =>
-          s.name === 'points' || s.abbreviation === 'PTS'
-        );
-        drivers.push({
-          name: athlete.displayName || athlete.name || '',
-          shortName: athlete.shortName || '',
-          points: ptsStat ? parseFloat(ptsStat.value || ptsStat.displayValue) : 0,
-        });
-      }
+    // Try to extract points from nearby table cells
+    // This is fragile but better than nothing for offseason
+    if (drivers.length > 0) {
+      console.log(`  F1: Found ${drivers.length} drivers via HTML scrape (points may need manual entry)`);
     }
 
     return drivers.length > 0 ? drivers : null;
   } catch (err) {
-    console.error('  F1 fetch error:', err.message);
+    console.error('  F1 HTML fallback error:', err.message);
     return null;
   }
 }
