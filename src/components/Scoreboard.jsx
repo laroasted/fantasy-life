@@ -2,67 +2,111 @@ import { useState, useMemo, useEffect } from "react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme } from "../constants/theme";
-import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle } from "../utils/helpers";
+import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock } from "../utils/helpers";
+
+// ─── Small lock indicator that players see on the scoreboard ───
+function LockIndicator({ note }) {
+ var _h = useState(false), hover = _h[0], setHover = _h[1];
+ return (
+  <span style={{ position: "relative", display: "inline-flex", alignItems: "center", marginLeft: 4 }}
+   onMouseEnter={function () { setHover(true); }} onMouseLeave={function () { setHover(false); }}>
+   <span style={{ fontSize: 10, cursor: "help" }}> </span>
+   {hover && (
+    <span style={{
+     position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
+     background: "#1e293b", border: "1px solid #eab308", borderRadius: 6,
+     padding: "6px 10px", fontSize: 10, color: "#fef9c3", whiteSpace: "nowrap",
+     zIndex: 999, pointerEvents: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+    }}>
+     {note || "Commissioner locked this value"}
+    </span>
+   )}
+  </span>
+ );
+}
 
 export default function Scoreboard({ seasonData }) {
- const [selCat, setSelCat] = useState(null);
- const [expRow, setExpRow] = useState(null);
- const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+ var _s = useState(null), selCat = _s[0], setSelCat = _s[1];
+ var _e = useState(null), expRow = _e[0], setExpRow = _e[1];
+ var _m = useState(window.innerWidth < 640), isMobile = _m[0], setIsMobile = _m[1];
 
- useEffect(() => {
-  const onResize = () => setIsMobile(window.innerWidth < 640);
+ useEffect(function () {
+  var onResize = function () { setIsMobile(window.innerWidth < 640); };
   window.addEventListener("resize", onResize);
-  return () => window.removeEventListener("resize", onResize);
+  return function () { window.removeEventListener("resize", onResize); };
  }, []);
 
  if (!seasonData) {
   return <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>No active season.</div>;
  }
 
- const members = seasonData.members || [];
- const cats = seasonData.categories || {};
- const detail = seasonData.detailedData || {};
+ var members = seasonData.members || [];
+ var cats = seasonData.categories || {};
+ var detail = seasonData.detailedData || {};
+ var locks = seasonData.locks || {};
 
- const overallStandings = useMemo(() => {
-  return members.map((m) => {
-   let totalPts = 0;
-   const catScores = {};
-   CATEGORY_ORDER.forEach((k) => {
-    const entry = (cats[k] || []).find((x) => x.owner === m.name);
+ var overallStandings = useMemo(function () {
+  return members.map(function (m) {
+   var totalPts = 0;
+   var catScores = {};
+   CATEGORY_ORDER.forEach(function (k) {
+    var entry = (cats[k] || []).find(function (x) { return x.owner === m.name; });
     if (entry) { totalPts += entry.total; catScores[k] = entry.total; }
    });
-   return { owner: m.name, id: m.id, totalPts, catScores };
-  }).sort((a, b) => b.totalPts - a.totalPts);
+   return { owner: m.name, id: m.id, totalPts: totalPts, catScores: catScores };
+  }).sort(function (a, b) { return b.totalPts - a.totalPts; });
  }, [members, cats]);
 
- const catMembers = selCat ? [...(cats[selCat] || [])].sort((a, b) => b.total - a.total) : null;
- const detailArr = selCat ? detail[selCat] : null;
+ var catMembers = selCat ? [].concat(cats[selCat] || []).sort(function (a, b) { return b.total - a.total; }) : null;
+ var detailArr = selCat ? detail[selCat] : null;
 
- const isSport = SPORT_CATEGORIES.includes(selCat);
- const isFilm = selCat === "Actor" || selCat === "Actress";
- const isMusic = selCat === "Musician";
- const isEvent = selCat === "Tennis" || selCat === "Golf" || selCat === "F1";
- const isCountry = selCat === "Country";
- const isStock = selCat === "Stock";
+ var isSport = SPORT_CATEGORIES.includes(selCat);
+ var isFilm = selCat === "Actor" || selCat === "Actress";
+ var isMusic = selCat === "Musician";
+ var isEvent = selCat === "Tennis" || selCat === "Golf" || selCat === "F1";
+ var isCountry = selCat === "Country";
+ var isStock = selCat === "Stock";
+
+ // ─── Bonus note display (used in all expanded footers) ───
+ function bonusNoteDisplay(d) {
+  if (!d || !d.bonusNote) return null;
+  return (
+   <div style={{ marginTop: 4, fontSize: 10, color: "#22c55e", fontStyle: "italic" }}>
+    {d.bonusNote}
+   </div>
+  );
+ }
+
+ // ─── Row-level lock indicator (for detail rows) ───
+ function rowLockIcon(cat, owner, idx) {
+  var key = cat + "|" + owner + "|row" + idx;
+  if (!locks[key]) return null;
+  return <LockIndicator note="This row is locked by the commissioner" />;
+ }
 
  // === EXPANDED DETAIL RENDERER ===
  function renderExpanded(m, idx) {
-  const d = detailArr ? detailArr.find((x) => x.owner === m.owner) : null;
-  const wp = expandedWrapperStyle(idx);
-  const hd = expandedHeaderStyle;
-  const ft = expandedFooterStyle;
-  const totalLine = (
+  var d = detailArr ? detailArr.find(function (x) { return x.owner === m.owner; }) : null;
+  var wp = expandedWrapperStyle(idx);
+  var hd = expandedHeaderStyle;
+  var ft = expandedFooterStyle;
+  var totalLine = (
    <div style={ft}>
     Total: {m.base} base + {m.bonus} bonus ={" "}
     <b style={{ color: "#f8fafc", fontSize: 13 }}>{m.total} pts</b>
+    {hasAnyLock(seasonData, selCat, m.owner) && (
+     <LockIndicator note="Some values locked by commissioner" />
+    )}
+    {bonusNoteDisplay(d)}
    </div>
   );
 
   if (!d) {
    return (
     <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: "#1e293b",
-     border: `1px solid ${rowBorder(idx)}`, borderTop: "1px solid #334155", fontSize: 12, color: "#cbd5e1" }}>
+     border: "1px solid " + rowBorder(idx), borderTop: "1px solid #334155", fontSize: 12, color: "#cbd5e1" }}>
      Base: {m.base} + Bonus: {m.bonus} = <b style={{ color: "#f8fafc" }}>{m.total} pts</b>
+     {bonusNoteDisplay(d)}
     </div>
    );
   }
@@ -78,33 +122,34 @@ export default function Scoreboard({ seasonData }) {
      </div>
      {d.rounds && d.rounds.length > 0 ? (
       <div style={{ padding: "4px 12px" }}>
-       {d.rounds.map((r, ri) => (
-        <div key={ri} style={{
-         display: "grid",
-         gridTemplateColumns: isMobile ? "1fr 50px 40px" : "1fr 80px 70px 40px",
-         gap: 4, alignItems: "center", padding: "4px 0",
-         borderBottom: ri === d.rounds.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
-        }}>
-         <div>
-          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{r.round}</span>
-          {r.note && <div style={{ fontSize: 10, color: "#22c55e" }}>{r.note}</div>}
-          {/* Show opponent inline on mobile */}
-          {isMobile && <div style={{ fontSize: 10, color: "#64748b" }}>{r.opponent}</div>}
+       {d.rounds.map(function (r, ri) {
+        return (
+         <div key={ri} style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr 50px 40px" : "1fr 80px 70px 40px",
+          gap: 4, alignItems: "center", padding: "4px 0",
+          borderBottom: ri === d.rounds.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
+         }}>
+          <div>
+           <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{r.round}</span>
+           {r.note && <div style={{ fontSize: 10, color: "#22c55e" }}>{r.note}</div>}
+           {isMobile && <div style={{ fontSize: 10, color: "#64748b" }}>{r.opponent}</div>}
+           {rowLockIcon(selCat, m.owner, ri)}
+          </div>
+          {!isMobile && <span style={{ color: "#94a3b8", fontSize: 10 }}>{r.opponent}</span>}
+          <div style={{ textAlign: "center" }}>
+           <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700,
+            background: r.result === "Won" ? "rgba(34,197,94,0.2)" : r.result === "Lost" ? "rgba(239,68,68,0.15)" : "rgba(51,65,85,0.3)",
+            color: r.result === "Won" ? "#22c55e" : r.result === "Lost" ? "#ef4444" : "#64748b" }}>
+            {r.result === "—" ? "—" : r.result + (isMobile ? "" : " " + r.series)}
+           </span>
+          </div>
+          <div style={{ textAlign: "right", color: r.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
+           {r.pts > 0 ? "+" + r.pts : "—"}
+          </div>
          </div>
-         {/* Opponent column hidden on mobile */}
-         {!isMobile && <span style={{ color: "#94a3b8", fontSize: 10 }}>{r.opponent}</span>}
-         <div style={{ textAlign: "center" }}>
-          <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700,
-           background: r.result === "Won" ? "rgba(34,197,94,0.2)" : r.result === "Lost" ? "rgba(239,68,68,0.15)" : "rgba(51,65,85,0.3)",
-           color: r.result === "Won" ? "#22c55e" : r.result === "Lost" ? "#ef4444" : "#64748b" }}>
-           {r.result === "—" ? "—" : r.result + (isMobile ? "" : " " + r.series)}
-          </span>
-         </div>
-         <div style={{ textAlign: "right", color: r.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
-          {r.pts > 0 ? "+" + r.pts : "—"}
-         </div>
-        </div>
-       ))}
+        );
+       })}
       </div>
      ) : (
       <div style={{ padding: "8px 12px", fontSize: 11, color: "#475569" }}>Missed Playoffs</div>
@@ -129,46 +174,52 @@ export default function Scoreboard({ seasonData }) {
       <span style={{ textAlign: "right" }}>Score</span>
      </div>
      <div style={{ padding: "4px 12px" }}>
-      {d.films.map((f, fi) => (
-       <div key={fi} style={{
-        display: "grid",
-        gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
-        gap: 6, alignItems: "center", padding: "5px 0",
-        borderBottom: fi === d.films.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
-       }}>
-        <div>
-         <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{f.title}</span>
-         {!isMobile && <span style={{ color: "#64748b", marginLeft: 6 }}>{f.date}</span>}
-         {f.note && <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 1 }}> {f.note}</div>}
-        </div>
-        {!isMobile && (
-         <div style={{ textAlign: "right", color: "#94a3b8" }}>
-          {f.bo > 0 ? "$" + f.bo.toFixed(1) + "M" : "—"}
+      {d.films.map(function (f, fi) {
+       return (
+        <div key={fi} style={{
+         display: "grid",
+         gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
+         gap: 6, alignItems: "center", padding: "5px 0",
+         borderBottom: fi === d.films.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
+        }}>
+         <div>
+          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{f.title}</span>
+          {!isMobile && <span style={{ color: "#64748b", marginLeft: 6 }}>{f.date}</span>}
+          {f.note && <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 1 }}> {f.note}</div>}
+          {rowLockIcon(selCat, m.owner, fi)}
          </div>
-        )}
-        {isMobile ? (
-         <div style={{ textAlign: "right", fontSize: 10, color: "#94a3b8" }}>
-          <div>{f.bo > 0 ? "$" + f.bo.toFixed(0) + "M" : "—"}</div>
-          <div style={{ color: f.rt >= 70 ? "#22c55e" : f.rt >= 50 ? "#eab308" : f.rt > 0 ? "#ef4444" : "#475569" }}>
+         {!isMobile && (
+          <div style={{ textAlign: "right", color: "#94a3b8" }}>
+           {f.bo > 0 ? "$" + f.bo.toFixed(1) + "M" : "—"}
+          </div>
+         )}
+         {isMobile ? (
+          <div style={{ textAlign: "right", fontSize: 10, color: "#94a3b8" }}>
+           <div>{f.bo > 0 ? "$" + f.bo.toFixed(0) + "M" : "—"}</div>
+           <div style={{ color: f.rt >= 70 ? "#22c55e" : f.rt >= 50 ? "#eab308" : f.rt > 0 ? "#ef4444" : "#475569" }}>
+            {f.rt > 0 ? f.rt + "%" : "—"}
+           </div>
+          </div>
+         ) : (
+          <div style={{ textAlign: "center",
+           color: f.rt >= 70 ? "#22c55e" : f.rt >= 50 ? "#eab308" : f.rt > 0 ? "#ef4444" : "#475569" }}>
            {f.rt > 0 ? f.rt + "%" : "—"}
           </div>
+         )}
+         <div style={{ textAlign: "right", color: "#f1f5f9", fontWeight: 700 }}>
+          {f.score > 0 ? f.score.toFixed(2) : "0.00"}
          </div>
-        ) : (
-         <div style={{ textAlign: "center",
-          color: f.rt >= 70 ? "#22c55e" : f.rt >= 50 ? "#eab308" : f.rt > 0 ? "#ef4444" : "#475569" }}>
-          {f.rt > 0 ? f.rt + "%" : "—"}
-         </div>
-        )}
-        <div style={{ textAlign: "right", color: "#f1f5f9", fontWeight: 700 }}>
-         {f.score > 0 ? f.score.toFixed(2) : "0.00"}
         </div>
-       </div>
-      ))}
+       );
+      })}
      </div>
      <div style={ft}>
       Combined: {d.totalScore.toFixed(2)} → {m.base}b + {m.bonus}bn ={" "}
       <b style={{ color: "#f8fafc", fontSize: 13 }}>{m.total} pts</b>
-      {d.bonusNote && <div style={{ marginTop: 4, color: "#22c55e" }}>{d.bonusNote}</div>}
+      {hasAnyLock(seasonData, selCat, m.owner) && (
+       <LockIndicator note="Some values locked by commissioner" />
+      )}
+      {bonusNoteDisplay(d)}
      </div>
     </div>
    );
@@ -187,16 +238,18 @@ export default function Scoreboard({ seasonData }) {
         <span style={{ textAlign: "right" }}>#1 Wks</span>
        </div>
        <div style={{ padding: "4px 12px" }}>
-        {d.songs.map((sg, si) => (
-         <div key={si} style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
-          padding: "4px 0", borderBottom: si === d.songs.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11 }}>
-          <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sg.title}</span>
-          <div style={{ textAlign: "right", color: "#94a3b8" }}>{sg.weeks}</div>
-          <div style={{ textAlign: "right", color: sg.numOneWeeks > 0 ? "#22c55e" : "#475569", fontWeight: 700 }}>
-           {sg.numOneWeeks > 0 ? sg.numOneWeeks : "—"}
+        {d.songs.map(function (sg, si) {
+         return (
+          <div key={si} style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
+           padding: "4px 0", borderBottom: si === d.songs.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11 }}>
+           <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sg.title}</span>
+           <div style={{ textAlign: "right", color: "#94a3b8" }}>{sg.weeks}</div>
+           <div style={{ textAlign: "right", color: sg.numOneWeeks > 0 ? "#22c55e" : "#475569", fontWeight: 700 }}>
+            {sg.numOneWeeks > 0 ? sg.numOneWeeks : "—"}
+           </div>
           </div>
-         </div>
-        ))}
+         );
+        })}
        </div>
       </div>
      ) : (
@@ -211,20 +264,22 @@ export default function Scoreboard({ seasonData }) {
         <span style={{ textAlign: "right" }}>Pts</span>
        </div>
        <div style={{ padding: "4px 12px" }}>
-        {d.grammys.map((g, gi) => (
-         <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: 6,
-          alignItems: "center", padding: "5px 0",
-          borderBottom: gi === d.grammys.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11 }}>
-          <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.category}</span>
-          <span style={{ textAlign: "center", fontSize: 10,
-           color: g.result === "win" ? "#22c55e" : "#eab308" }}>
-           {g.result === "win" ? " Won" : "Nom"}
-          </span>
-          <div style={{ textAlign: "right", color: g.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
-           {g.pts > 0 ? "+" + g.pts : "—"}
+        {d.grammys.map(function (g, gi) {
+         return (
+          <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: 6,
+           alignItems: "center", padding: "5px 0",
+           borderBottom: gi === d.grammys.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11 }}>
+           <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.category}</span>
+           <span style={{ textAlign: "center", fontSize: 10,
+            color: g.result === "win" ? "#22c55e" : "#eab308" }}>
+            {g.result === "win" ? " Won" : "Nom"}
+           </span>
+           <div style={{ textAlign: "right", color: g.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
+            {g.pts > 0 ? "+" + g.pts : "—"}
+           </div>
           </div>
-         </div>
-        ))}
+         );
+        })}
        </div>
       </div>
      )}
@@ -248,25 +303,28 @@ export default function Scoreboard({ seasonData }) {
      </div>
      {d.majors && d.majors.length > 0 && (
       <div style={{ padding: "4px 12px" }}>
-       {d.majors.map((mj, mi) => (
-        <div key={mi} style={{
-         display: "grid",
-         gridTemplateColumns: isMobile ? "1fr 60px 40px" : "1fr 90px 50px",
-         gap: 4, alignItems: "center", padding: "5px 0",
-         borderBottom: mi === d.majors.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
-        }}>
-         <div>
-          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{mj.event}</span>
-          {!isMobile && mj.opponent !== "—" && <span style={{ color: "#64748b", marginLeft: 6 }}>{mj.opponent}</span>}
-          {isMobile && mj.opponent !== "—" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.opponent}</div>}
-          {mj.score && mj.score !== "—" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.score}</div>}
+       {d.majors.map(function (mj, mi) {
+        return (
+         <div key={mi} style={{
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr 60px 40px" : "1fr 90px 50px",
+          gap: 4, alignItems: "center", padding: "5px 0",
+          borderBottom: mi === d.majors.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
+         }}>
+          <div>
+           <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{mj.event}</span>
+           {!isMobile && mj.opponent !== "—" && <span style={{ color: "#64748b", marginLeft: 6 }}>{mj.opponent}</span>}
+           {isMobile && mj.opponent !== "—" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.opponent}</div>}
+           {mj.score && mj.score !== "—" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.score}</div>}
+           {rowLockIcon(selCat, m.owner, mi)}
+          </div>
+          <span style={{ color: "#94a3b8", textAlign: "center", fontSize: isMobile ? 10 : 11 }}>{mj.result}</span>
+          <div style={{ textAlign: "right", color: mj.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
+           {mj.pts > 0 ? "+" + mj.pts : "—"}
+          </div>
          </div>
-         <span style={{ color: "#94a3b8", textAlign: "center", fontSize: isMobile ? 10 : 11 }}>{mj.result}</span>
-         <div style={{ textAlign: "right", color: mj.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
-          {mj.pts > 0 ? "+" + mj.pts : "—"}
-         </div>
-        </div>
-       ))}
+        );
+       })}
       </div>
      )}
      {totalLine}
@@ -298,7 +356,7 @@ export default function Scoreboard({ seasonData }) {
       </div>
      ) : (
       <div style={{ padding: "8px 12px", fontSize: 11, color: "#475569" }}>
-       {d.olympics?.note || "Did not win any medals"}
+       {d.olympics && d.olympics.note ? d.olympics.note : "Did not win any medals"}
       </div>
      )}
      {totalLine}
@@ -329,6 +387,10 @@ export default function Scoreboard({ seasonData }) {
      </div>
      <div style={ft}>
       Total: <b style={{ color: "#f8fafc", fontSize: 13 }}>{m.total} pts</b> (no bonus for Stock)
+      {hasAnyLock(seasonData, selCat, m.owner) && (
+       <LockIndicator note="Some values locked by commissioner" />
+      )}
+      {bonusNoteDisplay(d)}
      </div>
     </div>
    );
@@ -337,8 +399,9 @@ export default function Scoreboard({ seasonData }) {
   // Fallback
   return (
    <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: "#1e293b",
-    border: `1px solid ${rowBorder(idx)}`, borderTop: "1px solid #334155", fontSize: 12, color: "#cbd5e1" }}>
+    border: "1px solid " + rowBorder(idx), borderTop: "1px solid #334155", fontSize: 12, color: "#cbd5e1" }}>
     Base: {m.base} + Bonus: {m.bonus} = {m.total} pts
+    {bonusNoteDisplay(d)}
    </div>
   );
  }
@@ -346,7 +409,7 @@ export default function Scoreboard({ seasonData }) {
  // === MAIN RENDER ===
  return (
   <div style={{ maxWidth: 760, margin: "0 auto" }}>
-   {/* Category pills — horizontally scrollable on mobile */}
+   {/* Category pills */}
    <div style={{
     display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
     gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
@@ -355,37 +418,39 @@ export default function Scoreboard({ seasonData }) {
     paddingBottom: isMobile ? 4 : 0,
     msOverflowStyle: "none", scrollbarWidth: "none",
    }}>
-    <button onClick={() => { setSelCat(null); setExpRow(null); }}
+    <button onClick={function () { setSelCat(null); setExpRow(null); }}
      style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-      border: `1px solid ${!selCat ? "#3b82f6" : "#334155"}`,
+      border: "1px solid " + (!selCat ? "#3b82f6" : "#334155"),
       background: !selCat ? "#3b82f6" : "#1e293b",
       color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
      Overall
     </button>
-    {CATEGORY_ORDER.map((k) => (
-     <button key={k} onClick={() => { setSelCat(k); setExpRow(null); }}
-      style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-       border: `1px solid ${selCat === k ? "#3b82f6" : "#334155"}`,
-       background: selCat === k ? "#3b82f6" : "#1e293b",
-       color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-      {CATEGORY_LABELS[k]}
-     </button>
-    ))}
+    {CATEGORY_ORDER.map(function (k) {
+     return (
+      <button key={k} onClick={function () { setSelCat(k); setExpRow(null); }}
+       style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
+        border: "1px solid " + (selCat === k ? "#3b82f6" : "#334155"),
+        background: selCat === k ? "#3b82f6" : "#1e293b",
+        color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+       {CATEGORY_LABELS[k]}
+      </button>
+     );
+    })}
    </div>
 
    {/* OVERALL VIEW */}
    {!selCat && (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-     {overallStandings.map((m, idx) => {
-      const isExp = expRow === m.owner;
+     {overallStandings.map(function (m, idx) {
+      var isExp = expRow === m.owner;
       return (
        <div key={m.owner}>
-        <div onClick={() => setExpRow(isExp ? null : m.owner)}
+        <div onClick={function () { setExpRow(isExp ? null : m.owner); }}
          style={{ display: "grid",
           gridTemplateColumns: isMobile ? "28px 1fr 50px" : "32px 1fr 60px",
           alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px",
           borderRadius: isExp ? "10px 10px 0 0" : 10,
-          background: rowBackground(idx), border: `1px solid ${rowBorder(idx)}`,
+          background: rowBackground(idx), border: "1px solid " + rowBorder(idx),
           borderBottom: isExp ? "none" : undefined, cursor: "pointer" }}>
          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 800, color: "#94a3b8" }}>{medalDisplay(idx)}</span>
          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
@@ -394,15 +459,15 @@ export default function Scoreboard({ seasonData }) {
         </div>
         {isExp && (
          <div style={{ padding: isMobile ? "8px 8px" : "10px 12px", borderRadius: "0 0 10px 10px",
-          background: "#1e293b", border: `1px solid ${rowBorder(idx)}`, borderTop: "1px solid #334155" }}>
+          background: "#1e293b", border: "1px solid " + rowBorder(idx), borderTop: "1px solid #334155" }}>
           <div style={{ display: "grid",
            gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)",
            gap: 4 }}>
-           {CATEGORY_ORDER.map((k) => {
-            const pts = m.catScores[k] || 0;
+           {CATEGORY_ORDER.map(function (k) {
+            var pts = m.catScores[k] || 0;
             return (
              <div key={k}
-              onClick={(e) => { e.stopPropagation(); setSelCat(k); setExpRow(null); }}
+              onClick={function (e) { e.stopPropagation(); setSelCat(k); setExpRow(null); }}
               style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", cursor: "pointer",
                background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(51,65,85,0.3)" }}>
               <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
@@ -427,28 +492,31 @@ export default function Scoreboard({ seasonData }) {
       <h2 style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: "#f8fafc", margin: 0 }}>{CATEGORY_LABELS[selCat]}</h2>
      </div>
      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      {catMembers.map((m, idx) => {
-       const isExp = expRow === m.owner;
-       const mid = (members.find((x) => x.name === m.owner) || {}).id;
+      {catMembers.map(function (m, idx) {
+       var isExp = expRow === m.owner;
+       var mid = (members.find(function (x) { return x.name === m.owner; }) || {}).id;
+       var memberHasLocks = hasAnyLock(seasonData, selCat, m.owner);
        return (
         <div key={m.owner}>
-         <div onClick={() => setExpRow(isExp ? null : m.owner)}
+         <div onClick={function () { setExpRow(isExp ? null : m.owner); }}
           style={{
            display: "grid",
            gridTemplateColumns: isMobile ? "28px 1fr auto" : "32px 1fr auto",
            alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px", gap: 8,
            borderRadius: isExp ? "10px 10px 0 0" : 10,
-           background: rowBackground(idx), border: `1px solid ${rowBorder(idx)}`,
+           background: rowBackground(idx), border: "1px solid " + rowBorder(idx),
            borderBottom: isExp ? "none" : undefined, cursor: "pointer",
           }}>
           <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 800, color: "#94a3b8" }}>{medalDisplay(idx)}</span>
           <div style={{ minWidth: 0 }}>
            <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: MEMBER_COLORS[mid] || "#f1f5f9",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</div>
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {m.owner}
+            {memberHasLocks && <LockIndicator note="Commissioner has locked some values for this entry" />}
+           </div>
            <div style={{ fontSize: isMobile ? 10 : 11, color: theme.dim,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.pick}</div>
           </div>
-          {/* Score area — stacked on mobile, inline on desktop */}
           {isMobile ? (
            <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc" }}>{m.total}</div>

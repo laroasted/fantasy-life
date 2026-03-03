@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
-import { storageGet, storageSet, STORAGE_KEYS, fetchSeasonFromSupabase } from "./utils/storage";
+import { storageGet, storageSet, STORAGE_KEYS, fetchSeasonFromSupabase, saveLocksToSupabase } from "./utils/storage";
 import Scoreboard from "./components/Scoreboard";
 import SeasonHistory from "./components/SeasonHistory";
 import DraftTool from "./components/DraftTool";
@@ -74,9 +74,15 @@ export default function App() {
   setActiveTab("scoreboard");
  }, [activeSeason, archivedSeasons]);
 
+ // ── Settings save: update state + localStorage + push locks to Supabase ──
  const handleSettingsSave = useCallback(async (updatedSeason) => {
   setActiveSeason(updatedSeason);
+  // Save full season to localStorage (as before)
   try { await storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(updatedSeason)); } catch (e) {}
+  // Also push locks to Supabase so cron jobs can see them
+  if (updatedSeason.locks && updatedSeason.year) {
+   await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
+  }
  }, []);
 
  if (!loaded) {
@@ -94,11 +100,11 @@ export default function App() {
   );
  }
 
- const draftDateStr = activeSeason?.draftDate
+ var draftDateStr = activeSeason && activeSeason.draftDate
   ? new Date(activeSeason.draftDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
   : "March 15, 2025";
- const year = activeSeason?.year || 2025;
- const memberCount = activeSeason?.memberCount || 11;
+ var year = (activeSeason && activeSeason.year) || 2025;
+ var memberCount = (activeSeason && activeSeason.memberCount) || 11;
 
  return (
   <div style={{ background: theme.bg, minHeight: "100vh", color: theme.txt,
@@ -106,7 +112,7 @@ export default function App() {
    {/* ── Header + Tabs ── */}
    <div style={{
     background: "linear-gradient(135deg, #1e293b, #0f172a)",
-    borderBottom: `1px solid ${theme.bdr}`,
+    borderBottom: "1px solid " + theme.bdr,
     padding: isMobile ? "12px 12px 0" : "16px 20px 0",
     position: "sticky", top: 0, zIndex: 100,
    }}>
@@ -127,7 +133,7 @@ export default function App() {
       </div>
       <button onClick={handleRefresh} disabled={refreshing}
        style={{
-        background: "none", border: `1px solid ${theme.bdr}`, borderRadius: 8,
+        background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
         padding: isMobile ? "5px 8px" : "6px 12px",
         color: refreshing ? theme.dim : theme.mut,
         fontSize: isMobile ? 11 : 12, cursor: refreshing ? "default" : "pointer",
@@ -142,23 +148,25 @@ export default function App() {
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
      </div>
 
-     {/* Tab bar — equal width on mobile */}
+     {/* Tab bar */}
      <div style={{ display: "flex", gap: 0 }}>
-      {TABS.map((t) => (
-       <button key={t.id} onClick={() => setActiveTab(t.id)}
-        style={{
-         flex: isMobile ? 1 : "unset",
-         padding: isMobile ? "8px 4px" : "10px 20px",
-         background: "none", border: "none",
-         borderBottom: activeTab === t.id ? `2px solid ${theme.acc}` : "2px solid transparent",
-         color: activeTab === t.id ? "#f8fafc" : theme.dim,
-         fontSize: isMobile ? 11 : 13,
-         fontWeight: activeTab === t.id ? 700 : 500,
-         cursor: "pointer", whiteSpace: "nowrap",
-        }}>
-        {isMobile ? t.short + " " + t.id.charAt(0).toUpperCase() + t.id.slice(1) : t.label}
-       </button>
-      ))}
+      {TABS.map(function (t) {
+       return (
+        <button key={t.id} onClick={function () { setActiveTab(t.id); }}
+         style={{
+          flex: isMobile ? 1 : "unset",
+          padding: isMobile ? "8px 4px" : "10px 20px",
+          background: "none", border: "none",
+          borderBottom: activeTab === t.id ? "2px solid " + theme.acc : "2px solid transparent",
+          color: activeTab === t.id ? "#f8fafc" : theme.dim,
+          fontSize: isMobile ? 11 : 13,
+          fontWeight: activeTab === t.id ? 700 : 500,
+          cursor: "pointer", whiteSpace: "nowrap",
+         }}>
+         {isMobile ? t.short + " " + t.id.charAt(0).toUpperCase() + t.id.slice(1) : t.label}
+        </button>
+       );
+      })}
      </div>
     </div>
    </div>
