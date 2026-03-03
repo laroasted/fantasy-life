@@ -22,6 +22,10 @@
     {
       "path": "/api/cron/update-events",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/update-entertainment",
+      "schedule": "0 3 * * 1"
     }
   ]
 }
