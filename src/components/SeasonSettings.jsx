@@ -38,11 +38,11 @@ function LockBtn({ locked, onToggle, size = 14 }) {
   <button onClick={(e) => { e.stopPropagation(); onToggle(); }}
    title={locked ? "Locked — cron won't overwrite this" : "Unlocked — click to lock"}
    style={{
-    background: locked ? "rgba(234,179,8,0.15)" : "transparent",
-    border: locked ? "1px solid rgba(234,179,8,0.4)" : "1px solid transparent",
-    borderRadius: 4, padding: "2px 4px", cursor: "pointer",
-    fontSize: size, lineHeight: 1, color: locked ? "#eab308" : "#475569",
-    transition: "all 0.15s",
+    background: locked ? "rgba(234,179,8,0.2)" : "rgba(100,116,139,0.15)",
+    border: locked ? "1px solid rgba(234,179,8,0.5)" : "1px solid rgba(100,116,139,0.3)",
+    borderRadius: 4, padding: "3px 6px", cursor: "pointer",
+    fontSize: size, lineHeight: 1, color: locked ? "#eab308" : "#94a3b8",
+    transition: "all 0.15s", flexShrink: 0,
    }}>
    {locked ? " " : " "}
   </button>
