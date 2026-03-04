@@ -308,6 +308,52 @@ export default function SeasonSettings({ seasonData, onSave }) {
    });
   });
 
+  // 4b) Auto-recalculate base rankings for Actor, Actress, Musician, Stock
+  var autoRankCats = ['Actor', 'Actress', 'Musician', 'Stock'];
+  autoRankCats.forEach(function (cat) {
+   var catArr = newCats[cat];
+   var detArr = newDetail[cat];
+   if (!catArr || !detArr) return;
+
+   // Calculate each member's metric from their detail lines
+   var memberMetrics = catArr.map(function (entry) {
+    var d = detArr.find(function (x) { return x.owner === entry.owner; });
+    var metric = 0;
+
+    if (FILM_CATS.includes(cat) && d && d.films) {
+     // Actor/Actress: sum of film scores
+     metric = d.films.reduce(function (s, f) { return s + (f.score || 0); }, 0);
+    } else if (cat === 'Musician' && d && d.songs) {
+     // Musician: total chart weeks
+     metric = d.songs.reduce(function (s, sg) { return s + (Number(sg.weeks) || 0); }, 0);
+    } else if (cat === 'Stock' && d) {
+     // Stock: pctChange
+     metric = Number(d.pctChange) || 0;
+    }
+
+    return { owner: entry.owner, metric: metric, entry: entry, detail: d };
+   });
+
+   // Sort: highest metric = rank 1 (most base points)
+   memberMetrics.sort(function (a, b) { return b.metric - a.metric; });
+
+   var totalMembers = memberMetrics.length;
+   for (var ri = 0; ri < memberMetrics.length; ri++) {
+    var mm = memberMetrics[ri];
+    var newBase = totalMembers - ri;
+    var oldBase = mm.entry.base;
+    if (oldBase !== newBase) {
+     log.push(cat + ' \u2014 ' + mm.owner + ': base auto-recalculated ' + oldBase + ' \u2192 ' + newBase + ' (metric: ' + Math.round(mm.metric * 100) / 100 + ')');
+     mm.entry.base = newBase;
+     mm.entry.total = newBase + (mm.entry.bonus || 0);
+     if (mm.detail) {
+      mm.detail.base = newBase;
+      mm.detail.total = newBase + (mm.detail.bonus || 0);
+     }
+    }
+   }
+  });
+
   // 5) Pick swaps
   Object.keys(swaps).forEach(function (key) {
    var parts = key.split("|");

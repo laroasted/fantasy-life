@@ -213,8 +213,24 @@ export default function Scoreboard({ seasonData }) {
        );
       })}
      </div>
+     {/* Totals row for films */}
+     <div style={{ display: "grid",
+      gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
+      gap: 6, padding: "6px 12px", background: "rgba(59,130,246,0.08)",
+      borderTop: "1px solid #334155", fontSize: 11, fontWeight: 700 }}>
+      <span style={{ color: "#94a3b8" }}>Total ({d.films.length} film{d.films.length !== 1 ? "s" : ""})</span>
+      {!isMobile && <div style={{ textAlign: "right", color: "#94a3b8" }}>${d.films.reduce(function(s,f){return s+f.bo;},0).toFixed(1)}M</div>}
+      {isMobile ? (
+       <div style={{ textAlign: "right", fontSize: 10, color: "#94a3b8" }}>
+        <div>${d.films.reduce(function(s,f){return s+f.bo;},0).toFixed(0)}M</div>
+       </div>
+      ) : <div />}
+      <div style={{ textAlign: "right", color: "#f8fafc", fontWeight: 800, fontSize: 13 }}>
+       {d.films.reduce(function(s,f){return s+(f.score||0);},0).toFixed(2)}
+      </div>
+     </div>
      <div style={ft}>
-      Combined: {d.totalScore.toFixed(2)} → {m.base}b + {m.bonus}bn ={" "}
+      Combined: {d.totalScore.toFixed(2)} \u2192 {m.base}b + {m.bonus}bn ={" "}
       <b style={{ color: "#f8fafc", fontSize: 13 }}>{m.total} pts</b>
       {hasAnyLock(seasonData, selCat, m.owner) && (
        <LockIndicator note="Some values locked by commissioner" />
