@@ -24,7 +24,72 @@ try { var url = TMDB_BASE + '/search/person?api_key=' + TMDB_API_KEY + '&query='
 }
 
 async function getActorFilms(personId) {
-try { var url = TMDB_BASE + '/person/' + personId + '/movie_credits?api_key=' + TMDB_API_KEY; var res = await fetch(url); if (!res.ok) return []; var data = await res.json(); return (data.cast || []).filter(function(f) { return f.release_date && f.release_date >= FY_START && f.release_date <= FY_END; }).map(function(f) { return { tmdbId: f.id, title: f.title, releaseDate: f.release_date }; }); } catch (err) { return []; }
+try {
+ var url = TMDB_BASE + '/person/' + personId + '/movie_credits?api_key=' + TMDB_API_KEY;
+ var res = await fetch(url);
+ if (!res.ok) return [];
+ var data = await res.json();
+ var raw = (data.cast || []).filter(function(f) {
+ return f.release_date && f.release_date >= FY_START && f.release_date <= FY_END;
+ });
+
+ // Layer 1: Deduplicate by exact TMDB movie ID
+ var seenIds = {};
+ var deduped = [];
+ for (var i = 0; i < raw.length; i++) {
+ var f = raw[i];
+ if (!seenIds[f.id]) {
+  seenIds[f.id] = true;
+  deduped.push({ tmdbId: f.id, title: f.title, releaseDate: f.release_date });
+ }
+ }
+
+ // Layer 2: Deduplicate by fuzzy title + same release month
+ // Catches cases like "Avatar 3" vs "Avatar: Fire and Ash" releasing same month
+ var final = [];
+ for (var j = 0; j < deduped.length; j++) {
+ var film = deduped[j];
+ var dominated = false;
+ var filmWords = film.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(function(w) { return w.length > 2; });
+ var filmMonth = film.releaseDate.substring(0, 7); // "YYYY-MM"
+
+ for (var k = 0; k < final.length; k++) {
+  var existing = final[k];
+  var existingMonth = existing.releaseDate.substring(0, 7);
+
+  // Only compare films in the same month
+  if (filmMonth !== existingMonth) continue;
+
+  var existingWords = existing.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(function(w) { return w.length > 2; });
+
+  // Check if they share significant words (at least 1 word with 4+ chars in common)
+  var sharedWords = 0;
+  for (var w = 0; w < filmWords.length; w++) {
+  if (filmWords[w].length >= 4 && existingWords.indexOf(filmWords[w]) >= 0) {
+   sharedWords++;
+  }
+  }
+
+  if (sharedWords >= 1) {
+  // These are likely the same movie — keep the one with the longer/more descriptive title
+  console.log(' Dedup: "' + film.title + '" looks like duplicate of "' + existing.title + '" — skipping');
+  dominated = true;
+  // If the new one has a longer title, replace the existing one (it's probably the official name)
+  if (film.title.length > existing.title.length) {
+   final[k] = film;
+   console.log(' Keeping "' + film.title + '" over "' + existing.title + '" (longer title)');
+  }
+  break;
+  }
+ }
+
+ if (!dominated) {
+  final.push(film);
+ }
+ }
+
+ return final;
+} catch (err) { return []; }
 }
 
 async function getBoxOffice(tmdbId) {
