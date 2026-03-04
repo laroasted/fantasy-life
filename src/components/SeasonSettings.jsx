@@ -33,18 +33,19 @@ function newDetailRow(type) {
 }
 
 // ─── Small lock/unlock button ───
-function LockBtn({ locked, onToggle, size = 14 }) {
+function LockBtn({ locked, onToggle, size = 11 }) {
  return (
-  <button onClick={(e) => { e.stopPropagation(); onToggle(); }}
-   title={locked ? "Locked — cron won't overwrite this" : "Unlocked — click to lock"}
+  <button onClick={function(e) { e.stopPropagation(); onToggle(); }}
+   title={locked ? "Locked — cron won't overwrite this" : "Click to lock this field"}
    style={{
-    background: locked ? "rgba(234,179,8,0.2)" : "rgba(100,116,139,0.15)",
-    border: locked ? "1px solid rgba(234,179,8,0.5)" : "1px solid rgba(100,116,139,0.3)",
-    borderRadius: 4, padding: "3px 6px", cursor: "pointer",
-    fontSize: size, lineHeight: 1, color: locked ? "#eab308" : "#94a3b8",
-    transition: "all 0.15s", flexShrink: 0,
+    background: locked ? "rgba(234,179,8,0.2)" : "rgba(100,116,139,0.1)",
+    border: locked ? "1px solid rgba(234,179,8,0.5)" : "1px solid rgba(100,116,139,0.25)",
+    borderRadius: 4, padding: locked ? "2px 6px" : "2px 8px", cursor: "pointer",
+    fontSize: size, lineHeight: 1.3, color: locked ? "#eab308" : "#64748b",
+    transition: "all 0.15s", flexShrink: 0, fontWeight: locked ? 400 : 600,
+    letterSpacing: locked ? 0 : 0.3,
    }}>
-   {locked ? " " : " "}
+   {locked ? "\uD83D\uDD12" : "lock"}
   </button>
  );
 }
