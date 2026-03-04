@@ -4,11 +4,11 @@ import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, inputStyle, buttonStyle, COMMISSIONER_PASSWORD } from "../constants/theme";
 
 // ─── Which type of category is this? ───
-const FILM_CATS = ["Actor", "Actress"];
-const MUSIC_CATS = ["Musician"];
-const EVENT_CATS = ["Tennis", "Golf", "F1"];
-const COUNTRY_CATS = ["Country"];
-const STOCK_CATS = ["Stock"];
+var FILM_CATS = ["Actor", "Actress"];
+var MUSIC_CATS = ["Musician"];
+var EVENT_CATS = ["Tennis", "Golf", "F1"];
+var COUNTRY_CATS = ["Country"];
+var STOCK_CATS = ["Stock"];
 
 function catType(cat) {
  if (SPORT_CATEGORIES.includes(cat)) return "sport";
@@ -23,20 +23,21 @@ function catType(cat) {
 // ─── Blank row templates when you click "+ Add" ───
 function newDetailRow(type) {
  switch (type) {
-  case "sport": return { round: "New Round", opponent: "TBD", result: "—", series: "—", pts: 0, note: "" };
+  case "sport": return { round: "New Round", opponent: "TBD", result: "\u2014", series: "\u2014", pts: 0, note: "" };
   case "film": return { title: "New Film", date: "", bo: 0, rt: 0, score: 0, note: "" };
   case "music-song": return { title: "New Song", weeks: 0, numOneWeeks: 0, note: "" };
   case "music-grammy": return { category: "New Category", result: "nom", entry: "", pts: 0, note: "" };
-  case "event": return { event: "New Event", result: "—", opponent: "—", score: "—", pts: 0, note: "" };
+  case "event": return { event: "New Event", result: "\u2014", opponent: "\u2014", score: "\u2014", pts: 0, note: "" };
   default: return {};
  }
 }
 
 // ─── Small lock/unlock button ───
-function LockBtn({ locked, onToggle, size = 11 }) {
+function LockBtn({ locked, onToggle, size }) {
+ if (!size) size = 11;
  return (
   <button onClick={function(e) { e.stopPropagation(); onToggle(); }}
-   title={locked ? "Locked — cron won't overwrite this" : "Click to lock this field"}
+   title={locked ? "Locked \u2014 cron won't overwrite this" : "Click to lock this field"}
    style={{
     background: locked ? "rgba(234,179,8,0.2)" : "rgba(100,116,139,0.1)",
     border: locked ? "1px solid rgba(234,179,8,0.5)" : "1px solid rgba(100,116,139,0.25)",
@@ -54,35 +55,35 @@ function LockBtn({ locked, onToggle, size = 11 }) {
 // MAIN SETTINGS COMPONENT
 // ═══════════════════════════════════════════════════════════
 export default function SeasonSettings({ seasonData, onSave }) {
- const [authed, setAuthed] = useState(false);
- const [pw, setPw] = useState("");
- const [pwErr, setPwErr] = useState("");
- const [mode, setMode] = useState("scores");
- const [editCat, setEditCat] = useState(CATEGORY_ORDER[0]);
- const [edits, setEdits] = useState({});
- const [swaps, setSwaps] = useState({});
- const [bonusNotes, setBonusNotes] = useState({});
- const [detailEdits, setDetailEdits] = useState({});
- const [saved, setSaved] = useState(false);
- const [changelog, setChangelog] = useState([]);
- const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
- const [expandedMember, setExpandedMember] = useState(null);
- const [confirmDelete, setConfirmDelete] = useState(null);
+ var _a = useState(false), authed = _a[0], setAuthed = _a[1];
+ var _b = useState(""), pw = _b[0], setPw = _b[1];
+ var _c = useState(""), pwErr = _c[0], setPwErr = _c[1];
+ var _d = useState("scores"), mode = _d[0], setMode = _d[1];
+ var _e = useState(CATEGORY_ORDER[0]), editCat = _e[0], setEditCat = _e[1];
+ var _f = useState({}), edits = _f[0], setEdits = _f[1];
+ var _g = useState({}), swaps = _g[0], setSwaps = _g[1];
+ var _h = useState({}), bonusNotes = _h[0], setBonusNotes = _h[1];
+ var _i = useState({}), detailEdits = _i[0], setDetailEdits = _i[1];
+ var _j = useState(false), saved = _j[0], setSaved = _j[1];
+ var _k = useState([]), changelog = _k[0], setChangelog = _k[1];
+ var _l = useState(window.innerWidth < 640), isMobile = _l[0], setIsMobile = _l[1];
+ var _m = useState(null), expandedMember = _m[0], setExpandedMember = _m[1];
+ var _n = useState(null), confirmDelete = _n[0], setConfirmDelete = _n[1];
 
- useEffect(() => {
-  const onResize = () => setIsMobile(window.innerWidth < 640);
+ useEffect(function () {
+  var onResize = function () { setIsMobile(window.innerWidth < 640); };
   window.addEventListener("resize", onResize);
-  return () => window.removeEventListener("resize", onResize);
+  return function () { window.removeEventListener("resize", onResize); };
  }, []);
 
  if (!seasonData) {
   return <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>No active season to edit.</div>;
  }
 
- const cats = seasonData.categories || {};
- const detail = seasonData.detailedData || {};
- const members = seasonData.members || [];
- const locks = seasonData.locks || {};
+ var cats = seasonData.categories || {};
+ var detail = seasonData.detailedData || {};
+ var members = seasonData.members || [];
+ var locks = seasonData.locks || {};
 
  // ─── Password ───
  function doAuth() {
@@ -188,7 +189,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
   else if (ct === "music" && subArray === "songs") { d.songs = d.songs || []; d.songs.push(newDetailRow("music-song")); }
   else if (ct === "music" && subArray === "grammys") { d.grammys = d.grammys || []; d.grammys.push(newDetailRow("music-grammy")); }
   else if (ct === "event") { d.majors = d.majors || []; d.majors.push(newDetailRow("event")); }
-  setChangelog(function (prev) { return [cat + " — " + owner + ": added new " + (subArray || ct) + " row"].concat(prev); });
+  setChangelog(function (prev) { return [cat + " \u2014 " + owner + ": added new " + (subArray || ct) + " row"].concat(prev); });
   onSave(newSeason);
  }
 
@@ -208,8 +209,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
    var removed = arr[idx];
    var label = removed.title || removed.round || removed.event || removed.category || "row";
    arr.splice(idx, 1);
-   setChangelog(function (prev) { return [cat + " — " + owner + ': deleted "' + label + '"'].concat(prev); });
-   // Clean up locks that pointed at this deleted row
+   setChangelog(function (prev) { return [cat + " \u2014 " + owner + ': deleted "' + label + '"'].concat(prev); });
    if (newSeason.locks) {
     var prefix = cat + "|" + owner + "|";
     Object.keys(newSeason.locks).forEach(function (k) {
@@ -239,7 +239,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
    if (entry) {
     var oldVal = entry[field];
     if (oldVal !== newVal) {
-     log.push(cat + " — " + owner + ": " + field + " " + oldVal + " → " + newVal);
+     log.push(cat + " \u2014 " + owner + ": " + field + " " + oldVal + " \u2192 " + newVal);
      entry[field] = newVal;
      entry.total = entry.base + (entry.bonus || 0);
     }
@@ -262,7 +262,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
     if (dd) {
      var oldNote = dd.bonusNote || "";
      if (oldNote !== newNote) {
-      log.push(cat + " — " + owner + ': bonusNote "' + oldNote + '" → "' + newNote + '"');
+      log.push(cat + " \u2014 " + owner + ': bonusNote "' + oldNote + '" \u2192 "' + newNote + '"');
       dd.bonusNote = newNote;
      }
     }
@@ -289,7 +289,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
     var parsed = (typeof oldVal === "number") ? (parseFloat(newVal) || 0) : newVal;
     if (oldVal !== parsed) {
      var label = arr[idx].title || arr[idx].round || arr[idx].event || arr[idx].category || "row " + idx;
-     log.push(cat + " — " + owner + " — " + label + ": " + field + ' "' + oldVal + '" → "' + parsed + '"');
+     log.push(cat + " \u2014 " + owner + " \u2014 " + label + ": " + field + ' "' + oldVal + '" \u2192 "' + parsed + '"');
      arr[idx][field] = parsed;
     }
    }
@@ -315,26 +315,21 @@ export default function SeasonSettings({ seasonData, onSave }) {
    var detArr = newDetail[cat];
    if (!catArr || !detArr) return;
 
-   // Calculate each member's metric from their detail lines
    var memberMetrics = catArr.map(function (entry) {
     var d = detArr.find(function (x) { return x.owner === entry.owner; });
     var metric = 0;
 
     if (FILM_CATS.includes(cat) && d && d.films) {
-     // Actor/Actress: sum of film scores
      metric = d.films.reduce(function (s, f) { return s + (f.score || 0); }, 0);
     } else if (cat === 'Musician' && d && d.songs) {
-     // Musician: total chart weeks
      metric = d.songs.reduce(function (s, sg) { return s + (Number(sg.weeks) || 0); }, 0);
     } else if (cat === 'Stock' && d) {
-     // Stock: pctChange
      metric = Number(d.pctChange) || 0;
     }
 
     return { owner: entry.owner, metric: metric, entry: entry, detail: d };
    });
 
-   // Sort: highest metric = rank 1 (most base points)
    memberMetrics.sort(function (a, b) { return b.metric - a.metric; });
 
    var totalMembers = memberMetrics.length;
@@ -361,7 +356,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
    var newPick = swaps[key];
    var entry = (newCats[cat] || []).find(function (x) { return x.owner === owner; });
    if (entry && entry.pick !== newPick && newPick.trim()) {
-    log.push(cat + " — " + owner + ': pick "' + entry.pick + '" → "' + newPick + '"');
+    log.push(cat + " \u2014 " + owner + ': pick "' + entry.pick + '" \u2192 "' + newPick + '"');
     entry.pick = newPick;
     var detArr = newDetail[cat];
     if (detArr) {
@@ -385,7 +380,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
  if (!authed) {
   return (
    <div style={{ maxWidth: 500, margin: "0 auto", ...cardStyle, textAlign: "center" }}>
-    <div style={{ fontSize: 48, marginBottom: 12 }}> </div>
+    <div style={{ fontSize: 48, marginBottom: 12 }}>{"\uD83D\uDD10"}</div>
     <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>Commissioner Access Required</h3>
     <p style={{ color: theme.dim, fontSize: 13, marginBottom: 16 }}>
      Full scoring control: edit scores, bonus notes, detailed line items, lock fields, and swap picks.
@@ -410,7 +405,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
    case "sport": return [
     { key: "round", label: "Round", type: "text" },
     { key: "opponent", label: "Opp", type: "text" },
-    { key: "result", label: "Result", type: "select", options: ["Won", "Lost", "—"] },
+    { key: "result", label: "Result", type: "select", options: ["Won", "Lost", "\u2014"] },
     { key: "series", label: "Score", type: "text" },
     { key: "pts", label: "Pts", type: "number" },
     { key: "note", label: "Note", type: "text" },
@@ -454,21 +449,19 @@ export default function SeasonSettings({ seasonData, onSave }) {
        background: rowLocked ? "rgba(234,179,8,0.06)" : "rgba(51,65,85,0.2)",
        border: "1px solid " + (rowLocked ? "rgba(234,179,8,0.3)" : theme.bdr),
       }}>
-       {/* Row header: name + lock + delete */}
        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: theme.txt }}>
          {row.round || row.title || row.event || row.category || "Row " + (idx + 1)}
         </span>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-         <LockBtn locked={rowLocked} onToggle={function () { toggleLock(rKey); }} size={12} />
+         <LockBtn locked={rowLocked} onToggle={function () { toggleLock(rKey); }} size={10} />
          <button onClick={function () { setConfirmDelete(deleteKey); }}
           style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
            borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#ef4444", cursor: "pointer" }}>
-          ✕ Delete
+          {"\u2715"} Delete
          </button>
         </div>
        </div>
-       {/* Delete confirmation */}
        {confirmDelete === deleteKey && (
         <div style={{ padding: "6px 8px", marginBottom: 6, borderRadius: 6,
          background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
@@ -486,7 +479,6 @@ export default function SeasonSettings({ seasonData, onSave }) {
          </button>
         </div>
        )}
-       {/* Field inputs */}
        <div style={{
         display: "grid",
         gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(" + Math.min(fields.length, 4) + ", 1fr)",
@@ -500,7 +492,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
           <div key={f.key}>
            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
             <label style={{ fontSize: 9, color: theme.dim }}>{f.label}</label>
-            <LockBtn locked={fLocked} onToggle={function () { toggleLock(fKey); }} size={10} />
+            <LockBtn locked={fLocked} onToggle={function () { toggleLock(fKey); }} size={9} />
            </div>
            {f.type === "select" ? (
             <select value={val}
@@ -536,12 +528,10 @@ export default function SeasonSettings({ seasonData, onSave }) {
   var d = (detail[editCat] || []).find(function (x) { return x.owner === owner; });
   if (!d) return <div style={{ padding: 8, color: theme.dim, fontSize: 11 }}>No detail data available.</div>;
 
-  // SPORT / FILM / EVENT — use the generic array editor
   if (ct === "sport") return renderArrayEditor(entry, d.rounds || [], getDetailFields(), "Round");
   if (ct === "film") return renderArrayEditor(entry, d.films || [], getDetailFields(), "Film");
   if (ct === "event") return renderArrayEditor(entry, d.majors || [], getDetailFields(), "Event");
 
-  // MUSIC — two sub-arrays
   if (ct === "music") {
    var songFields = [
     { key: "title", label: "Song", type: "text" },
@@ -555,15 +545,14 @@ export default function SeasonSettings({ seasonData, onSave }) {
    ];
    return (
     <div style={{ padding: "8px 0" }}>
-     <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4 }}> Billboard Songs</div>
+     <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4 }}>Billboard Songs</div>
      {renderArrayEditor(entry, d.songs || [], songFields, "Song", "songs")}
-     <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4, marginTop: 12 }}> Grammy Events</div>
+     <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4, marginTop: 12 }}>Grammy Events</div>
      {renderArrayEditor(entry, d.grammys || [], grammyFields, "Grammy Event", "grammys")}
     </div>
    );
   }
 
-  // COUNTRY — GDP + Olympics inline
   if (ct === "country") {
    var gdpKey = editCat + "|" + owner + "|gdp";
    return (
@@ -572,7 +561,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
       <div>
        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
         <label style={{ fontSize: 9, color: theme.dim }}>GDP %</label>
-        <LockBtn locked={isLocked(gdpKey)} onToggle={function () { toggleLock(gdpKey); }} size={10} />
+        <LockBtn locked={isLocked(gdpKey)} onToggle={function () { toggleLock(gdpKey); }} size={9} />
        </div>
        <input type="number" step="0.1"
         value={getDetailEdit(editCat, owner, 0, "gdp") || d.gdp || 0}
@@ -582,7 +571,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
      </div>
      {d.olympics && (
       <div style={{ padding: 8, borderRadius: 6, background: "rgba(51,65,85,0.2)", border: "1px solid " + theme.bdr }}>
-       <div style={{ fontSize: 10, fontWeight: 700, color: theme.dim, marginBottom: 4 }}> Olympic Medals</div>
+       <div style={{ fontSize: 10, fontWeight: 700, color: theme.dim, marginBottom: 4 }}>Olympic Medals</div>
        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
         {["gold", "silver", "bronze", "rank"].map(function (f) {
          var oKey = editCat + "|" + owner + "|olympics." + f;
@@ -590,7 +579,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
           <div key={f}>
            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
             <label style={{ fontSize: 8, color: theme.dim }}>{f}</label>
-            <LockBtn locked={isLocked(oKey)} onToggle={function () { toggleLock(oKey); }} size={9} />
+            <LockBtn locked={isLocked(oKey)} onToggle={function () { toggleLock(oKey); }} size={8} />
            </div>
            <input type="number"
             value={getDetailEdit(editCat, owner, 0, f) || (d.olympics ? d.olympics[f] : 0) || 0}
@@ -606,7 +595,6 @@ export default function SeasonSettings({ seasonData, onSave }) {
    );
   }
 
-  // STOCK — simple inline
   if (ct === "stock") {
    return (
     <div style={{ padding: "8px 0" }}>
@@ -619,7 +607,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
           <label style={{ fontSize: 9, color: theme.dim }}>
            {f === "openPrice" ? "Open $" : f === "closePrice" ? "Close $" : "% Change"}
           </label>
-          <LockBtn locked={isLocked(sKey)} onToggle={function () { toggleLock(sKey); }} size={10} />
+          <LockBtn locked={isLocked(sKey)} onToggle={function () { toggleLock(sKey); }} size={9} />
          </div>
          <input type="number" step="0.01"
           value={getDetailEdit(editCat, owner, 0, f) || d[f] || 0}
@@ -644,17 +632,17 @@ export default function SeasonSettings({ seasonData, onSave }) {
    {/* ─── Mode tabs ─── */}
    <div style={{ display: "flex", gap: isMobile ? 3 : 8, marginBottom: 16 }}>
     {[
-     { id: "scores", label: isMobile ? " " : " Scores & Bonus" },
-     { id: "details", label: isMobile ? " " : " Detail Lines" },
-     { id: "swaps", label: isMobile ? " " : " Swap Picks" },
-     { id: "locks", label: isMobile ? " " : " Locks (" + Object.keys(locks).length + ")" },
-     { id: "log", label: isMobile ? " " : " Log" + (changelog.length ? " (" + changelog.length + ")" : "") },
+     { id: "scores", label: isMobile ? "Scores" : "Scores & Bonus" },
+     { id: "details", label: isMobile ? "Details" : "Detail Lines" },
+     { id: "swaps", label: isMobile ? "Swaps" : "Swap Picks" },
+     { id: "locks", label: isMobile ? "Locks" : "Locks (" + Object.keys(locks).length + ")" },
+     { id: "log", label: isMobile ? "Log" : "Log" + (changelog.length ? " (" + changelog.length + ")" : "") },
     ].map(function (tab) {
      return (
       <button key={tab.id} onClick={function () { setMode(tab.id); }}
        style={{ ...buttonStyle(mode === tab.id ? theme.acc : theme.srf), flex: 1,
         border: mode === tab.id ? "none" : "1px solid " + theme.bdr,
-        fontSize: isMobile ? 16 : 12, padding: isMobile ? "8px 4px" : "10px 12px" }}>
+        fontSize: isMobile ? 11 : 12, padding: isMobile ? "8px 4px" : "10px 12px" }}>
        {tab.label}
       </button>
      );
@@ -692,12 +680,10 @@ export default function SeasonSettings({ seasonData, onSave }) {
     </div>
    )}
 
-   {/* ═══════════════════════════════════════════════════ */}
-   {/* SCORES & BONUS MODE                */}
-   {/* ═══════════════════════════════════════════════════ */}
+   {/* ═══ SCORES & BONUS MODE ═══ */}
    {mode === "scores" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} — Scores & Bonus Notes</h3>
+     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Scores & Bonus Notes</h3>
      <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
       Edit base/bonus points and add a note explaining the bonus. Notes show in the scoreboard breakdown.
      </p>
@@ -714,7 +700,6 @@ export default function SeasonSettings({ seasonData, onSave }) {
          padding: isMobile ? "10px 12px" : "10px 14px", borderRadius: 8,
          background: "rgba(51,65,85,0.2)", border: "1px solid " + theme.bdr,
         }}>
-         {/* Name + inputs + total */}
          <div style={{
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr" : "100px 1fr 1fr 60px",
@@ -737,7 +722,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
            <div style={{ flex: 1 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
              <label style={{ fontSize: 10, color: theme.dim }}>Base</label>
-             <LockBtn locked={isLocked(bKey)} onToggle={function () { toggleLock(bKey); }} size={10} />
+             <LockBtn locked={isLocked(bKey)} onToggle={function () { toggleLock(bKey); }} size={9} />
             </div>
             <input type="number" value={baseVal}
              onChange={function (e) { setEditVal(editCat, entry.owner, "base", e.target.value); }}
@@ -746,7 +731,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
            <div style={{ flex: 1 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
              <label style={{ fontSize: 10, color: theme.dim }}>Bonus</label>
-             <LockBtn locked={isLocked(bnKey)} onToggle={function () { toggleLock(bnKey); }} size={10} />
+             <LockBtn locked={isLocked(bnKey)} onToggle={function () { toggleLock(bnKey); }} size={9} />
             </div>
             <input type="number" value={bonusVal}
              onChange={function (e) { setEditVal(editCat, entry.owner, "bonus", e.target.value); }}
@@ -760,10 +745,9 @@ export default function SeasonSettings({ seasonData, onSave }) {
            </div>
           )}
          </div>
-         {/* Bonus note */}
          <div style={{ marginTop: 8 }}>
           <label style={{ fontSize: 10, color: theme.dim, marginBottom: 2, display: "block" }}>
-           Bonus Note <span style={{ color: "#64748b" }}>— visible to all players in scoreboard</span>
+           Bonus Note <span style={{ color: "#64748b" }}>{"\u2014"} visible to all players in scoreboard</span>
           </label>
           <input value={getBonusNote(editCat, entry.owner)}
            onChange={function (e) { setBonusNoteVal(editCat, entry.owner, e.target.value); }}
@@ -774,13 +758,12 @@ export default function SeasonSettings({ seasonData, onSave }) {
        );
       })}
      </div>
-     {/* Save / Reset */}
      <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
       <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
        Save Changes
       </button>
       <button onClick={function () { setEdits({}); setBonusNotes({}); setSaved(false); }}
-       style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>↩ Reset</button>
+       style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
       <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
@@ -792,14 +775,15 @@ export default function SeasonSettings({ seasonData, onSave }) {
     </div>
    )}
 
-   {/* ═══════════════════════════════════════════════════ */}
-   {/* DETAIL LINES MODE                 */}
-   {/* ═══════════════════════════════════════════════════ */}
+   {/* ═══ DETAIL LINES MODE ═══ */}
    {mode === "details" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} — Detail Lines</h3>
+     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Detail Lines</h3>
      <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
       Add, edit, or delete individual rows (films, playoff rounds, songs, etc.). Click a member to expand.
+      {(FILM_CATS.includes(editCat) || MUSIC_CATS.includes(editCat) || STOCK_CATS.includes(editCat)) && (
+       <span style={{ color: "#3b82f6" }}> Base rankings auto-recalculate when you save.</span>
+      )}
      </p>
      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {catEntries.map(function (entry) {
@@ -824,15 +808,15 @@ export default function SeasonSettings({ seasonData, onSave }) {
            <span style={{ fontSize: 11, color: theme.dim }}>
             {(function () {
              var d = (detail[editCat] || []).find(function (x) { return x.owner === entry.owner; });
-             if (!d) return "—";
+             if (!d) return "\u2014";
              if (ct === "sport") return (d.rounds || []).length + " rounds";
              if (ct === "film") return (d.films || []).length + " films";
              if (ct === "music") return (d.songs || []).length + " songs, " + (d.grammys || []).length + " grammys";
              if (ct === "event") return (d.majors || []).length + " events";
-             return "—";
+             return "\u2014";
             })()}
            </span>
-           <span style={{ fontSize: 14, color: theme.dim }}>{isExp ? "▲" : "▼"}</span>
+           <span style={{ fontSize: 14, color: theme.dim }}>{isExp ? "\u25B2" : "\u25BC"}</span>
           </div>
          </div>
          {isExp && (
@@ -844,30 +828,27 @@ export default function SeasonSettings({ seasonData, onSave }) {
        );
       })}
      </div>
-     {/* Save / Reset */}
      <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
       <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
        Save All Detail Edits
       </button>
       <button onClick={function () { setDetailEdits({}); setSaved(false); }}
-       style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>↩ Reset</button>
+       style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
       <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
        background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)",
        textAlign: "center", fontSize: 12, color: theme.grn }}>
-       Detail edits saved.
+       Detail edits saved.{(FILM_CATS.includes(editCat) || MUSIC_CATS.includes(editCat) || STOCK_CATS.includes(editCat)) ? " Base rankings recalculated." : ""}
       </div>
      )}
     </div>
    )}
 
-   {/* ═══════════════════════════════════════════════════ */}
-   {/* PICK SWAPS MODE                  */}
-   {/* ═══════════════════════════════════════════════════ */}
+   {/* ═══ PICK SWAPS MODE ═══ */}
    {mode === "swaps" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} — Swap Picks</h3>
+     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Swap Picks</h3>
      <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
       Change a member's selection mid-season.
      </p>
@@ -894,7 +875,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
            onChange={function (e) { setSwapVal(editCat, entry.owner, e.target.value); }}
            style={{ ...inputStyle, padding: "6px 8px", fontSize: 13, flex: 1 }}
            placeholder="Enter new pick..." />
-          {changed && <span style={{ fontSize: 10, color: theme.acc, whiteSpace: "nowrap" }}>← was: {entry.pick}</span>}
+          {changed && <span style={{ fontSize: 10, color: theme.acc, whiteSpace: "nowrap" }}>{"\u2190"} was: {entry.pick}</span>}
          </div>
         </div>
        );
@@ -905,7 +886,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
        Save Swaps
       </button>
       <button onClick={function () { setSwaps({}); setSaved(false); }}
-       style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>↩ Reset</button>
+       style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
       <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
@@ -917,14 +898,12 @@ export default function SeasonSettings({ seasonData, onSave }) {
     </div>
    )}
 
-   {/* ═══════════════════════════════════════════════════ */}
-   {/* LOCKS OVERVIEW MODE                */}
-   {/* ═══════════════════════════════════════════════════ */}
+   {/* ═══ LOCKS OVERVIEW MODE ═══ */}
    {mode === "locks" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}> Lock Manager — {CATEGORY_LABELS[editCat]}</h3>
+     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{"\uD83D\uDD12"} Lock Manager {"\u2014"} {CATEGORY_LABELS[editCat]}</h3>
      <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 12px" }}>
-      Locked fields won't be overwritten by cron jobs. Other players see a icon with a hover tooltip.
+      Locked fields won't be overwritten by cron jobs. Other players see a lock icon with a hover tooltip.
       New seasons always start with zero locks.
      </p>
      {(function () {
@@ -941,7 +920,7 @@ export default function SeasonSettings({ seasonData, onSave }) {
          var info = pair[1];
          var parts = key.split("|");
          var owner = parts[1];
-         var field = parts.slice(2).join(" → ");
+         var field = parts.slice(2).join(" \u2192 ");
          var mid = (members.find(function (x) { return x.name === owner; }) || {}).id;
          return (
           <div key={key} style={{
@@ -975,20 +954,17 @@ export default function SeasonSettings({ seasonData, onSave }) {
      <div style={{ marginTop: 16, padding: 10, borderRadius: 8,
       background: "rgba(234,179,8,0.06)", border: "1px solid rgba(234,179,8,0.2)" }}>
       <div style={{ fontSize: 11, color: "#eab308" }}>
-       <b>How locks work:</b> Your cron job should call <code style={{ fontSize: 10 }}>isFieldLocked()</code> or{" "}
-       <code style={{ fontSize: 10 }}>isRowLocked()</code> from helpers.js before overwriting any data.
-       If a field is locked, the cron skips it.
+       <b>How locks work:</b> Your cron job checks the locks column in Supabase before overwriting any data.
+       If a field is locked, the cron skips it and logs what it skipped.
       </div>
      </div>
     </div>
    )}
 
-   {/* ═══════════════════════════════════════════════════ */}
-   {/* CHANGE LOG                    */}
-   {/* ═══════════════════════════════════════════════════ */}
+   {/* ═══ CHANGE LOG ═══ */}
    {mode === "log" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 12px", fontSize: 16 }}> Change Log</h3>
+     <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Change Log</h3>
      {changelog.length === 0 ? (
       <p style={{ color: theme.dim, fontSize: 13 }}>No changes recorded this session.</p>
      ) : (

@@ -10,7 +10,7 @@ function LockIndicator({ note }) {
  return (
   <span style={{ position: "relative", display: "inline-flex", alignItems: "center", marginLeft: 4 }}
    onMouseEnter={function () { setHover(true); }} onMouseLeave={function () { setHover(false); }}>
-   <span style={{ fontSize: 10, cursor: "help" }}> </span>
+   <span style={{ fontSize: 10, cursor: "help" }}>{"\uD83D\uDD12"}</span>
    {hover && (
     <span style={{
      position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
@@ -67,7 +67,6 @@ export default function Scoreboard({ seasonData }) {
  var isCountry = selCat === "Country";
  var isStock = selCat === "Stock";
 
- // ─── Bonus note display (used in all expanded footers) ───
  function bonusNoteDisplay(d) {
   if (!d || !d.bonusNote) return null;
   return (
@@ -77,7 +76,6 @@ export default function Scoreboard({ seasonData }) {
   );
  }
 
- // ─── Row-level lock indicator (for detail rows) ───
  function rowLockIcon(cat, owner, idx) {
   var key = cat + "|" + owner + "|row" + idx;
   if (!locks[key]) return null;
@@ -117,8 +115,8 @@ export default function Scoreboard({ seasonData }) {
     <div style={wp}>
      <div style={hd}>
       <b style={{ color: "#cbd5e1" }}>Regular Season: </b>
-      <span style={{ color: "#f8fafc", fontSize: 13, fontWeight: 700 }}>{d.record || "—"}</span>
-      {" → " + m.base + " base pts"}
+      <span style={{ color: "#f8fafc", fontSize: 13, fontWeight: 700 }}>{d.record || "\u2014"}</span>
+      {" \u2192 " + m.base + " base pts"}
      </div>
      {d.rounds && d.rounds.length > 0 ? (
       <div style={{ padding: "4px 12px" }}>
@@ -141,11 +139,11 @@ export default function Scoreboard({ seasonData }) {
            <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700,
             background: r.result === "Won" ? "rgba(34,197,94,0.2)" : r.result === "Lost" ? "rgba(239,68,68,0.15)" : "rgba(51,65,85,0.3)",
             color: r.result === "Won" ? "#22c55e" : r.result === "Lost" ? "#ef4444" : "#64748b" }}>
-            {r.result === "—" ? "—" : r.result + (isMobile ? "" : " " + r.series)}
+            {r.result === "\u2014" ? "\u2014" : r.result + (isMobile ? "" : " " + r.series)}
            </span>
           </div>
           <div style={{ textAlign: "right", color: r.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
-           {r.pts > 0 ? "+" + r.pts : "—"}
+           {r.pts > 0 ? "+" + r.pts : "\u2014"}
           </div>
          </div>
         );
@@ -190,20 +188,20 @@ export default function Scoreboard({ seasonData }) {
          </div>
          {!isMobile && (
           <div style={{ textAlign: "right", color: "#94a3b8" }}>
-           {f.bo > 0 ? "$" + f.bo.toFixed(1) + "M" : "—"}
+           {f.bo > 0 ? "$" + f.bo.toFixed(1) + "M" : "\u2014"}
           </div>
          )}
          {isMobile ? (
           <div style={{ textAlign: "right", fontSize: 10, color: "#94a3b8" }}>
-           <div>{f.bo > 0 ? "$" + f.bo.toFixed(0) + "M" : "—"}</div>
+           <div>{f.bo > 0 ? "$" + f.bo.toFixed(0) + "M" : "\u2014"}</div>
            <div style={{ color: f.rt >= 70 ? "#22c55e" : f.rt >= 50 ? "#eab308" : f.rt > 0 ? "#ef4444" : "#475569" }}>
-            {f.rt > 0 ? f.rt + "%" : "—"}
+            {f.rt > 0 ? f.rt + "%" : "\u2014"}
            </div>
           </div>
          ) : (
           <div style={{ textAlign: "center",
            color: f.rt >= 70 ? "#22c55e" : f.rt >= 50 ? "#eab308" : f.rt > 0 ? "#ef4444" : "#475569" }}>
-           {f.rt > 0 ? f.rt + "%" : "—"}
+           {f.rt > 0 ? f.rt + "%" : "\u2014"}
           </div>
          )}
          <div style={{ textAlign: "right", color: "#f1f5f9", fontWeight: 700 }}>
@@ -230,7 +228,7 @@ export default function Scoreboard({ seasonData }) {
       </div>
      </div>
      <div style={ft}>
-      Combined: {d.totalScore.toFixed(2)} \u2192 {m.base}b + {m.bonus}bn ={" "}
+      Combined: {d.totalScore.toFixed(2)} {"\u2192"} {m.base}b + {m.bonus}bn ={" "}
       <b style={{ color: "#f8fafc", fontSize: 13 }}>{m.total} pts</b>
       {hasAnyLock(seasonData, selCat, m.owner) && (
        <LockIndicator note="Some values locked by commissioner" />
@@ -261,11 +259,23 @@ export default function Scoreboard({ seasonData }) {
            <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sg.title}</span>
            <div style={{ textAlign: "right", color: "#94a3b8" }}>{sg.weeks}</div>
            <div style={{ textAlign: "right", color: sg.numOneWeeks > 0 ? "#22c55e" : "#475569", fontWeight: 700 }}>
-            {sg.numOneWeeks > 0 ? sg.numOneWeeks : "—"}
+            {sg.numOneWeeks > 0 ? sg.numOneWeeks : "\u2014"}
            </div>
           </div>
          );
         })}
+       </div>
+       {/* Totals row for songs */}
+       <div style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
+        padding: "6px 12px", background: "rgba(59,130,246,0.08)",
+        borderTop: "1px solid #334155", fontSize: 11, fontWeight: 700 }}>
+        <span style={{ color: "#94a3b8" }}>Total ({d.songs.length} song{d.songs.length !== 1 ? "s" : ""})</span>
+        <div style={{ textAlign: "right", color: "#f8fafc", fontWeight: 800 }}>
+         {d.songs.reduce(function(s,sg){return s+(Number(sg.weeks)||0);},0)}
+        </div>
+        <div style={{ textAlign: "right", color: d.songs.reduce(function(s,sg){return s+(Number(sg.numOneWeeks)||0);},0) > 0 ? "#22c55e" : "#475569", fontWeight: 800 }}>
+         {d.songs.reduce(function(s,sg){return s+(Number(sg.numOneWeeks)||0);},0) || "\u2014"}
+        </div>
        </div>
       </div>
      ) : (
@@ -291,7 +301,7 @@ export default function Scoreboard({ seasonData }) {
             {g.result === "win" ? " Won" : "Nom"}
            </span>
            <div style={{ textAlign: "right", color: g.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
-            {g.pts > 0 ? "+" + g.pts : "—"}
+            {g.pts > 0 ? "+" + g.pts : "\u2014"}
            </div>
           </div>
          );
@@ -315,7 +325,7 @@ export default function Scoreboard({ seasonData }) {
       <span style={{ color: "#f8fafc", fontSize: 13, fontWeight: 700 }}>
        {selCat === "Golf" ? "#" + d.ranking : d.ranking.toLocaleString()}
       </span>
-      {" → " + m.base + " base pts"}
+      {" \u2192 " + m.base + " base pts"}
      </div>
      {d.majors && d.majors.length > 0 && (
       <div style={{ padding: "4px 12px" }}>
@@ -329,18 +339,33 @@ export default function Scoreboard({ seasonData }) {
          }}>
           <div>
            <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{mj.event}</span>
-           {!isMobile && mj.opponent !== "—" && <span style={{ color: "#64748b", marginLeft: 6 }}>{mj.opponent}</span>}
-           {isMobile && mj.opponent !== "—" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.opponent}</div>}
-           {mj.score && mj.score !== "—" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.score}</div>}
+           {!isMobile && mj.opponent !== "\u2014" && <span style={{ color: "#64748b", marginLeft: 6 }}>{mj.opponent}</span>}
+           {isMobile && mj.opponent !== "\u2014" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.opponent}</div>}
+           {mj.score && mj.score !== "\u2014" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.score}</div>}
            {rowLockIcon(selCat, m.owner, mi)}
           </div>
           <span style={{ color: "#94a3b8", textAlign: "center", fontSize: isMobile ? 10 : 11 }}>{mj.result}</span>
           <div style={{ textAlign: "right", color: mj.pts > 0 ? "#f8fafc" : "#475569", fontWeight: 700 }}>
-           {mj.pts > 0 ? "+" + mj.pts : "—"}
+           {mj.pts > 0 ? "+" + mj.pts : "\u2014"}
           </div>
          </div>
         );
        })}
+      </div>
+     )}
+     {/* Totals row for event majors */}
+     {d.majors && d.majors.length > 0 && (
+      <div style={{
+       display: "grid",
+       gridTemplateColumns: isMobile ? "1fr 60px 40px" : "1fr 90px 50px",
+       gap: 4, padding: "6px 12px", background: "rgba(59,130,246,0.08)",
+       borderTop: "1px solid #334155", fontSize: 11, fontWeight: 700,
+      }}>
+       <span style={{ color: "#94a3b8" }}>Total ({d.majors.length} event{d.majors.length !== 1 ? "s" : ""})</span>
+       <div />
+       <div style={{ textAlign: "right", color: "#f8fafc", fontWeight: 800 }}>
+        +{d.majors.reduce(function(s,mj){return s+(Number(mj.pts)||0);},0)}
+       </div>
       </div>
      )}
      {totalLine}
@@ -355,7 +380,7 @@ export default function Scoreboard({ seasonData }) {
      <div style={hd}>
       <b style={{ color: "#cbd5e1" }}>GDP Growth: </b>
       <span style={{ color: "#f8fafc", fontSize: 13, fontWeight: 700 }}>{d.gdp}%</span>
-      {" → " + m.base + " base pts"}
+      {" \u2192 " + m.base + " base pts"}
      </div>
      {d.olympics && d.olympics.total > 0 ? (
       <div style={{ padding: "8px 12px" }}>
