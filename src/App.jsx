@@ -54,15 +54,20 @@ const loadSeason = useCallback(async (showRefreshing = false) => {
 useEffect(() => {
  (async () => {
  await loadSeason();
- // Load archived seasons from Supabase
+ // Load archived seasons from Supabase — fetch full season data (with picks)
  let archived = [];
  try {
-  const { data: archivedData } = await supabase
+  const { data: archivedMeta } = await supabase
   .from('seasons')
-  .select('year, name, status, draft_date')
+  .select('year')
   .eq('status', 'archived')
   .order('year', { ascending: false });
-  if (archivedData) archived = archivedData;
+  if (archivedMeta && archivedMeta.length > 0) {
+  const fullSeasons = await Promise.all(
+   archivedMeta.map(s => fetchSeasonFromSupabase(s.year))
+  );
+  archived = fullSeasons.filter(Boolean);
+  }
  } catch (e) { console.error("Failed to load archived seasons:", e); }
  setArchivedSeasons(archived);
  setLoaded(true);
