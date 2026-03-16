@@ -1,34 +1,40 @@
 /**
-* Fantasy Life — Daily Sports Standings Updater
-*
-* Updates base points for NFL, NBA, NHL, MLB, MLS from ESPN standings.
-* Bonus points are NEVER touched (locked from previous season playoffs).
-* Respects commissioner locks from the seasons.locks column.
-*
-* FIXES vs original:
-* FIX 1 — Strip abbreviation prefix before matching
-*      All 2026 picks are stored as e.g. "LAL Lakers", "BOS Celtics",
-*      "TB Lightning", "KC Chiefs" etc. The original matchTeam()
-*      searched for the full string "LAL Lakers" in ESPN data which
-*      returns "Los Angeles Lakers" — so ALL 48 NBA/NHL/NFL/MLB picks
-*      would have failed to match and never updated.
-*      Fix: strip leading 2-4 char uppercase prefix before matching.
-*
-* FIX 2 — Added NYCFC and SD FC to NAME_ALIASES
-*      These two MLS picks fail contains/exact/abbr checks without aliases.
-*
-* FIX 3 — Tie averaging for base points
-*      Original used simple array index rank: totalMembers - i
-*      If two picks tie in metric, the first-sorted one unfairly gets
-*      more points. Fix: average the tied positions (e.g. 3-way tie
-*      for 2nd–4th = (11+10+9)/3 = 10.0 each out of 12 players).
-*/
-
+ * Fantasy Life — Daily Sports Standings Updater
+ *
+ * Updates base points for NFL, NBA, NHL, MLB, MLS from ESPN standings.
+ * Bonus points are NEVER touched (locked from previous season playoffs).
+ * Respects commissioner locks from the seasons.locks column.
+ *
+ * FIXES vs original:
+ * FIX 1 — Strip abbreviation prefix before matching
+ *      All 2026 picks are stored as e.g. "LAL Lakers", "BOS Celtics",
+ *      "TB Lightning", "KC Chiefs" etc. The original matchTeam()
+ *      searched for the full string "LAL Lakers" in ESPN data which
+ *      returns "Los Angeles Lakers" — so ALL 48 NBA/NHL/NFL/MLB picks
+ *      would have failed to match and never updated.
+ *      Fix: strip leading 2-4 char uppercase prefix before matching.
+ *
+ * FIX 2 — Added NYCFC and SD FC to NAME_ALIASES
+ *      These two MLS picks fail contains/exact/abbr checks without aliases.
+ *
+ * FIX 3 — Tie averaging for base points
+ *      Original used simple array index rank: totalMembers - i
+ *      If two picks tie in metric, the first-sorted one unfairly gets
+ *      more points. Fix: average the tied positions (e.g. 3-way tie
+ *      for 2nd–4th = (11+10+9)/3 = 10.0 each out of 12 players).
+ *
+ * FIX 4 — NBA/NHL activeMonths updated for 2026 Fantasy Year
+ *      Base scoring for NBA/NHL uses the 2026-27 season, NOT the current
+ *      2025-26 season (which is bonus points only via playoffs).
+ *      Mar–Sep excluded to prevent current season from overwriting base scores.
+ *      Resumes Oct 2026 when the 2026-27 seasons begin.
+ */
+ 
 const { createClient } = require('@supabase/supabase-js');
-
+ 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-
+ 
 const ESPN_LEAGUES = {
  NFL: {
   url: 'https://site.api.espn.com/apis/v2/sports/football/nfl/standings',
@@ -38,12 +44,16 @@ const ESPN_LEAGUES = {
  NBA: {
   url: 'https://site.api.espn.com/apis/v2/sports/basketball/nba/standings',
   metricType: 'winpct',
-  activeMonths: [10, 11, 12, 1, 2, 3, 4],
+  // Base scoring uses the 2026-27 season (starts Oct 2026).
+  // Mar–Sep excluded: 2025-26 season is bonus points only + offseason gap.
+  activeMonths: [10, 11, 12, 1, 2],
  },
  NHL: {
   url: 'https://site.api.espn.com/apis/v2/sports/hockey/nhl/standings',
   metricType: 'points',
-  activeMonths: [10, 11, 12, 1, 2, 3, 4],
+  // Base scoring uses the 2026-27 season (starts Oct 2026).
+  // Mar–Sep excluded: 2025-26 season is bonus points only + offseason gap.
+  activeMonths: [10, 11, 12, 1, 2],
  },
  MLB: {
   url: 'https://site.api.espn.com/apis/v2/sports/baseball/mlb/standings',
@@ -56,7 +66,7 @@ const ESPN_LEAGUES = {
   activeMonths: [4, 5, 6, 7, 8, 9, 10],
  },
 };
-
+ 
 const NAME_ALIASES = {
  // NBA
  'T-Wolves': 'Timberwolves',
@@ -71,13 +81,13 @@ const NAME_ALIASES = {
  'Vancouver': 'Vancouver Whitecaps',
  'Philadelphia Union': 'Philadelphia',
 };
-
+ 
 // ── Lock helper ──
 function isFieldLocked(locks, category, ownerName, field) {
  if (!locks) return false;
  return !!locks[`${category}|${ownerName}|${field}`];
 }
-
+ 
 // FIX 1: Strip leading abbreviation prefix from pick names.
 // Picks are stored as e.g. "LAL Lakers", "BOS Celtics", "TB Lightning", "KC Chiefs".
 // ESPN returns team names without the prefix, so "LAL Lakers" must become "Lakers"
@@ -86,18 +96,18 @@ function stripPickPrefix(pickName) {
  // Remove leading 2–4 uppercase letters followed by a space: "LAL ", "BOS ", "TB ", "KC "
  return pickName.trim().replace(/^[A-Z]{2,4}\s+/, '');
 }
-
+ 
 function matchTeam(pickName, espnTeams) {
  const pick = pickName.trim();
  const stripped = stripPickPrefix(pick); // FIX 1
-
+ 
  // Build search terms: alias of original, alias of stripped, stripped, original
  const terms = [];
- if (NAME_ALIASES[pick])  terms.push(NAME_ALIASES[pick]);
+ if (NAME_ALIASES[pick])   terms.push(NAME_ALIASES[pick]);
  if (NAME_ALIASES[stripped]) terms.push(NAME_ALIASES[stripped]);
- if (stripped !== pick)   terms.push(stripped);
+ if (stripped !== pick)    terms.push(stripped);
  terms.push(pick);
-
+ 
  for (const term of terms) {
   const lower = term.toLowerCase();
   // 1. Exact teamName match
@@ -116,7 +126,7 @@ function matchTeam(pickName, espnTeams) {
  }
  return null;
 }
-
+ 
 async function fetchESPNStandings(league, config) {
  try {
   const res = await fetch(config.url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -141,7 +151,7 @@ async function fetchESPNStandings(league, config) {
   return teams;
  } catch (err) { console.error(` ${league}: Fetch error — ${err.message}`); return null; }
 }
-
+ 
 function parseEntry(entry, config) {
  try {
   const team = entry?.team; if (!team) return null;
@@ -172,12 +182,12 @@ function parseEntry(entry, config) {
   };
  } catch { return null; }
 }
-
+ 
 /**
-* FIX 3: Assign base points with proper tie averaging.
-* Players tied at the same metric share the average of their tied positions.
-* e.g. 3-way tie for positions 2–4 out of 12 = (11+10+9)/3 = 10.0 each
-*/
+ * FIX 3: Assign base points with proper tie averaging.
+ * Players tied at the same metric share the average of their tied positions.
+ * e.g. 3-way tie for positions 2–4 out of 12 = (11+10+9)/3 = 10.0 each
+ */
 function assignBasePointsWithTies(matched, totalMembers) {
  matched.sort((a, b) => b.metric - a.metric);
  const result = [];
@@ -193,7 +203,7 @@ function assignBasePointsWithTies(matched, totalMembers) {
  }
  return result;
 }
-
+ 
 module.exports = async function handler(req, res) {
  const authHeader = req.headers['authorization'];
  const cronSecret = process.env.CRON_SECRET;
@@ -203,47 +213,47 @@ module.exports = async function handler(req, res) {
  if (!SUPABASE_SERVICE_KEY) {
   return res.status(500).json({ error: 'Missing SUPABASE_SERVICE_KEY env var' });
  }
-
+ 
  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
  console.log('Fantasy Life — Updating Sports Standings...\n');
-
+ 
  const { data: season } = await supabase
   .from('seasons').select('year, locks').eq('status', 'active').single();
  if (!season) return res.status(200).json({ message: 'No active season found, skipping' });
-
+ 
  const seasonYear = season.year;
  const locks = season.locks || {};
-
+ 
  const { data: members } = await supabase.from('members').select('id, name');
  const memberNameById = {};
  (members || []).forEach(m => { memberNameById[m.id] = m.name; });
-
+ 
  const results = {};
  const currentMonth = new Date().getMonth() + 1;
-
+ 
  for (const [league, config] of Object.entries(ESPN_LEAGUES)) {
   console.log(`Processing ${league}...`);
-
+ 
   if (config.activeMonths && !config.activeMonths.includes(currentMonth)) {
    console.log(` ${league}: Offseason — scores frozen`);
    results[league] = { status: 'frozen', reason: 'Offseason' };
    continue;
   }
-
+ 
   const { data: picks, error: pickErr } = await supabase
    .from('picks')
    .select('id, member_id, pick, base, bonus')
    .eq('season_year', seasonYear)
    .eq('category', league);
-
+ 
   if (pickErr || !picks || picks.length === 0) {
    results[league] = { status: 'skipped', reason: 'no picks' };
    continue;
   }
-
+ 
   const espnTeams = await fetchESPNStandings(league, config);
   if (!espnTeams) { results[league] = { status: 'skipped', reason: 'no ESPN data' }; continue; }
-
+ 
   const matched = [], unmatched = [];
   for (const pick of picks) {
    const espnTeam = matchTeam(pick.pick, espnTeams);
@@ -254,41 +264,41 @@ module.exports = async function handler(req, res) {
     console.warn(` Could not match "${pick.pick}"`);
    }
   }
-
+ 
   if (matched.length === 0) {
    results[league] = { status: 'skipped', reason: 'no matches', unmatched };
    continue;
   }
-
+ 
   // FIX 3: tie-aware base point assignment
   const ranked = assignBasePointsWithTies(matched, picks.length);
-
+ 
   let updated = 0;
   const rankings = [];
-
+ 
   for (const m of ranked) {
    const ownerName = memberNameById[m.member_id] || m.member_id;
-   const baseLocked  = isFieldLocked(locks, league, ownerName, 'base');
+   const baseLocked   = isFieldLocked(locks, league, ownerName, 'base');
    const metricLocked = isFieldLocked(locks, league, ownerName, 'metric');
    const recordLocked = isFieldLocked(locks, league, ownerName, 'record');
-
+ 
    const updateObj = { updated_at: new Date().toISOString() };
-   if (!baseLocked)  updateObj.base  = m.newBase;
+   if (!baseLocked)   updateObj.base   = m.newBase;
    if (!metricLocked) updateObj.metric = Math.round(m.metric * 1000) / 1000;
    if (!recordLocked) updateObj.record = m.record;
-
+ 
    const skippedFields = [
-    ...(baseLocked  ? ['base']  : []),
+    ...(baseLocked   ? ['base']   : []),
     ...(metricLocked ? ['metric'] : []),
     ...(recordLocked ? ['record'] : []),
    ];
    if (skippedFields.length > 0) {
     console.log(` ${ownerName}: skipped locked fields: ${skippedFields.join(', ')}`);
    }
-
+ 
    const { error: updateErr } = await supabase.from('picks').update(updateObj).eq('id', m.id);
    if (updateErr) { console.error(` Failed to update ${m.member_id}:`, updateErr.message); continue; }
-
+ 
    updated++;
    rankings.push({
     member: m.member_id,
@@ -302,7 +312,7 @@ module.exports = async function handler(req, res) {
     ...(skippedFields.length > 0 && { lockedFields: skippedFields }),
    });
   }
-
+ 
   console.log(` ${league}: Updated ${updated}/${matched.length} picks`);
   results[league] = {
    status: 'updated', updated, total: picks.length,
@@ -310,7 +320,7 @@ module.exports = async function handler(req, res) {
    rankings,
   };
  }
-
+ 
  console.log('\nDone!');
  return res.status(200).json({
   message: 'Sports standings update complete',
