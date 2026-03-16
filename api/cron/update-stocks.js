@@ -43,7 +43,9 @@ function isFieldLocked(locks, category, ownerName, field) {
  
 async function fetchPrice(ticker) {
   try {
-    var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + ticker + '?interval=1d&range=1d';
+    // Yahoo Finance uses dashes not dots for class shares (e.g. BRK.B must be BRK-B)
+    var yahooTicker = ticker.replace(/\./g, '-');
+    var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + yahooTicker + '?interval=1d&range=1d';
     var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) { console.error('Yahoo Finance HTTP ' + res.status + ' for ' + ticker); return null; }
     var data = await res.json();
@@ -83,7 +85,7 @@ module.exports = async function handler(req, res) {
   for (var pick of picks) {
     var ticker = pick.pick;
     var openPrice = openPriceByPickId[pick.id];
-    if (!openPrice) { console.warn('  ' + ticker + ': No open price — skipping'); continue; }
+    if (openPrice == null || openPrice === 0) { console.warn('  ' + ticker + ': No open price or open price is 0 — skipping (check stock_prices table)'); continue; }
     var closePrice = await fetchPrice(ticker);
     if (closePrice === null) { console.warn('  ' + ticker + ': Failed to fetch — preserving existing'); continue; }
     var pctChange = ((closePrice - openPrice) / openPrice) * 100;
