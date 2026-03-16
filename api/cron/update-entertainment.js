@@ -3,6 +3,10 @@
 * Respects commissioner locks from seasons.locks column.
 * Fantasy year dates are read dynamically from seasons.fy_start and seasons.fy_end
 * so no code changes are needed when a new season starts.
+*
+* Tiebreaker: players with the same metric score split/average the base points
+* they collectively occupy.
+* e.g. all 12 tied at 0 → (12+11+...+1)/12 = 6.5 each
 */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -14,6 +18,34 @@ const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
+
+/**
+* Assigns base points with split/average tiebreaker logic.
+* Input array must already be sorted descending by totalScore before calling.
+*
+* Example — 12 players all tied at 0:
+*  Point values 12+11+...+1 = 78 / 12 = 6.5 → everyone gets 6.5
+*
+* Example — 3-way tie for 2nd (point values 11, 10, 9):
+*  (11+10+9) / 3 = 10.0 each
+*/
+function assignBasePointsWithTiebreaker(rankings, totalMembers) {
+ var n = rankings.length;
+ var i = 0;
+ while (i < n) {
+  var j = i;
+  while (j < n && rankings[j].totalScore === rankings[i].totalScore) j++;
+  var pointSum = 0;
+  for (var p = i; p < j; p++) pointSum += (totalMembers - p);
+  var avgPoints = Math.round((pointSum / (j - i)) * 100) / 100;
+  for (var p = i; p < j; p++) {
+   rankings[p].base = avgPoints;
+   rankings[p].rank = i + 1;
+  }
+  i = j;
+ }
+ return rankings;
+}
 
 function isFieldLocked(locks, category, ownerName, field) {
  if (!locks) return false;
@@ -29,10 +61,7 @@ async function findPersonId(name) {
   if (!data.results || data.results.length === 0) return null;
   var exact = data.results.find(function(p) { return p.name.toLowerCase() === name.toLowerCase(); });
   return exact ? exact.id : data.results[0].id;
- } catch (err) {
-  console.error(' TMDB search error for "' + name + '":', err.message);
-  return null;
- }
+ } catch (err) { console.error(' TMDB search error for "' + name + '":', err.message); return null; }
 }
 
 async function getActorFilms(personId, FY_START, FY_END) {
@@ -50,56 +79,32 @@ async function getActorFilms(personId, FY_START, FY_END) {
   var deduped = [];
   for (var i = 0; i < raw.length; i++) {
    var f = raw[i];
-   if (!seenIds[f.id]) {
-    seenIds[f.id] = true;
-    deduped.push({ tmdbId: f.id, title: f.title, releaseDate: f.release_date });
-   }
+   if (!seenIds[f.id]) { seenIds[f.id] = true; deduped.push({ tmdbId: f.id, title: f.title, releaseDate: f.release_date }); }
   }
 
   // Layer 2: Deduplicate by fuzzy title + same release month
-  // Catches cases like "Avatar 3" vs "Avatar: Fire and Ash" releasing same month
   var final = [];
   for (var j = 0; j < deduped.length; j++) {
    var film = deduped[j];
    var dominated = false;
    var filmWords = film.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(function(w) { return w.length > 2; });
-   var filmMonth = film.releaseDate.substring(0, 7); // "YYYY-MM"
+   var filmMonth = film.releaseDate.substring(0, 7);
 
    for (var k = 0; k < final.length; k++) {
     var existing = final[k];
-    var existingMonth = existing.releaseDate.substring(0, 7);
-
-    // Only compare films in the same month
-    if (filmMonth !== existingMonth) continue;
-
+    if (film.releaseDate.substring(0, 7) !== existing.releaseDate.substring(0, 7)) continue;
     var existingWords = existing.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(function(w) { return w.length > 2; });
-
-    // Check if they share significant words (at least 1 word with 4+ chars in common)
     var sharedWords = 0;
-    for (var w = 0; w < filmWords.length; w++) {
-     if (filmWords[w].length >= 4 && existingWords.indexOf(filmWords[w]) >= 0) {
-      sharedWords++;
-     }
-    }
-
+    for (var w = 0; w < filmWords.length; w++) { if (filmWords[w].length >= 4 && existingWords.indexOf(filmWords[w]) >= 0) sharedWords++; }
     if (sharedWords >= 1) {
-     // These are likely the same movie — keep the one with the longer/more descriptive title
      console.log(' Dedup: "' + film.title + '" looks like duplicate of "' + existing.title + '" — skipping');
      dominated = true;
-     // If the new one has a longer title, replace the existing one (it's probably the official name)
-     if (film.title.length > existing.title.length) {
-      final[k] = film;
-      console.log(' Keeping "' + film.title + '" over "' + existing.title + '" (longer title)');
-     }
+     if (film.title.length > existing.title.length) { final[k] = film; console.log(' Keeping "' + film.title + '" over "' + existing.title + '" (longer title)'); }
      break;
     }
    }
-
-   if (!dominated) {
-    final.push(film);
-   }
+   if (!dominated) final.push(film);
   }
-
   return final;
  } catch (err) { return []; }
 }
@@ -143,15 +148,14 @@ module.exports = async function handler(req, res) {
  var supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
  console.log(' Fantasy Life — Updating Actor/Actress Box Office...\n');
 
- // Pull season including fy_start and fy_end — no hardcoded dates needed
  var { data: season } = await supabase.from('seasons').select('year, locks, fy_start, fy_end').eq('status', 'active').single();
  if (!season) return res.status(200).json({ message: 'No active season found' });
  if (!season.fy_start || !season.fy_end) return res.status(500).json({ error: 'Active season is missing fy_start or fy_end — please set these in the seasons table' });
 
  var seasonYear = season.year;
  var locks = season.locks || {};
- var FY_START = season.fy_start; // e.g. "2026-02-13"
- var FY_END = season.fy_end;   // e.g. "2027-03-31"
+ var FY_START = season.fy_start;
+ var FY_END = season.fy_end;
 
  console.log(' Fantasy Year window: ' + FY_START + ' → ' + FY_END + '\n');
 
@@ -182,7 +186,6 @@ module.exports = async function handler(req, res) {
     continue;
    }
 
-   // Pass FY_START and FY_END into getActorFilms so it uses the season dates
    var films = await getActorFilms(personId, FY_START, FY_END); await delay(250);
    var { data: existingFilmRows } = await supabase.from('film_entries').select('title, rotten_tom').eq('pick_id', pick.id);
    var existingRT = {};
@@ -214,12 +217,9 @@ module.exports = async function handler(req, res) {
 
     totalScore = allFilms.reduce(function(sum, f) { return sum + f.score; }, 0);
 
-    // Update metric — check lock
     if (!isFieldLocked(locks, category, ownerName, 'metric')) {
      await supabase.from('picks').update({ metric: Math.round(totalScore * 100) / 100, updated_at: new Date().toISOString() }).eq('id', pick.id);
-    } else {
-     console.log(' ' + ownerName + ': metric is locked, skipping');
-    }
+    } else { console.log(' ' + ownerName + ': metric is locked, skipping'); }
 
     rankings.push({ member: pick.member_id, pick: actorName, totalScore: Math.round(totalScore * 100) / 100, filmCount: allFilms.length, films: allFilms.map(function(f) { return f.title + ' (' + f.bo + 'M × ' + f.rt + '% = ' + f.score + ')'; }) });
    } else {
@@ -229,23 +229,19 @@ module.exports = async function handler(req, res) {
    }
   }
 
-  // Rank and assign base points
+  // Sort descending by totalScore, then apply tiebreaker
   rankings.sort(function(a, b) { return b.totalScore - a.totalScore; });
-  var totalMembers = picks.length, updated = 0;
+  rankings = assignBasePointsWithTiebreaker(rankings, picks.length);
 
-  for (var i = 0; i < rankings.length; i++) {
-   var r = rankings[i], newBase = totalMembers - i;
-   r.base = newBase; r.rank = i + 1;
+  var updated = 0;
+  for (var r of rankings) {
    var matchingPick = picks.find(function(p) { return p.member_id === r.member; });
    if (matchingPick) {
     var own = memberNameById[matchingPick.member_id] || matchingPick.member_id;
     if (!isFieldLocked(locks, category, own, 'base')) {
-     var { error } = await supabase.from('picks').update({ base: newBase }).eq('id', matchingPick.id);
+     var { error } = await supabase.from('picks').update({ base: r.base }).eq('id', matchingPick.id);
      if (!error) updated++;
-    } else {
-     console.log(' ' + own + ': base is locked, skipping');
-     updated++;
-    }
+    } else { console.log(' ' + own + ': base is locked, skipping'); updated++; }
    }
   }
 
