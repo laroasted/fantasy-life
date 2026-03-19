@@ -11,6 +11,11 @@ const SUPABASE_ANON_KEY = 'sb_publishable_9lGdGZ1EEifhWZlPRQa-WA_QVbPD6O6';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+const COMMISSIONER_EMAILS = (process.env.REACT_APP_COMMISSIONER_EMAILS || '')
+  .split(',')
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
+
 // ── localStorage helpers (kept for draft/archive/settings) ──
 const STORAGE_PREFIX = "fl-";
 
@@ -49,6 +54,83 @@ export const STORAGE_KEYS = {
 ACTIVE_SEASON: "active-season",
 ARCHIVED_SEASONS: "archived-seasons",
 };
+
+export function getConfiguredCommissionerEmails() {
+ return COMMISSIONER_EMAILS;
+}
+
+function normalizeEmail(email) {
+ return (email || '').trim().toLowerCase();
+}
+
+function isConfiguredCommissionerEmail(email) {
+ const normalized = normalizeEmail(email);
+ return !!normalized && COMMISSIONER_EMAILS.includes(normalized);
+}
+
+export async function signInCommissioner(email) {
+ const normalized = normalizeEmail(email);
+ if (!normalized) {
+ return { ok: false, error: 'Enter an email address to receive your magic link.' };
+ }
+ if (COMMISSIONER_EMAILS.length > 0 && !isConfiguredCommissionerEmail(normalized)) {
+ return { ok: false, error: 'That email is not on the commissioner allow-list.' };
+ }
+
+ const { error } = await supabase.auth.signInWithOtp({
+ email: normalized,
+ options: {
+  emailRedirectTo: window.location.origin,
+ },
+ });
+
+ if (error) {
+ return { ok: false, error: error.message || 'Unable to send sign-in link.' };
+ }
+
+ return { ok: true };
+}
+
+export async function signOutCommissioner() {
+ const { error } = await supabase.auth.signOut();
+ return { ok: !error, error: error?.message || null };
+}
+
+export async function getCommissionerSession() {
+ const { data, error } = await supabase.auth.getSession();
+ if (error) return { session: null, role: null, error: error.message || 'Unable to load session.' };
+ const session = data?.session || null;
+ const role = await getCommissionerRole(session);
+ return { session, role, error: null };
+}
+
+export async function getCommissionerRole(session) {
+ const activeSession = session || (await supabase.auth.getSession()).data?.session || null;
+ if (!activeSession?.user) return null;
+
+ const email = normalizeEmail(activeSession.user.email);
+ if (isConfiguredCommissionerEmail(email)) {
+ return "commissioner";
+ }
+
+ try {
+ const { data, error } = await supabase
+ .from('profiles')
+ .select('role')
+ .eq('id', activeSession.user.id)
+ .maybeSingle();
+
+ if (error) {
+  console.warn('profiles role lookup failed:', error.message);
+  return null;
+ }
+
+ return data?.role || null;
+ } catch (err) {
+ console.warn('getCommissionerRole error:', err);
+ return null;
+ }
+}
 
 // ── Sport categories that have rounds[] ──
 const SPORT_CATS = ['NFL', 'MLB', 'NBA', 'NHL', 'NCAAF', 'NCAAB', 'MLS'];

@@ -49,6 +49,3 @@ export function buttonStyle(color) {
     cursor: "pointer",
   };
 }
-
-// Commissioner password
-export const COMMISSIONER_PASSWORD = "fantasyLifeP@$$w0rd";
