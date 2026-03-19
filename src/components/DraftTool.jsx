@@ -2,12 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import { DRAFT_MEMBERS, MEMBER_COLORS, NEW_MEMBER_COLORS } from "../constants/members";
 import { DRAFT_CATEGORIES, CATEGORY_ORDER, CATEGORY_KEY_TO_ID } from "../constants/categories";
 import { PICK_OPTIONS } from "../constants/pickOptions";
-import { theme, cardStyle, inputStyle, buttonStyle, COMMISSIONER_PASSWORD } from "../constants/theme";
+import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { generateSnakeOrder } from "../utils/helpers";
 
 const TIMER_DURATION = 120;
 
-export default function DraftTool({ onFinalize }) {
+export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail }) {
   const [phase, setPhase] = useState("setup");
   const [draftOrder, setDraftOrder] = useState([]);
   const [searchPhrase, setSearchPhrase] = useState("");
@@ -32,8 +32,6 @@ export default function DraftTool({ onFinalize }) {
   const [pickHistory, setPickHistory] = useState([]);
   const [seasonName, setSeasonName] = useState("" + new Date().getFullYear());
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
-  const [commPw, setCommPw] = useState("");
-  const [pwErr, setPwErr] = useState("");
 
   // Mobile: toggle panels instead of always showing
   const [mobilePanel, setMobilePanel] = useState("draft"); // "draft" | "rosters" | "history"
@@ -131,7 +129,7 @@ export default function DraftTool({ onFinalize }) {
   };
 
   const handleFinalize = () => {
-    if (commPw !== COMMISSIONER_PASSWORD) { setPwErr("Wrong password."); return; }
+    if (!isCommissioner) return;
     const categories = {};
     CATEGORY_ORDER.forEach((catKey) => {
       const catId = CATEGORY_KEY_TO_ID[catKey];
@@ -369,13 +367,18 @@ export default function DraftTool({ onFinalize }) {
               <input value={seasonName} onChange={(e) => setSeasonName(e.target.value)}
                 style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700 }} />
             </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-              <button onClick={() => setShowFinalizeModal(true)}
-                style={{ ...buttonStyle(theme.grn), padding: "12px 24px", fontSize: isMobile ? 13 : 15 }}>
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+              <button onClick={() => setShowFinalizeModal(true)} disabled={!isCommissioner}
+                style={{ ...buttonStyle(theme.grn), padding: "12px 24px", fontSize: isMobile ? 13 : 15, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default" }}>
                 🏆 Finalize & Launch {seasonName}
               </button>
               <button onClick={exportCSV} style={buttonStyle(theme.acc)}>📄 Export CSV</button>
             </div>
+            {!isCommissioner && (
+              <div style={{ marginTop: 12, fontSize: 12, color: theme.dim }}>
+                Commissioner sign-in is required to publish the draft as the new active season.
+              </div>
+            )}
           </div>
 
           {showFinalizeModal && (
@@ -386,15 +389,17 @@ export default function DraftTool({ onFinalize }) {
                 <div style={{ fontSize: 13, color: theme.mut, lineHeight: 1.7, marginBottom: 16 }}>
                   This will archive the current season and launch {seasonName}. Base scale: {draftOrder.length} members. All scores start at 0.
                 </div>
-                <input type="password" value={commPw}
-                  onChange={(e) => { setCommPw(e.target.value); setPwErr(""); }}
-                  placeholder="Enter password..." style={{ ...inputStyle, marginBottom: 8 }}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleFinalize(); }} />
-                {pwErr && <div style={{ fontSize: 12, color: theme.red, marginBottom: 8 }}>{pwErr}</div>}
+                <div style={{ ...inputStyle, marginBottom: 8, opacity: 0.7 }}>
+                  {commissionerEmail || "Commissioner session required"}
+                </div>
+                <div style={{ fontSize: 12, color: theme.dim, marginBottom: 8 }}>
+                  This step now uses your authenticated commissioner session instead of the old shared password.
+                </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => { setShowFinalizeModal(false); setCommPw(""); setPwErr(""); }}
+                  <button onClick={() => { setShowFinalizeModal(false); }}
                     style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>Cancel</button>
-                  <button onClick={handleFinalize} style={{ ...buttonStyle(theme.red), flex: 2 }}>Confirm & Launch</button>
+                  <button onClick={handleFinalize} disabled={!isCommissioner}
+                    style={{ ...buttonStyle(theme.red), flex: 2, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default" }}>Confirm & Launch</button>
                 </div>
               </div>
             </div>

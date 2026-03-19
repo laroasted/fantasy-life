@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
-import { supabase, storageGet, storageSet, STORAGE_KEYS, fetchSeasonFromSupabase, saveLocksToSupabase } from "./utils/storage";
+import {
+ supabase,
+ storageGet,
+ storageSet,
+ STORAGE_KEYS,
+ fetchSeasonFromSupabase,
+ saveLocksToSupabase,
+ signInCommissioner,
+ signOutCommissioner,
+ getCommissionerSession,
+ getConfiguredCommissionerEmails,
+} from "./utils/storage";
 import Scoreboard from "./components/Scoreboard";
 import SeasonHistory from "./components/SeasonHistory";
 import DraftTool from "./components/DraftTool";
@@ -23,12 +34,57 @@ const [refreshing, setRefreshing] = useState(false);
 const [lastUpdated, setLastUpdated] = useState(null);
 const [dataSource, setDataSource] = useState("loading");
 const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+const [authReady, setAuthReady] = useState(false);
+const [commissionerSession, setCommissionerSession] = useState(null);
+const [commissionerRole, setCommissionerRole] = useState(null);
+const [commissionerEmail, setCommissionerEmail] = useState("");
+const [authMessage, setAuthMessage] = useState("");
+const [authError, setAuthError] = useState("");
+const [authLoading, setAuthLoading] = useState(false);
+
+const configuredCommissioners = getConfiguredCommissionerEmails();
+const isCommissioner = commissionerRole === "commissioner" || commissionerRole === "admin";
 
 // Track viewport width
 useEffect(() => {
  const onResize = () => setIsMobile(window.innerWidth < 640);
  window.addEventListener("resize", onResize);
  return () => window.removeEventListener("resize", onResize);
+}, []);
+
+useEffect(() => {
+ let isMounted = true;
+
+ async function loadAuth() {
+  const { session, role } = await getCommissionerSession();
+  if (!isMounted) return;
+  setCommissionerSession(session);
+  setCommissionerRole(role);
+  setAuthReady(true);
+  if (session?.user?.email) setCommissionerEmail(session.user.email);
+ }
+
+ loadAuth();
+
+ const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+  if (!isMounted) return;
+  setCommissionerSession(session || null);
+  setCommissionerEmail(session?.user?.email || "");
+  if (!session) {
+   setCommissionerRole(null);
+   setAuthReady(true);
+   return;
+  }
+  const { role } = await getCommissionerSession();
+  if (!isMounted) return;
+  setCommissionerRole(role);
+  setAuthReady(true);
+ });
+
+ return () => {
+  isMounted = false;
+  listener?.subscription?.unsubscribe();
+ };
 }, []);
 
 const loadSeason = useCallback(async (showRefreshing = false) => {
@@ -87,13 +143,38 @@ const handleFinalize = useCallback(async (newSeason) => {
 
 // ── Settings save: update state + localStorage + push locks to Supabase ──
 const handleSettingsSave = useCallback(async (updatedSeason) => {
+ if (!isCommissioner) {
+  throw new Error("Commissioner access required to save season settings.");
+ }
  setActiveSeason(updatedSeason);
  // Save full season to localStorage (as before)
  try { await storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(updatedSeason)); } catch (e) {}
  // Also push locks to Supabase so cron jobs can see them
  if (updatedSeason.locks && updatedSeason.year) {
- await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
+  await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
  }
+}, [isCommissioner]);
+
+const handleCommissionerSignIn = useCallback(async () => {
+ setAuthLoading(true);
+ setAuthError("");
+ setAuthMessage("");
+ const result = await signInCommissioner(commissionerEmail);
+ if (result.ok) {
+  setAuthMessage("Magic link sent. Open it from your email on this device to unlock commissioner actions.");
+ } else {
+  setAuthError(result.error);
+ }
+ setAuthLoading(false);
+}, [commissionerEmail]);
+
+const handleCommissionerSignOut = useCallback(async () => {
+ setAuthLoading(true);
+ setAuthError("");
+ setAuthMessage("");
+ const result = await signOutCommissioner();
+ if (!result.ok) setAuthError(result.error || "Unable to sign out.");
+ setAuthLoading(false);
 }, []);
 
 if (!loaded) {
@@ -142,6 +223,93 @@ return (
     {memberCount} Members · 15 Categories
    </p>
    </div>
+   {authReady && (
+   <div style={{
+    display: "flex",
+    flexDirection: "column",
+    alignItems: isMobile ? "stretch" : "flex-end",
+    gap: 6,
+    minWidth: isMobile ? 0 : 280,
+   }}>
+    <div style={{
+     display: "flex",
+     alignItems: "center",
+     gap: 6,
+     flexWrap: "wrap",
+     justifyContent: isMobile ? "flex-start" : "flex-end",
+    }}>
+     {isCommissioner ? (
+     <>
+      <span style={{ fontSize: 11, color: "#86efac", fontWeight: 700 }}>
+       Commissioner signed in
+      </span>
+      <button
+      onClick={handleCommissionerSignOut}
+      disabled={authLoading}
+      style={{
+       background: "none",
+       border: "1px solid " + theme.bdr,
+       borderRadius: 8,
+       padding: isMobile ? "5px 8px" : "6px 10px",
+       color: theme.txt,
+       fontSize: 11,
+       cursor: authLoading ? "default" : "pointer",
+      }}>
+      Sign out
+      </button>
+     </>
+     ) : (
+     <>
+      <input
+      value={commissionerEmail}
+      onChange={(e) => { setCommissionerEmail(e.target.value); setAuthError(""); setAuthMessage(""); }}
+      placeholder="Commissioner email"
+      style={{
+       background: "#0f172a",
+       border: "1px solid " + theme.bdr,
+       borderRadius: 8,
+       color: theme.txt,
+       padding: isMobile ? "5px 8px" : "6px 10px",
+       fontSize: 11,
+       minWidth: isMobile ? 0 : 180,
+      }}
+      />
+      <button
+      onClick={handleCommissionerSignIn}
+      disabled={authLoading || !commissionerEmail.trim()}
+      style={{
+       background: "linear-gradient(135deg, #2563eb, #7c3aed)",
+       border: "none",
+       borderRadius: 8,
+       padding: isMobile ? "5px 8px" : "6px 10px",
+       color: "#fff",
+       fontSize: 11,
+       fontWeight: 700,
+       cursor: authLoading || !commissionerEmail.trim() ? "default" : "pointer",
+       opacity: authLoading || !commissionerEmail.trim() ? 0.6 : 1,
+      }}>
+      {authLoading ? "Sending..." : "Admin login"}
+      </button>
+     </>
+     )}
+    </div>
+    {!isCommissioner && configuredCommissioners.length > 0 && (
+    <div style={{ fontSize: 10, color: theme.dim, textAlign: isMobile ? "left" : "right" }}>
+     Allowed commissioner emails: {configuredCommissioners.join(", ")}
+    </div>
+    )}
+    {authMessage && (
+    <div style={{ fontSize: 10, color: "#86efac", textAlign: isMobile ? "left" : "right" }}>
+     {authMessage}
+    </div>
+    )}
+    {authError && (
+    <div style={{ fontSize: 10, color: "#fca5a5", textAlign: isMobile ? "left" : "right" }}>
+     {authError}
+    </div>
+    )}
+   </div>
+   )}
    <button onClick={handleRefresh} disabled={refreshing}
    style={{
     background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
@@ -204,8 +372,21 @@ return (
   </div>
   )}
   {activeTab === "history" && <SeasonHistory archivedSeasons={archivedSeasons} />}
-  {activeTab === "draft" && <DraftTool onFinalize={handleFinalize} />}
-  {activeTab === "settings" && <SeasonSettings seasonData={activeSeason} onSave={handleSettingsSave} />}
+  {activeTab === "draft" && (
+  <DraftTool
+   onFinalize={handleFinalize}
+   isCommissioner={isCommissioner}
+   commissionerEmail={commissionerSession?.user?.email || commissionerEmail}
+  />
+  )}
+  {activeTab === "settings" && (
+  <SeasonSettings
+   seasonData={activeSeason}
+   onSave={handleSettingsSave}
+   isCommissioner={isCommissioner}
+   commissionerEmail={commissionerSession?.user?.email || commissionerEmail}
+  />
+  )}
  </div>
  </div>
 );

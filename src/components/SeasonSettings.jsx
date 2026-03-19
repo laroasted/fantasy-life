@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
-import { theme, cardStyle, inputStyle, buttonStyle, COMMISSIONER_PASSWORD } from "../constants/theme";
+import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 
 // ─── Which type of category is this? ───
 var FILM_CATS = ["Actor", "Actress"];
@@ -54,21 +54,18 @@ function LockBtn({ locked, onToggle, size }) {
 // ═══════════════════════════════════════════════════════════
 // MAIN SETTINGS COMPONENT
 // ═══════════════════════════════════════════════════════════
-export default function SeasonSettings({ seasonData, onSave }) {
- var _a = useState(false), authed = _a[0], setAuthed = _a[1];
- var _b = useState(""), pw = _b[0], setPw = _b[1];
- var _c = useState(""), pwErr = _c[0], setPwErr = _c[1];
- var _d = useState("scores"), mode = _d[0], setMode = _d[1];
- var _e = useState(CATEGORY_ORDER[0]), editCat = _e[0], setEditCat = _e[1];
- var _f = useState({}), edits = _f[0], setEdits = _f[1];
- var _g = useState({}), swaps = _g[0], setSwaps = _g[1];
- var _h = useState({}), bonusNotes = _h[0], setBonusNotes = _h[1];
- var _i = useState({}), detailEdits = _i[0], setDetailEdits = _i[1];
- var _j = useState(false), saved = _j[0], setSaved = _j[1];
- var _k = useState([]), changelog = _k[0], setChangelog = _k[1];
- var _l = useState(window.innerWidth < 640), isMobile = _l[0], setIsMobile = _l[1];
- var _m = useState(null), expandedMember = _m[0], setExpandedMember = _m[1];
- var _n = useState(null), confirmDelete = _n[0], setConfirmDelete = _n[1];
+export default function SeasonSettings({ seasonData, onSave, isCommissioner, commissionerEmail }) {
+ var _a = useState("scores"), mode = _a[0], setMode = _a[1];
+ var _b = useState(CATEGORY_ORDER[0]), editCat = _b[0], setEditCat = _b[1];
+ var _c = useState({}), edits = _c[0], setEdits = _c[1];
+ var _d = useState({}), swaps = _d[0], setSwaps = _d[1];
+ var _e = useState({}), bonusNotes = _e[0], setBonusNotes = _e[1];
+ var _f = useState({}), detailEdits = _f[0], setDetailEdits = _f[1];
+ var _g = useState(false), saved = _g[0], setSaved = _g[1];
+ var _h = useState([]), changelog = _h[0], setChangelog = _h[1];
+ var _i = useState(window.innerWidth < 640), isMobile = _i[0], setIsMobile = _i[1];
+ var _j = useState(null), expandedMember = _j[0], setExpandedMember = _j[1];
+ var _k = useState(null), confirmDelete = _k[0], setConfirmDelete = _k[1];
 
  useEffect(function () {
   var onResize = function () { setIsMobile(window.innerWidth < 640); };
@@ -84,12 +81,6 @@ export default function SeasonSettings({ seasonData, onSave }) {
  var detail = seasonData.detailedData || {};
  var members = seasonData.members || [];
  var locks = seasonData.locks || {};
-
- // ─── Password ───
- function doAuth() {
-  if (pw === COMMISSIONER_PASSWORD) { setAuthed(true); setPwErr(""); }
-  else { setPwErr("Wrong password."); }
- }
 
  // ─── Score editing (base/bonus) ───
  function getEditVal(cat, owner, field) {
@@ -376,22 +367,19 @@ export default function SeasonSettings({ seasonData, onSave }) {
   setDetailEdits({});
  }
 
- // ═══ PASSWORD GATE ═══
- if (!authed) {
+ // ═══ COMMISSIONER GATE ═══
+ if (!isCommissioner) {
   return (
    <div style={{ maxWidth: 500, margin: "0 auto", ...cardStyle, textAlign: "center" }}>
     <div style={{ fontSize: 48, marginBottom: 12 }}>{"\uD83D\uDD10"}</div>
     <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>Commissioner Access Required</h3>
     <p style={{ color: theme.dim, fontSize: 13, marginBottom: 16 }}>
-     Full scoring control: edit scores, bonus notes, detailed line items, lock fields, and swap picks.
-    </p>
-    <input type="password" value={pw}
-     onChange={function (e) { setPw(e.target.value); setPwErr(""); }}
-     placeholder="Commissioner password..."
-     style={{ ...inputStyle, marginBottom: 8 }}
-     onKeyDown={function (e) { if (e.key === "Enter") doAuth(); }} />
-    {pwErr && <div style={{ fontSize: 12, color: theme.red, marginBottom: 8 }}>{pwErr}</div>}
-    <button onClick={doAuth} style={{ ...buttonStyle(), width: "100%" }}>Unlock Settings</button>
+     Sign in from the header with your commissioner email magic link to unlock scoring controls, locks, and corrections.
+     </p>
+    <div style={{ ...inputStyle, marginBottom: 8, textAlign: "left", opacity: 0.7 }}>
+     {commissionerEmail ? commissionerEmail : "No commissioner session detected"}
+    </div>
+    <button disabled style={{ ...buttonStyle(theme.srf), width: "100%", opacity: 0.6, cursor: "default" }}>Awaiting Commissioner Sign-In</button>
    </div>
   );
  }
