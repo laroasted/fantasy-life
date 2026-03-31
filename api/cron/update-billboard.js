@@ -17,6 +17,12 @@
  * they collectively occupy.
  * e.g. 3-way tie for ranks 2–4 out of 12 = (11+10+9)/3 = 10.0 each
  *
+ * SCORING NOTE:
+ * totalWeeks = chart appearances + num_one_weeks bonus
+ * i.e. each week a song sits at #1 counts as 2 weeks toward the ranking metric.
+ * num_one_weeks is stored separately in music_songs for display/QA purposes.
+ * The record string shows both: e.g. "144 chart wks (17 at #1)"
+ *
  * CHANGELOG (March 2026):
  * - NEW: Primary data source is now the mhollingshead GitHub JSON API.
  *        Clean structured JSON — no HTML parsing, no bot detection issues.
@@ -24,6 +30,9 @@
  * - FIX: 6-day lookahead buffer in getChartDates() so charts published on
  *        Tuesday (dated to the following Saturday) are picked up by Wed cron.
  * - FIX: Improved error logging throughout.
+ * - FIX: #1 weeks now count as an extra week toward totalWeeks for ranking.
+ *        Each week at #1 = 2 chart weeks total (base week + 1 bonus week).
+ *        num_one_weeks still stored separately for QA/display.
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -463,16 +472,25 @@ module.exports = async function handler(req, res) {
   for (var pick of picks) {
     var artistName = pick.pick;
     var songs = {};
+    // totalWeeks = chart appearances + num_one_weeks bonus
+    // Each week at #1 counts as 2 weeks (1 base + 1 bonus)
     var totalWeeks = 0;
+ 
     for (var entry of allEntries) {
       if (artistMatches(artistName, entry.artist)) {
         var songKey = entry.title;
         if (!songs[songKey]) songs[songKey] = { title: entry.title, weeks: 0, numOneWeeks: 0 };
+ 
         songs[songKey].weeks++;
-        totalWeeks++;
-        if (entry.rank === 1) songs[songKey].numOneWeeks++;
+        totalWeeks++;                         // count every chart appearance
+ 
+        if (entry.rank === 1) {
+          songs[songKey].numOneWeeks++;
+          totalWeeks++;                       // ← #1 bonus: counts as an extra week
+        }
       }
     }
+ 
     artistStats[pick.id] = {
       id: pick.id,
       member_id: pick.member_id,
@@ -494,9 +512,18 @@ module.exports = async function handler(req, res) {
     var baseLocked = isFieldLocked(locks, 'Musician', ownerName, 'base');
     var metricLocked = isFieldLocked(locks, 'Musician', ownerName, 'metric');
  
+    // Sum up #1 weeks across all songs for the record string
+    var totalNumOne = r.songs.reduce(function(sum, s) { return sum + s.numOneWeeks; }, 0);
+ 
     var updateObj = { updated_at: new Date().toISOString() };
     if (!baseLocked) updateObj.base = r.newBase;
-    if (!metricLocked) { updateObj.metric = r.totalWeeks; updateObj.record = r.totalWeeks + ' chart wks'; }
+    if (!metricLocked) {
+      updateObj.metric = r.totalWeeks;
+      // Display format: "144 chart wks (17 at #1)" — shows raw weeks + bonus context
+      updateObj.record = totalNumOne > 0
+        ? r.totalWeeks + ' chart wks (' + totalNumOne + ' at #1)'
+        : r.totalWeeks + ' chart wks';
+    }
  
     var skipped = [];
     if (baseLocked) skipped.push('base');
@@ -527,6 +554,7 @@ module.exports = async function handler(req, res) {
       member: r.member_id,
       artist: r.pick,
       totalWeeks: r.totalWeeks,
+      numOneWeeks: totalNumOne,
       songCount: r.songs.length,
       base: baseLocked ? Number(r.bonus) || 0 : r.newBase,
       bonus: Number(r.bonus) || 0,
