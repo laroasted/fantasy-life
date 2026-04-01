@@ -3,12 +3,11 @@
  *
  * DATA SOURCES (in priority order):
  *   1. mhollingshead/billboard-hot-100 GitHub repo (clean JSON, no parsing needed)
- *   2. Billboard.com HTML scraping (fallback if GitHub data is missing or invalid)
+ *   2. Billboard.com HTML scraping (fallback if GitHub returns 404 or invalid data)
  *
  * Respects commissioner locks from seasons.locks column.
  * Bonus points are NEVER touched (locked from Grammy results).
  * Paginates all billboard_weeks rows (Supabase caps at 1000 per query).
- * Cleans HTML entities (&amp; -> &) on insert.
  *
  * Fantasy year dates are read dynamically from seasons.fy_start and seasons.fy_end
  * so no code changes are needed when a new season starts.
@@ -23,28 +22,29 @@
  * num_one_weeks is stored separately in music_songs for display/QA purposes.
  * The record string shows both: e.g. "144 chart wks (17 at #1)"
  *
- * CHANGELOG (March 2026):
- * - NEW: Primary data source is now the mhollingshead GitHub JSON API.
+ * CHANGELOG:
+ * - NEW (March 2026): Primary data source switched to mhollingshead GitHub JSON API.
  *        Clean structured JSON — no HTML parsing, no bot detection issues.
- * - NEW: Billboard.com HTML scraping kept as automatic fallback.
- * - FIX: 6-day lookahead buffer in getChartDates() so charts published on
- *        Tuesday (dated to the following Saturday) are picked up by Wed cron.
- * - FIX: Improved error logging throughout.
- * - FIX: #1 weeks now count as an extra week toward totalWeeks for ranking.
+ * - NEW (March 2026): Billboard.com HTML scraping kept as automatic fallback.
+ * - FIX (March 2026): 6-day lookahead buffer in getChartDates() so charts published
+ *        on Tuesday (dated to the following Saturday) are picked up by Wed cron.
+ * - FIX (March 2026): #1 weeks now count as an extra week toward totalWeeks.
  *        Each week at #1 = 2 chart weeks total (base week + 1 bonus week).
- *        num_one_weeks still stored separately for QA/display.
- * - FIX: GitHub date guard — fetches the repo's latest available date index
- *        before attempting any date fetch. If a chart date is beyond what the
- *        repo has published, skips GitHub entirely and goes straight to
- *        Billboard scraping. Prevents caching stale/wrong data for recent weeks.
- * - FIX: Post-fetch validation — after fetching from either source, any entries
- *        with rank > 100 are stripped (rejects "Bubbling Under" chart bleed-through
- *        from Billboard HTML scraping). If fewer than 90 valid entries remain
- *        after stripping, the entire fetch is rejected and logged as failed
- *        rather than caching garbage data.
- * - FIX: cleanText() now also handles &#039; entity (apostrophe).
- * - FIX: Scoring query filters rank <= 100 as belt-and-suspenders guard so any
- *        rank > 100 rows that slipped into the DB are never scored.
+ *        num_one_weeks stored separately for QA/display.
+ * - FIX (April 2026): Removed GitHub index/date-guard approach — it was causing
+ *        GitHub to be skipped for all dates, falling through to the Billboard
+ *        scraper which injected garbage at rank 1 ("Gains in Weekly Performance").
+ *        Now tries GitHub directly for every date; a 404 is the natural fallback
+ *        signal. Simple and reliable.
+ * - FIX (April 2026): Added GARBAGE_TITLE_BLOCKLIST to Billboard parser — known
+ *        Billboard UI strings that were being picked up as chart entries are now
+ *        explicitly rejected before they can corrupt the data.
+ * - FIX (April 2026): Post-fetch validation strips rank > 100 (Bubbling Under
+ *        bleed-through), rejects batch if < 90 valid entries remain, rejects
+ *        batch if no genuine #1 entry is present.
+ * - FIX (April 2026): cleanText() handles &#039; apostrophe entity.
+ * - FIX (April 2026): Scoring query filters rank <= 100 as belt-and-suspenders
+ *        so any rank > 100 rows that slipped into the DB are never scored.
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -54,10 +54,40 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
  
 // ━━━ GitHub JSON source ━━━
 const GITHUB_BASE = 'https://raw.githubusercontent.com/mhollingshead/billboard-hot-100/main';
-const GITHUB_INDEX_URL = GITHUB_BASE + '/data.json'; // top-level index listing all available dates
  
-// Minimum valid entries after rank > 100 strip — below this we reject the whole fetch
+// ━━━ Minimum valid entries after rank > 100 strip ━━━
 const MIN_VALID_ENTRIES = 90;
+ 
+// ━━━ Known Billboard UI strings that are NOT songs ━━━
+// These appear in the HTML scraper output when Billboard's page structure
+// bleeds non-chart content into the parsed results. Any entry whose title
+// matches one of these is rejected outright before validation.
+const GARBAGE_TITLE_BLOCKLIST = [
+  'gains in weekly performance',
+  'debut chart date',
+  'peak chart date',
+  'chart history',
+  'peak position',
+  'weeks on chart',
+  'last week',
+  'this week',
+];
+ 
+function isGarbageTitle(title) {
+  if (!title) return true;
+  var lower = title.toLowerCase().trim();
+  for (var i = 0; i < GARBAGE_TITLE_BLOCKLIST.length; i++) {
+    if (lower.startsWith(GARBAGE_TITLE_BLOCKLIST[i])) return true;
+  }
+  // Also reject entries where the artist field is just a number
+  return false;
+}
+ 
+function isGarbageArtist(artist) {
+  if (!artist) return true;
+  // Reject entries where artist is purely numeric (e.g. "1", "2", "42")
+  return /^\d+$/.test(artist.trim());
+}
  
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // HELPERS
@@ -112,7 +142,7 @@ function cleanText(s) {
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
     .replace(/&#x27;/g, "'")
-    .replace(/&#039;/g, "'")   // ← added: handles apostrophe entity seen in Billboard HTML
+    .replace(/&#039;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ')
@@ -121,116 +151,74 @@ function cleanText(s) {
  
 /**
  * Validates and cleans a fetched set of entries:
- *   1. Strips any entries with rank > 100 (Bubbling Under bleed-through)
- *   2. Rejects the entire batch if fewer than MIN_VALID_ENTRIES remain
- *   3. Rejects the batch if no #1 entry is present
+ *   1. Strips garbage titles and numeric-only artists (Billboard UI bleed-through)
+ *   2. Strips any entries with rank > 100 (Bubbling Under bleed-through)
+ *   3. Rejects the entire batch if fewer than MIN_VALID_ENTRIES remain
+ *   4. Rejects the batch if no #1 entry is present
  *
  * Returns { entries, valid, reason }
  */
 function validateAndCleanEntries(entries, source, dateStr) {
   var before = entries.length;
  
-  // Strip Bubbling Under / rank > 100 garbage
-  var cleaned = entries.filter(function(e) { return e.rank >= 1 && e.rank <= 100; });
-  var stripped = before - cleaned.length;
- 
-  if (stripped > 0) {
-    console.log('  [Validate] ⚠ Stripped ' + stripped + ' entries with rank > 100 from ' + source + ' for ' + dateStr);
+  // Strip known garbage titles and numeric-only artists
+  var cleaned = entries.filter(function(e) {
+    return !isGarbageTitle(e.title) && !isGarbageArtist(e.artist);
+  });
+  var garbageStripped = before - cleaned.length;
+  if (garbageStripped > 0) {
+    console.log('  [Validate] ⚠ Stripped ' + garbageStripped + ' garbage title/artist entries from ' + source + ' for ' + dateStr);
   }
  
-  // Reject if too few valid entries remain after stripping
+  // Strip Bubbling Under / rank > 100
+  var beforeRankStrip = cleaned.length;
+  cleaned = cleaned.filter(function(e) { return e.rank >= 1 && e.rank <= 100; });
+  var rankStripped = beforeRankStrip - cleaned.length;
+  if (rankStripped > 0) {
+    console.log('  [Validate] ⚠ Stripped ' + rankStripped + ' entries with rank > 100 from ' + source + ' for ' + dateStr);
+  }
+ 
+  // Reject if too few valid entries remain
   if (cleaned.length < MIN_VALID_ENTRIES) {
     var reason = 'Only ' + cleaned.length + ' valid entries after stripping (need ' + MIN_VALID_ENTRIES + '+)';
     console.log('  [Validate] ✗ Rejecting ' + dateStr + ' from ' + source + ': ' + reason);
     return { entries: [], valid: false, reason: reason };
   }
  
-  // Reject if no #1 entry — something is fundamentally wrong with the data
-  var hasNumberOne = cleaned.some(function(e) { return e.rank === 1; });
-  if (!hasNumberOne) {
-    var reason = 'No #1 entry found in cleaned data';
+  // Reject if no #1 entry present
+  var numberOne = cleaned.find(function(e) { return e.rank === 1; });
+  if (!numberOne) {
+    var reason = 'No #1 entry found after cleaning';
     console.log('  [Validate] ✗ Rejecting ' + dateStr + ' from ' + source + ': ' + reason);
     return { entries: [], valid: false, reason: reason };
   }
  
-  var numberOne = cleaned.find(function(e) { return e.rank === 1; });
   console.log('  [Validate] ✓ ' + cleaned.length + ' valid entries for ' + dateStr
-    + (stripped > 0 ? ' (' + stripped + ' stripped)' : '')
+    + (garbageStripped + rankStripped > 0 ? ' (' + (garbageStripped + rankStripped) + ' total stripped)' : '')
     + ' | #1: "' + numberOne.title + '" — ' + numberOne.artist);
   return { entries: cleaned, valid: true };
 }
  
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// GITHUB DATE GUARD
-// Fetches the repo's top-level index once per cron run to find the
-// latest available date. Any date beyond that skips GitHub entirely
-// and falls back to Billboard scraping immediately.
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 
-var _githubLatestDate = null; // cached within a single cron run
- 
-async function getGitHubLatestDate() {
-  if (_githubLatestDate !== null) return _githubLatestDate;
- 
-  try {
-    console.log('  [GitHub] Fetching repo index to find latest available date...');
-    var res = await fetch(GITHUB_INDEX_URL, { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) {
-      console.log('  [GitHub] ✗ Could not fetch repo index (HTTP ' + res.status + ') — skipping GitHub for all dates this run');
-      _githubLatestDate = '1970-01-01';
-      return _githubLatestDate;
-    }
-    var json = await res.json();
- 
-    // The index is an array of objects — find the max date field
-    var dates = (json || [])
-      .map(function(item) { return item.date || ''; })
-      .filter(Boolean)
-      .sort();
- 
-    if (dates.length === 0) {
-      console.log('  [GitHub] ✗ Repo index returned no dates — skipping GitHub for all dates this run');
-      _githubLatestDate = '1970-01-01';
-      return _githubLatestDate;
-    }
- 
-    _githubLatestDate = dates[dates.length - 1];
-    console.log('  [GitHub] ✓ Latest available date in repo: ' + _githubLatestDate);
-    return _githubLatestDate;
-  } catch (err) {
-    console.log('  [GitHub] ✗ Error fetching repo index: ' + err.message + ' — skipping GitHub for all dates this run');
-    _githubLatestDate = '1970-01-01';
-    return _githubLatestDate;
-  }
-}
- 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SOURCE 1: mhollingshead/billboard-hot-100 GitHub JSON
+// Tries the date directly — a 404 means it's not in the repo yet
+// and we fall through to Billboard scraping naturally.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  
-/**
- * Fetches chart data from the GitHub JSON repo.
- * Returns validated array of { rank, title, artist } or null if unavailable/invalid.
- */
 async function fetchFromGitHub(dateStr) {
-  // ── Date guard: skip if this date is beyond what the repo has published ──
-  var latestDate = await getGitHubLatestDate();
-  if (dateStr > latestDate) {
-    console.log('  [GitHub] Skipping ' + dateStr + ' — beyond latest repo date (' + latestDate + '), going straight to Billboard');
-    return null;
-  }
- 
   var url = GITHUB_BASE + '/date/' + dateStr + '.json';
   try {
     console.log('  [GitHub] Trying ' + url);
     var res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+ 
     if (!res.ok) {
-      console.log('  [GitHub] HTTP ' + res.status + ' for ' + dateStr + ' — not available');
+      console.log('  [GitHub] HTTP ' + res.status + ' for ' + dateStr + ' — not in repo yet, falling back to Billboard');
       return null;
     }
+ 
     var json = await res.json();
     if (!json || !json.data || json.data.length < 10) {
-      console.log('  [GitHub] Got JSON but data array too small (' + (json.data ? json.data.length : 0) + ' entries)');
+      console.log('  [GitHub] Data array too small (' + (json.data ? json.data.length : 0) + ' entries) — falling back');
       return null;
     }
  
@@ -242,13 +230,12 @@ async function fetchFromGitHub(dateStr) {
       };
     });
  
-    // Validate: strip rank > 100, check minimum count and #1 presence
     var validation = validateAndCleanEntries(raw, 'github', dateStr);
     if (!validation.valid) return null;
  
     return validation.entries;
   } catch (err) {
-    console.log('  [GitHub] ✗ Error: ' + err.message);
+    console.log('  [GitHub] ✗ Error: ' + err.message + ' — falling back to Billboard');
     return null;
   }
 }
@@ -309,7 +296,7 @@ async function fetchFromBillboard(dateStr) {
         return null;
       }
  
-      // Validate: strip rank > 100 (Bubbling Under bleed-through), check minimum count and #1
+      // Validate: strip garbage, strip rank > 100, check minimum count and #1
       var validation = validateAndCleanEntries(parsed, 'billboard', dateStr);
       if (!validation.valid) {
         if (attempt < MAX_RETRIES) {
@@ -426,13 +413,12 @@ function parseStrategy4(html) {
 }
  
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// COMBINED FETCH: GitHub first (with date guard), Billboard fallback
+// COMBINED FETCH: GitHub first, Billboard fallback
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  
 async function fetchChart(dateStr) {
-  // Try GitHub JSON first — fast, reliable, no parsing
-  // Date guard inside fetchFromGitHub skips it automatically for dates
-  // beyond what the repo has published, going straight to Billboard
+  // Try GitHub JSON first — fast, reliable, no parsing needed.
+  // A 404 means the date isn't in the repo yet and we fall back naturally.
   var entries = await fetchFromGitHub(dateStr);
   if (entries) return { entries: entries, source: 'github' };
  
@@ -470,9 +456,6 @@ function artistMatches(pickedArtist, billboardArtist) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  
 module.exports = async function handler(req, res) {
-  // Reset GitHub date cache for each fresh invocation
-  _githubLatestDate = null;
- 
   var authHeader = req.headers['authorization'];
   var cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== 'Bearer ' + cronSecret) return res.status(401).json({ error: 'Unauthorized' });
@@ -565,7 +548,7 @@ module.exports = async function handler(req, res) {
       console.log('✓ Cached ' + result.entries.length + ' entries via ' + result.source);
     }
  
-    // Short delay between fetches
+    // Short delay between fetches (GitHub is fast, Billboard needs more breathing room)
     var delayMs = result.source === 'github' ? 500 : 2500;
     if (fetchedCount < MAX_FETCHES_PER_RUN && missingDates.indexOf(dateStr) < missingDates.length - 1) {
       await new Promise(function(r) { setTimeout(r, delayMs); });
@@ -578,8 +561,8 @@ module.exports = async function handler(req, res) {
   if (!picks || picks.length === 0) return res.status(200).json({ message: 'No Musician picks found' });
  
   // Paginate all chart entries in FY window
-  // rank <= 100 filter is belt-and-suspenders: never score rank > 100 rows
-  // even if any slipped through validation into the DB
+  // rank <= 100 is belt-and-suspenders: never score rank > 100 rows
+  // even if any slipped through into the DB
   var allEntries = [];
   var pageSize = 1000;
   var page = 0;
@@ -655,6 +638,7 @@ module.exports = async function handler(req, res) {
     if (!baseLocked) updateObj.base = r.newBase;
     if (!metricLocked) {
       updateObj.metric = r.totalWeeks;
+      // e.g. "144 chart wks (17 at #1)"
       updateObj.record = totalNumOne > 0
         ? r.totalWeeks + ' chart wks (' + totalNumOne + ' at #1)'
         : r.totalWeeks + ' chart wks';
@@ -703,7 +687,6 @@ module.exports = async function handler(req, res) {
     season: season.year,
     timestamp: new Date().toISOString(),
     fantasyYear: { start: FY_START, end: FY_END },
-    githubLatestDate: _githubLatestDate,
     chartWeeksCached: cachedDatesSet.size + fetchedCount,
     chartWeeksTotal: allChartDates.length,
     newWeeksFetched: fetchedCount,
@@ -716,7 +699,6 @@ module.exports = async function handler(req, res) {
  
   console.log('\n━━━ Summary ━━━');
   console.log(summary.message);
-  console.log('GitHub latest date: ' + _githubLatestDate);
   console.log('Scanned ' + allEntries.length + ' entries across ' + (cachedDatesSet.size + fetchedCount) + ' weeks');
   if (sourceLog.length > 0) console.log('Sources: ' + sourceLog.join(', '));
   if (failedDates.length > 0) console.log('⚠ Failed: ' + failedDates.join(', '));
