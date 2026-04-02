@@ -17,12 +17,14 @@ import Scoreboard from "./components/Scoreboard";
 import SeasonHistory from "./components/SeasonHistory";
 import DraftTool from "./components/DraftTool";
 import SeasonSettings from "./components/SeasonSettings";
+import Calendar from "./components/Calendar";
  
 const TABS = [
-  { id: "scoreboard", label: " Scoreboard", short: " " },
-  { id: "history", label: " History", short: " " },
-  { id: "draft", label: " Draft", short: " " },
-  { id: "settings", label: " Settings", short: " " },
+  { id: "scoreboard", label: "📊 Scoreboard", short: "📊" },
+  { id: "calendar",   label: "📅 Calendar",   short: "📅" },
+  { id: "history",    label: "🏛️ History",    short: "🏛️" },
+  { id: "draft",      label: "🎯 Draft",      short: "🎯" },
+  { id: "settings",   label: "⚙️ Settings",   short: "⚙️" },
 ];
  
 export default function App() {
@@ -89,7 +91,6 @@ export default function App() {
  
   const loadSeason = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
-    // Fetch whichever season is currently active (status = 'active')
     let active = await fetchSeasonFromSupabase();
     let source = "supabase";
     if (!active) {
@@ -110,7 +111,6 @@ export default function App() {
   useEffect(() => {
     (async () => {
       await loadSeason();
-      // Load archived seasons from Supabase — fetch full season data (with picks)
       let archived = [];
       try {
         const { data: archivedMeta } = await supabase
@@ -141,15 +141,12 @@ export default function App() {
     setActiveTab("scoreboard");
   }, [activeSeason, archivedSeasons]);
  
-  // ── Settings save: update state + localStorage + push locks to Supabase ──
   const handleSettingsSave = useCallback(async (updatedSeason) => {
     if (!isCommissioner) {
       throw new Error("Commissioner access required to save season settings.");
     }
     setActiveSeason(updatedSeason);
-    // Save full season to localStorage (as before)
     try { await storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(updatedSeason)); } catch (e) {}
-    // Also push locks to Supabase so cron jobs can see them
     if (updatedSeason.locks && updatedSeason.year) {
       await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
     }
@@ -181,7 +178,7 @@ export default function App() {
     return (
       <div style={{ background: theme.bg, minHeight: "100vh", display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", color: theme.dim, fontFamily: "system-ui", gap: 12 }}>
-        <div style={{ fontSize: 32 }}> </div>
+        <div style={{ fontSize: 32 }}>🏆</div>
         <div style={{ fontSize: 16, fontWeight: 600 }}>Loading scores...</div>
         <div style={{ width: 120, height: 3, borderRadius: 2, background: "#1e293b", overflow: "hidden" }}>
           <div style={{ width: "40%", height: "100%", borderRadius: 2, background: "#3b82f6",
@@ -212,7 +209,7 @@ export default function App() {
           {/* Title row */}
           <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12,
             marginBottom: isMobile ? 10 : 16 }}>
-            <span style={{ fontSize: isMobile ? 24 : 32 }}> </span>
+            <span style={{ fontSize: isMobile ? 24 : 32 }}>🏆</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{
                 fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0,
@@ -358,13 +355,16 @@ export default function App() {
               </p>
               {lastUpdated && (
                 <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6 }}>
-                  {dataSource === "supabase" ? " Live" : dataSource === "local" ? " Cached" : " Offline"}
+                  {dataSource === "supabase" ? "🟢 Live" : dataSource === "local" ? "🟡 Cached" : "🔴 Offline"}
                   {" "}· Updated {lastUpdated.toLocaleTimeString()}
                 </p>
               )}
             </div>
             <Scoreboard seasonData={activeSeason} />
           </div>
+        )}
+        {activeTab === "calendar" && (
+          <Calendar seasonYear={year} />
         )}
         {activeTab === "history" && <SeasonHistory archivedSeasons={archivedSeasons} />}
         {activeTab === "draft" && (
