@@ -1,16 +1,20 @@
 /**
  * Fantasy Life — Country GDP + Olympics Updater
+ * 
+ * DATA SOURCE: IMF World Economic Outlook (DataMapper API)
+ *   - Indicator: NGDP_RPCH (Real GDP growth, annual percent change)
+ *   - Returns forecast/projected GDP for the fantasy year
+ *   - Previous version used World Bank (historical actuals only), which
+ *     returned stale data 1-2 years behind and missed many countries.
+ *
+ * FANTASY YEAR: Derived from seasons.year (the active season), not hardcoded.
+ *   - Also requests year-1 and year+1 as fallbacks in case IMF hasn't
+ *     published the exact year yet.
+ *
  * Respects commissioner locks from seasons.locks column.
  *
  * Tiebreaker: countries with the same GDP growth % split/average the base
  * points they collectively occupy.
- * e.g. 2-way tie for ranks 1–2 out of 12 = (12+11)/2 = 11.5 each
- *
- * FIXES from previous version:
- * 1. Comprehensive ISO-3166 lookup — no more missing countries when new ones are drafted
- * 2. All picks ranked together (not just those with fresh API data)
- * 3. Olympic NOC codes comprehensive
- * 4. Logging improved for debugging
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -20,8 +24,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
  
 // ═══════════════════════════════════════════════════════════════════════
 // COMPREHENSIVE COUNTRY → ISO 3166-1 alpha-3 LOOKUP
-// This replaces the old hardcoded map that broke every time someone
-// drafted a country not in the list.
+// The IMF DataMapper API uses these same codes.
 // ═══════════════════════════════════════════════════════════════════════
 const COUNTRY_ISO3 = {
   // Current & past Fantasy Life picks
@@ -36,7 +39,7 @@ const COUNTRY_ISO3 = {
   'US': 'USA', 'USA': 'USA', 'U.S.': 'USA', 'U.S.A.': 'USA',
   'America': 'USA', 'UK': 'GBR', 'United Kingdom': 'GBR',
   'Great Britain': 'GBR', 'England': 'GBR',
-  // Expanded list — every country someone might realistically draft
+  // Expanded — every country someone might realistically draft
   'Afghanistan': 'AFG', 'Albania': 'ALB', 'Algeria': 'DZA',
   'Andorra': 'AND', 'Angola': 'AGO', 'Antigua and Barbuda': 'ATG',
   'Argentina': 'ARG', 'Armenia': 'ARM', 'Australia': 'AUS',
@@ -106,17 +109,14 @@ const COUNTRY_ISO3 = {
  
 // ═══════════════════════════════════════════════════════════════════════
 // COMPREHENSIVE NOC (Olympic committee) CODE LOOKUP
-// ISO codes and NOC codes differ for some countries
 // ═══════════════════════════════════════════════════════════════════════
 const COUNTRY_NOC = {
   'Norway': 'NOR', 'South Sudan': 'SSD', 'Germany': 'GER',
   'United States': 'USA', 'Russia': 'ROC', 'India': 'IND',
   'Libya': 'LBA', 'Ethiopia': 'ETH', 'Guyana': 'GUY',
   'Canada': 'CAN', 'Philippines': 'PHI',
-  // 2026 season new picks
   'Sudan': 'SUD', 'Finland': 'FIN', 'Vietnam': 'VIE',
   'Ireland': 'IRL', 'Guinea': 'GUI',
-  // Extended — countries with NOC codes that differ from ISO
   'Argentina': 'ARG', 'Australia': 'AUS', 'Austria': 'AUT',
   'Belgium': 'BEL', 'Brazil': 'BRA', 'Bulgaria': 'BUL',
   'Chile': 'CHI', 'China': 'CHN', 'Colombia': 'COL',
@@ -142,11 +142,10 @@ const COUNTRY_NOC = {
  
 const OLYMPIC_BONUS = { 1: 10, 2: 7, 3: 5, 4: 3, 5: 2 };
  
-/**
- * Assigns base points with split/average tiebreaker logic.
- * Input array must already be sorted descending by gdpGrowth before calling.
- * Entries with null gdpGrowth are skipped (no data → no base update).
- */
+// ═══════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════
+ 
 function assignBasePointsWithTiebreaker(gdpResults, totalMembers) {
   var n = gdpResults.length;
   var i = 0;
@@ -170,15 +169,9 @@ function isFieldLocked(locks, category, ownerName, field) {
   return locks ? !!locks[category + '|' + ownerName + '|' + field] : false;
 }
  
-/**
- * Case-insensitive country → ISO 3166-1 alpha-3 lookup.
- * Returns null only if the country is truly unknown.
- */
 function getCountryISO(pickName) {
   if (!pickName) return null;
-  // Direct match first
   if (COUNTRY_ISO3[pickName]) return COUNTRY_ISO3[pickName];
-  // Case-insensitive search
   var lower = pickName.toLowerCase().trim();
   for (var [name, code] of Object.entries(COUNTRY_ISO3)) {
     if (name.toLowerCase() === lower) return code;
@@ -187,9 +180,6 @@ function getCountryISO(pickName) {
   return null;
 }
  
-/**
- * Case-insensitive country → NOC code lookup.
- */
 function getCountryNOC(pickName) {
   if (!pickName) return null;
   if (COUNTRY_NOC[pickName]) return COUNTRY_NOC[pickName];
@@ -205,54 +195,93 @@ function matchOlympicMedals(pickName, medalData) {
   return noc ? (medalData.find(function(m) { return m.noc === noc; }) || null) : null;
 }
  
-async function fetchGDPData(countryCodes) {
+// ═══════════════════════════════════════════════════════════════════════
+// IMF WORLD ECONOMIC OUTLOOK API
+//
+// Endpoint: https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH
+// Indicator: NGDP_RPCH = Real GDP growth (annual % change)
+//
+// Response shape:
+// { values: { NGDP_RPCH: { "GIN": { "2026": 10.5 }, ... } } }
+//
+// We request the fantasy year plus year-1 and year+1 as fallbacks.
+// Priority: exact fantasy year > year-1 > year+1
+// ═══════════════════════════════════════════════════════════════════════
+ 
+async function fetchIMFData(countryCodes, fantasyYear) {
   try {
-    var isoList = countryCodes.join(';');
-    var currentYear = new Date().getFullYear();
-    // Fetch wider range to increase chance of getting data for every country
-    var dateRange = (currentYear - 5) + ':' + currentYear;
-    var url = 'https://api.worldbank.org/v2/country/' + isoList +
-      '/indicator/NY.GDP.MKTP.KD.ZG?format=json&date=' + dateRange + '&per_page=500';
+    var years = [fantasyYear - 1, fantasyYear, fantasyYear + 1];
+    var periodsParam = years.join(',');
+    // IMF API accepts multiple country codes separated by /
+    var countriesPath = countryCodes.join('/');
  
-    console.log('  World Bank URL: ' + url);
-    var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    var url = 'https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH/' +
+      countriesPath + '?periods=' + periodsParam;
+ 
+    console.log('  IMF API URL: ' + url);
+ 
+    var res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
+    });
+ 
     if (!res.ok) {
-      console.error('  World Bank API returned ' + res.status);
+      console.error('  IMF API returned HTTP ' + res.status);
       return null;
     }
+ 
     var data = await res.json();
-    var records = data[1];
-    if (!records || records.length === 0) {
-      console.error('  World Bank API returned 0 records');
+    var values = data && data.values && data.values.NGDP_RPCH;
+    if (!values) {
+      console.error('  IMF API returned no values for NGDP_RPCH');
+      console.error('  Response keys:', Object.keys(data || {}));
       return null;
     }
  
-    console.log('  World Bank returned ' + records.length + ' records');
- 
-    // For each country, keep the MOST RECENT year that has non-null data
+    var targetYear = String(fantasyYear);
+    var fallback1 = String(fantasyYear - 1);
+    var fallback2 = String(fantasyYear + 1);
     var gdpByCountry = {};
-    for (var record of records) {
-      if (record.value === null) continue;
-      var iso3 = record.countryiso3code || record.country?.id;
-      var year = parseInt(record.date);
-      var value = parseFloat(record.value);
-      if (!gdpByCountry[iso3] || year > gdpByCountry[iso3].year) {
-        gdpByCountry[iso3] = {
-          countryName: record.country?.value || iso3,
-          year: year,
-          gdpGrowth: Math.round(value * 10) / 10
-        };
-      }
-    }
  
-    // Log what we got
-    for (var [iso, d] of Object.entries(gdpByCountry)) {
-      console.log('  ' + iso + ': ' + d.gdpGrowth + '% (' + d.year + ')');
+    for (var iso of countryCodes) {
+      var countryData = values[iso];
+      if (!countryData) {
+        console.log('  ' + iso + ': not found in IMF response');
+        continue;
+      }
+ 
+      var usedYear = null;
+      var value = null;
+ 
+      // Priority: fantasy year > year-1 > year+1
+      if (countryData[targetYear] != null) {
+        usedYear = targetYear;
+        value = countryData[targetYear];
+      } else if (countryData[fallback1] != null) {
+        usedYear = fallback1;
+        value = countryData[fallback1];
+        console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback1 + ' fallback');
+      } else if (countryData[fallback2] != null) {
+        usedYear = fallback2;
+        value = countryData[fallback2];
+        console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback2 + ' fallback');
+      }
+ 
+      if (value != null && usedYear != null) {
+        gdpByCountry[iso] = {
+          year: parseInt(usedYear),
+          gdpGrowth: Math.round(parseFloat(value) * 10) / 10,
+          isForecast: parseInt(usedYear) >= new Date().getFullYear()
+        };
+        console.log('  ' + iso + ': ' + gdpByCountry[iso].gdpGrowth + '% (' + usedYear +
+          (gdpByCountry[iso].isForecast ? ', forecast' : ', actual') + ')');
+      } else {
+        console.log('  ' + iso + ': no data for years ' + years.join(', '));
+      }
     }
  
     return gdpByCountry;
   } catch (err) {
-    console.error('  GDP fetch error:', err.message);
+    console.error('  IMF fetch error:', err.message);
     return null;
   }
 }
@@ -288,6 +317,10 @@ async function fetchOlympicMedals() {
   }
 }
  
+// ═══════════════════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ═══════════════════════════════════════════════════════════════════════
+ 
 module.exports = async function handler(req, res) {
   var authHeader = req.headers['authorization'];
   var cronSecret = process.env.CRON_SECRET;
@@ -299,15 +332,17 @@ module.exports = async function handler(req, res) {
   }
  
   var supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-  console.log('═══ Fantasy Life — Country GDP + Olympics Update ═══\n');
+  console.log('═══ Fantasy Life — Country GDP + Olympics Update ═══');
+  console.log('Data source: IMF World Economic Outlook (NGDP_RPCH)\n');
  
   // ── Load active season ──
   var { data: season } = await supabase
     .from('seasons').select('year, locks').eq('status', 'active').single();
   if (!season) return res.status(200).json({ message: 'No active season found' });
  
+  var fantasyYear = season.year;
   var locks = season.locks || {};
-  console.log('Season: ' + season.year);
+  console.log('Season: ' + fantasyYear + ' (GDP target year: ' + fantasyYear + ')');
  
   // ── Load members ──
   var { data: membersArr } = await supabase.from('members').select('id, name');
@@ -318,7 +353,7 @@ module.exports = async function handler(req, res) {
   var { data: picks } = await supabase
     .from('picks')
     .select('id, member_id, pick, base, bonus, metric')
-    .eq('season_year', season.year)
+    .eq('season_year', fantasyYear)
     .eq('category', 'Country');
   if (!picks || picks.length === 0) {
     return res.status(200).json({ message: 'No Country picks found' });
@@ -335,13 +370,11 @@ module.exports = async function handler(req, res) {
   var results = { gdp: null, olympics: null };
  
   // ════════════════════════════════════════════════════════════════════
-  // GDP UPDATE
+  // GDP UPDATE (IMF WEO)
   // ════════════════════════════════════════════════════════════════════
-  console.log('\n── GDP Update ──');
-  console.log('Fetching GDP data from World Bank...');
+  console.log('\n── GDP Update (IMF WEO, target year: ' + fantasyYear + ') ──');
  
-  // Build ISO list, log any countries we can't map
-  var isoMap = {};  // iso → [pickNames]
+  var isoMap = {};
   var unmapped = [];
   picks.forEach(function(p) {
     var iso = getCountryISO(p.pick);
@@ -358,36 +391,38 @@ module.exports = async function handler(req, res) {
   }
  
   var uniqueISO = Object.keys(isoMap);
-  console.log('Requesting ' + uniqueISO.length + ' ISO codes: ' + uniqueISO.join(', '));
+  console.log('Requesting ' + uniqueISO.length + ' countries from IMF: ' + uniqueISO.join(', '));
  
-  var gdpData = await fetchGDPData(uniqueISO);
+  var gdpData = await fetchIMFData(uniqueISO, fantasyYear);
  
   if (gdpData) {
-    // Map GDP data onto picks
     var gdpResults = picks.map(function(p) {
       var iso = getCountryISO(p.pick);
-      var gdpEntry = iso && gdpData[iso] ? gdpData[iso] : null;
-      var gdpGrowth = gdpEntry ? gdpEntry.gdpGrowth : null;
-      return { ...p, gdpGrowth: gdpGrowth, iso: iso, dataYear: gdpEntry ? gdpEntry.year : null };
+      var entry = iso && gdpData[iso] ? gdpData[iso] : null;
+      return {
+        ...p,
+        gdpGrowth: entry ? entry.gdpGrowth : null,
+        iso: iso,
+        dataYear: entry ? entry.year : null,
+        isForecast: entry ? entry.isForecast : null
+      };
     });
  
-    // Log which picks got data and which didn't
     var withData = gdpResults.filter(function(r) { return r.gdpGrowth !== null; });
     var withoutData = gdpResults.filter(function(r) { return r.gdpGrowth === null; });
  
-    console.log('\nGDP data found for ' + withData.length + '/' + totalMembers + ' picks:');
+    console.log('\nIMF data found for ' + withData.length + '/' + totalMembers + ' picks:');
     withData.forEach(function(r) {
       console.log('  ✓ ' + r.pick + ' (' + r.iso + '): ' + r.gdpGrowth + '% (' + r.dataYear + ')');
     });
     if (withoutData.length > 0) {
-      console.log('GDP data MISSING for:');
+      console.log('IMF data MISSING for:');
       withoutData.forEach(function(r) {
         console.log('  ✗ ' + r.pick + ' (ISO: ' + (r.iso || 'NONE') + ')');
       });
     }
  
     if (withData.length > 0) {
-      // Sort descending by gdpGrowth (nulls go last)
       gdpResults.sort(function(a, b) {
         if (a.gdpGrowth === null && b.gdpGrowth === null) return 0;
         if (a.gdpGrowth === null) return 1;
@@ -395,13 +430,13 @@ module.exports = async function handler(req, res) {
         return b.gdpGrowth - a.gdpGrowth;
       });
  
-      // Apply tiebreaker scoring — totalMembers is the full count
       gdpResults = assignBasePointsWithTiebreaker(gdpResults, totalMembers);
  
       console.log('\nRankings:');
       gdpResults.forEach(function(r) {
         if (r.gdpGrowth !== null) {
-          console.log('  #' + r.rank + ' ' + r.pick + ': ' + r.gdpGrowth + '% → ' + r.newBase + ' base pts');
+          console.log('  #' + r.rank + ' ' + r.pick + ': ' + r.gdpGrowth + '% → ' +
+            r.newBase + ' base pts');
         } else {
           console.log('  — ' + r.pick + ': No data (not ranked, not updated)');
         }
@@ -417,11 +452,17 @@ module.exports = async function handler(req, res) {
           var baseLocked = isFieldLocked(locks, 'Country', ownerName, 'base');
           var metricLocked = isFieldLocked(locks, 'Country', ownerName, 'metric');
  
+          // Clean record label — only annotate if data year differs from fantasy year
+          var recordLabel = r.gdpGrowth + '% GDP';
+          if (r.dataYear !== fantasyYear) {
+            recordLabel += ' (' + r.dataYear + ')';
+          }
+ 
           var updateObj = { updated_at: new Date().toISOString() };
           if (!baseLocked) updateObj.base = r.newBase;
           if (!metricLocked) {
             updateObj.metric = r.gdpGrowth;
-            updateObj.record = r.gdpGrowth + '% GDP (' + r.dataYear + ')';
+            updateObj.record = recordLabel;
           }
  
           var skipped = [];
@@ -452,24 +493,31 @@ module.exports = async function handler(req, res) {
       }
  
       console.log('\nGDP: Updated ' + updated + '/' + totalMembers + ' countries');
-      results.gdp = { status: 'updated', updated: updated, total: totalMembers, rankings: rankings };
+      results.gdp = {
+        status: 'updated',
+        source: 'IMF WEO (NGDP_RPCH)',
+        targetYear: fantasyYear,
+        updated: updated,
+        total: totalMembers,
+        rankings: rankings
+      };
     } else {
-      console.log('No GDP data found for any picked country');
-      results.gdp = { status: 'skipped', reason: 'no data for any picked country' };
+      console.log('No IMF data found for any picked country');
+      results.gdp = { status: 'skipped', reason: 'no IMF data for any picked country' };
     }
   } else {
-    console.log('World Bank API failed');
-    results.gdp = { status: 'skipped', reason: 'World Bank API error' };
+    console.log('IMF API failed');
+    results.gdp = { status: 'skipped', reason: 'IMF API error' };
   }
  
   // ════════════════════════════════════════════════════════════════════
   // OLYMPICS UPDATE
   // ════════════════════════════════════════════════════════════════════
   var now = new Date();
-  var year = now.getFullYear();
+  var calYear = now.getFullYear();
   var month = now.getMonth() + 1;
-  var isWinterOlympicYear = (year - 2026) % 4 === 0;
-  var isSummerOlympicYear = (year - 2028) % 4 === 0;
+  var isWinterOlympicYear = (calYear - 2026) % 4 === 0;
+  var isSummerOlympicYear = (calYear - 2028) % 4 === 0;
   var isOlympicWindow = (isWinterOlympicYear && (month === 2 || month === 3)) ||
     (isSummerOlympicYear && (month === 7 || month === 8));
  
@@ -532,24 +580,15 @@ module.exports = async function handler(req, res) {
           }
  
           medalRankings.push({
-            member: pick.member_id,
-            owner: ownerName2,
-            country: pick.pick,
-            gold: medals.gold,
-            silver: medals.silver,
-            bronze: medals.bronze,
-            total: medals.total,
-            medalRank: medalRank,
-            bonusPts: bonusPts
+            member: pick.member_id, owner: ownerName2, country: pick.pick,
+            gold: medals.gold, silver: medals.silver, bronze: medals.bronze,
+            total: medals.total, medalRank: medalRank, bonusPts: bonusPts
           });
         } else {
           medalRankings.push({
-            member: pick.member_id,
-            owner: ownerName2,
-            country: pick.pick,
+            member: pick.member_id, owner: ownerName2, country: pick.pick,
             gold: 0, silver: 0, bronze: 0, total: 0,
-            medalRank: null,
-            bonusPts: 0
+            medalRank: null, bonusPts: 0
           });
         }
       }
@@ -560,14 +599,16 @@ module.exports = async function handler(req, res) {
       results.olympics = { status: 'skipped', reason: 'no medal data found' };
     }
   } else {
-    console.log('\n── Olympics: Not in Olympic window (month=' + month + ', year=' + year + ') ──');
+    console.log('\n── Olympics: Not in Olympic window (month=' + month +
+      ', year=' + calYear + ') ──');
     results.olympics = { status: 'skipped', reason: 'not Olympic season' };
   }
  
   console.log('\n═══ Done! ═══');
   return res.status(200).json({
     message: 'Country update complete',
-    season: season.year,
+    season: fantasyYear,
+    source: 'IMF WEO (NGDP_RPCH)',
     timestamp: new Date().toISOString(),
     results: results
   });
