@@ -3,7 +3,7 @@ import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES
 import { MEMBER_COLORS } from "../constants/members";
 import { theme } from "../constants/theme";
 import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock } from "../utils/helpers";
-
+ 
 // ─── Small lock indicator that players see on the scoreboard ───
 function LockIndicator({ note }) {
  var _h = useState(false), hover = _h[0], setHover = _h[1];
@@ -24,27 +24,27 @@ function LockIndicator({ note }) {
   </span>
  );
 }
-
+ 
 export default function Scoreboard({ seasonData }) {
  var _s = useState(null), selCat = _s[0], setSelCat = _s[1];
  var _e = useState(null), expRow = _e[0], setExpRow = _e[1];
  var _m = useState(window.innerWidth < 640), isMobile = _m[0], setIsMobile = _m[1];
-
+ 
  useEffect(function () {
   var onResize = function () { setIsMobile(window.innerWidth < 640); };
   window.addEventListener("resize", onResize);
   return function () { window.removeEventListener("resize", onResize); };
  }, []);
-
+ 
  if (!seasonData) {
   return <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>No active season.</div>;
  }
-
+ 
  var members = seasonData.members || [];
  var cats = seasonData.categories || {};
  var detail = seasonData.detailedData || {};
  var locks = seasonData.locks || {};
-
+ 
  var overallStandings = useMemo(function () {
   return members.map(function (m) {
    var totalPts = 0;
@@ -56,17 +56,17 @@ export default function Scoreboard({ seasonData }) {
    return { owner: m.name, id: m.id, totalPts: totalPts, catScores: catScores };
   }).sort(function (a, b) { return b.totalPts - a.totalPts; });
  }, [members, cats]);
-
+ 
  var catMembers = selCat ? [].concat(cats[selCat] || []).sort(function (a, b) { return b.total - a.total; }) : null;
  var detailArr = selCat ? detail[selCat] : null;
-
+ 
  var isSport = SPORT_CATEGORIES.includes(selCat);
  var isFilm = selCat === "Actor" || selCat === "Actress";
  var isMusic = selCat === "Musician";
  var isEvent = selCat === "Tennis" || selCat === "Golf" || selCat === "F1";
  var isCountry = selCat === "Country";
  var isStock = selCat === "Stock";
-
+ 
  function bonusNoteDisplay(d) {
   if (!d || !d.bonusNote) return null;
   return (
@@ -75,13 +75,13 @@ export default function Scoreboard({ seasonData }) {
    </div>
   );
  }
-
+ 
  function rowLockIcon(cat, owner, idx) {
   var key = cat + "|" + owner + "|row" + idx;
   if (!locks[key]) return null;
   return <LockIndicator note="This row is locked by the commissioner" />;
  }
-
+ 
  // === EXPANDED DETAIL RENDERER ===
  function renderExpanded(m, idx) {
   var d = detailArr ? detailArr.find(function (x) { return x.owner === m.owner; }) : null;
@@ -98,7 +98,7 @@ export default function Scoreboard({ seasonData }) {
     {bonusNoteDisplay(d)}
    </div>
   );
-
+ 
   if (!d) {
    return (
     <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: "#1e293b",
@@ -108,7 +108,7 @@ export default function Scoreboard({ seasonData }) {
     </div>
    );
   }
-
+ 
   // SPORTS
   if (isSport) {
    return (
@@ -156,7 +156,7 @@ export default function Scoreboard({ seasonData }) {
     </div>
    );
   }
-
+ 
   // FILM
   if (isFilm) {
    return (
@@ -238,7 +238,7 @@ export default function Scoreboard({ seasonData }) {
     </div>
    );
   }
-
+ 
   // MUSIC
   if (isMusic) {
    return (
@@ -313,7 +313,7 @@ export default function Scoreboard({ seasonData }) {
     </div>
    );
   }
-
+ 
   // EVENTS
   if (isEvent) {
    return (
@@ -372,7 +372,7 @@ export default function Scoreboard({ seasonData }) {
     </div>
    );
   }
-
+ 
   // COUNTRY
   if (isCountry) {
    return (
@@ -404,7 +404,7 @@ export default function Scoreboard({ seasonData }) {
     </div>
    );
   }
-
+ 
   // STOCK
   if (isStock) {
    return (
@@ -436,7 +436,7 @@ export default function Scoreboard({ seasonData }) {
     </div>
    );
   }
-
+ 
   // Fallback
   return (
    <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: "#1e293b",
@@ -446,7 +446,7 @@ export default function Scoreboard({ seasonData }) {
    </div>
   );
  }
-
+ 
  // === MAIN RENDER ===
  return (
   <div style={{ maxWidth: 760, margin: "0 auto" }}>
@@ -478,7 +478,7 @@ export default function Scoreboard({ seasonData }) {
      );
     })}
    </div>
-
+ 
    {/* OVERALL VIEW */}
    {!selCat && (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -506,12 +506,16 @@ export default function Scoreboard({ seasonData }) {
            gap: 4 }}>
            {CATEGORY_ORDER.map(function (k) {
             var pts = m.catScores[k] || 0;
+            var pickEntry = (cats[k] || []).find(function (x) { return x.owner === m.owner; });
+            var pickName = pickEntry ? pickEntry.pick : "";
             return (
              <div key={k}
               onClick={function (e) { e.stopPropagation(); setSelCat(k); setExpRow(null); }}
               style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", cursor: "pointer",
                background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(51,65,85,0.3)" }}>
               <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
+              <div style={{ fontSize: isMobile ? 7 : 8, color: "#94a3b8", lineHeight: 1.2, marginTop: 1,
+               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pickName}</div>
               <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700,
                color: pts >= 15 ? "#22c55e" : pts <= 3 ? "#ef4444" : "#e2e8f0" }}>{pts}</div>
              </div>
@@ -525,7 +529,7 @@ export default function Scoreboard({ seasonData }) {
      })}
     </div>
    )}
-
+ 
    {/* CATEGORY VIEW */}
    {selCat && catMembers && (
     <div>
