@@ -366,11 +366,6 @@ export default function Calendar({ seasonYear }) {
         );
       })}
  
-      <div style={{ textAlign:"center", padding:"24px 16px", marginTop:12, borderTop:"1px solid #334155", color:"#475569", fontSize:11 }}>
-        <div>Fantasy Life {yr} · Mar 15, {yr} → Mar 31, {yr + 1}</div>
-        <div style={{ marginTop:3 }}>Questions? Contact <span style={{ color:s.grn }}>Commissioner Adam</span></div>
-      </div>
- 
       <style>{`@keyframes calPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}`}</style>
     </div>
   );
