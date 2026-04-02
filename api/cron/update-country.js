@@ -196,44 +196,157 @@ function matchOlympicMedals(pickName, medalData) {
 }
  
 // ═══════════════════════════════════════════════════════════════════════
-// IMF WORLD ECONOMIC OUTLOOK API
+// IMF WORLD ECONOMIC OUTLOOK — SDMX API
 //
-// Endpoint: https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH
-// Indicator: NGDP_RPCH = Real GDP growth (annual % change)
+// The DataMapper API (imf.org/external/datamapper/api/v1) returns 403
+// from server environments like Vercel. The SDMX REST API is the
+// official programmatic endpoint and does NOT block server requests.
 //
-// Response shape:
-// { values: { NGDP_RPCH: { "GIN": { "2026": 10.5 }, ... } } }
+// SDMX 2.0 endpoint (JSON):
+//   http://dataservices.imf.org/REST/SDMX_JSON.svc/CompactData/WEO/{key}
+//   Key format: {COUNTRY}.NGDP_RPCH.A
+//   Multiple countries joined with +
 //
-// We request the fantasy year plus year-1 and year+1 as fallbacks.
-// Priority: exact fantasy year > year-1 > year+1
+// SDMX 3.0 endpoint (JSON):
+//   https://api.imf.org/external/sdmx/3.0/data/WEO/{key}
+//   Accept: application/vnd.sdmx.data+json
+//
+// We try the SDMX 2.0 JSON endpoint first (most battle-tested),
+// then fall back to DataMapper if it works.
+//
+// Response shape (SDMX 2.0 CompactData JSON):
+// { CompactData: { DataSet: { Series: [
+//   { @REF_AREA: "GIN", @INDICATOR: "NGDP_RPCH", Obs: [
+//     { @TIME_PERIOD: "2026", @OBS_VALUE: "10.5" }, ...
+//   ] }, ...
+// ] } } }
 // ═══════════════════════════════════════════════════════════════════════
  
 async function fetchIMFData(countryCodes, fantasyYear) {
+  // Try SDMX 2.0 first, then DataMapper as fallback
+  var result = await fetchIMF_SDMX(countryCodes, fantasyYear);
+  if (result) return result;
+ 
+  console.log('  SDMX API failed, trying DataMapper fallback...');
+  return await fetchIMF_DataMapper(countryCodes, fantasyYear);
+}
+ 
+async function fetchIMF_SDMX(countryCodes, fantasyYear) {
+  try {
+    var countryKey = countryCodes.join('+');
+    var startYear = fantasyYear - 1;
+    var endYear = fantasyYear + 1;
+ 
+    var url = 'http://dataservices.imf.org/REST/SDMX_JSON.svc/CompactData/WEO/' +
+      countryKey + '.NGDP_RPCH.A' +
+      '?startPeriod=' + startYear + '&endPeriod=' + endYear;
+ 
+    console.log('  SDMX API URL: ' + url);
+ 
+    var res = await fetch(url, {
+      headers: {
+        'User-Agent': 'FantasyLife/1.0',
+        'Accept': 'application/json'
+      }
+    });
+ 
+    if (!res.ok) {
+      console.error('  SDMX API returned HTTP ' + res.status);
+      return null;
+    }
+ 
+    var data = await res.json();
+ 
+    // Navigate SDMX CompactData structure
+    var dataset = data && data.CompactData && data.CompactData.DataSet;
+    if (!dataset || !dataset.Series) {
+      console.error('  SDMX response has no Series data');
+      console.error('  Response structure:', JSON.stringify(data).substring(0, 500));
+      return null;
+    }
+ 
+    // Series can be a single object or array
+    var seriesArr = Array.isArray(dataset.Series) ? dataset.Series : [dataset.Series];
+    console.log('  SDMX returned ' + seriesArr.length + ' series');
+ 
+    var targetYear = String(fantasyYear);
+    var fallback1 = String(fantasyYear - 1);
+    var fallback2 = String(fantasyYear + 1);
+    var gdpByCountry = {};
+ 
+    for (var series of seriesArr) {
+      var iso = series['@REF_AREA'];
+      if (!iso || !countryCodes.includes(iso)) continue;
+ 
+      // Obs can be single object or array
+      var obs = series.Obs;
+      if (!obs) continue;
+      var obsArr = Array.isArray(obs) ? obs : [obs];
+ 
+      // Build year→value map
+      var yearMap = {};
+      for (var o of obsArr) {
+        var yr = o['@TIME_PERIOD'];
+        var val = o['@OBS_VALUE'];
+        if (yr && val) yearMap[yr] = parseFloat(val);
+      }
+ 
+      // Priority: fantasy year > year-1 > year+1
+      var usedYear = null;
+      var value = null;
+      if (yearMap[targetYear] != null) { usedYear = targetYear; value = yearMap[targetYear]; }
+      else if (yearMap[fallback1] != null) { usedYear = fallback1; value = yearMap[fallback1]; console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback1 + ' fallback'); }
+      else if (yearMap[fallback2] != null) { usedYear = fallback2; value = yearMap[fallback2]; console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback2 + ' fallback'); }
+ 
+      if (value != null && usedYear != null) {
+        gdpByCountry[iso] = {
+          year: parseInt(usedYear),
+          gdpGrowth: Math.round(value * 10) / 10,
+          isForecast: parseInt(usedYear) >= new Date().getFullYear()
+        };
+        console.log('  ' + iso + ': ' + gdpByCountry[iso].gdpGrowth + '% (' + usedYear +
+          (gdpByCountry[iso].isForecast ? ', forecast' : ', actual') + ')');
+      } else {
+        console.log('  ' + iso + ': no data for years ' + [fallback1, targetYear, fallback2].join(', '));
+      }
+    }
+ 
+    if (Object.keys(gdpByCountry).length === 0) {
+      console.error('  SDMX: parsed 0 countries from response');
+      return null;
+    }
+ 
+    return gdpByCountry;
+  } catch (err) {
+    console.error('  SDMX fetch error:', err.message);
+    return null;
+  }
+}
+ 
+async function fetchIMF_DataMapper(countryCodes, fantasyYear) {
   try {
     var years = [fantasyYear - 1, fantasyYear, fantasyYear + 1];
     var periodsParam = years.join(',');
-    // IMF API accepts multiple country codes separated by /
     var countriesPath = countryCodes.join('/');
  
     var url = 'https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH/' +
       countriesPath + '?periods=' + periodsParam;
  
-    console.log('  IMF API URL: ' + url);
+    console.log('  DataMapper URL: ' + url);
  
     var res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
     });
  
     if (!res.ok) {
-      console.error('  IMF API returned HTTP ' + res.status);
+      console.error('  DataMapper API returned HTTP ' + res.status);
       return null;
     }
  
     var data = await res.json();
     var values = data && data.values && data.values.NGDP_RPCH;
     if (!values) {
-      console.error('  IMF API returned no values for NGDP_RPCH');
-      console.error('  Response keys:', Object.keys(data || {}));
+      console.error('  DataMapper returned no values');
       return null;
     }
  
@@ -244,27 +357,13 @@ async function fetchIMFData(countryCodes, fantasyYear) {
  
     for (var iso of countryCodes) {
       var countryData = values[iso];
-      if (!countryData) {
-        console.log('  ' + iso + ': not found in IMF response');
-        continue;
-      }
+      if (!countryData) continue;
  
       var usedYear = null;
       var value = null;
- 
-      // Priority: fantasy year > year-1 > year+1
-      if (countryData[targetYear] != null) {
-        usedYear = targetYear;
-        value = countryData[targetYear];
-      } else if (countryData[fallback1] != null) {
-        usedYear = fallback1;
-        value = countryData[fallback1];
-        console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback1 + ' fallback');
-      } else if (countryData[fallback2] != null) {
-        usedYear = fallback2;
-        value = countryData[fallback2];
-        console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback2 + ' fallback');
-      }
+      if (countryData[targetYear] != null) { usedYear = targetYear; value = countryData[targetYear]; }
+      else if (countryData[fallback1] != null) { usedYear = fallback1; value = countryData[fallback1]; }
+      else if (countryData[fallback2] != null) { usedYear = fallback2; value = countryData[fallback2]; }
  
       if (value != null && usedYear != null) {
         gdpByCountry[iso] = {
@@ -272,16 +371,13 @@ async function fetchIMFData(countryCodes, fantasyYear) {
           gdpGrowth: Math.round(parseFloat(value) * 10) / 10,
           isForecast: parseInt(usedYear) >= new Date().getFullYear()
         };
-        console.log('  ' + iso + ': ' + gdpByCountry[iso].gdpGrowth + '% (' + usedYear +
-          (gdpByCountry[iso].isForecast ? ', forecast' : ', actual') + ')');
-      } else {
-        console.log('  ' + iso + ': no data for years ' + years.join(', '));
+        console.log('  ' + iso + ': ' + gdpByCountry[iso].gdpGrowth + '% (' + usedYear + ')');
       }
     }
  
-    return gdpByCountry;
+    return Object.keys(gdpByCountry).length > 0 ? gdpByCountry : null;
   } catch (err) {
-    console.error('  IMF fetch error:', err.message);
+    console.error('  DataMapper fetch error:', err.message);
     return null;
   }
 }
