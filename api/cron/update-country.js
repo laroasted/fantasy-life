@@ -196,190 +196,153 @@ function matchOlympicMedals(pickName, medalData) {
 }
  
 // ═══════════════════════════════════════════════════════════════════════
-// IMF WORLD ECONOMIC OUTLOOK — SDMX API
+// IMF WORLD ECONOMIC OUTLOOK — DataMapper API
 //
-// The DataMapper API (imf.org/external/datamapper/api/v1) returns 403
-// from server environments like Vercel. The SDMX REST API is the
-// official programmatic endpoint and does NOT block server requests.
+// Endpoint: https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH
 //
-// SDMX 2.0 endpoint (JSON):
-//   http://dataservices.imf.org/REST/SDMX_JSON.svc/CompactData/WEO/{key}
-//   Key format: {COUNTRY}.NGDP_RPCH.A
-//   Multiple countries joined with +
+// The DataMapper API returns 403 from some server environments (Vercel)
+// when requesting all countries in a single bulk URL. Strategy:
 //
-// SDMX 3.0 endpoint (JSON):
-//   https://api.imf.org/external/sdmx/3.0/data/WEO/{key}
-//   Accept: application/vnd.sdmx.data+json
+// 1. Try bulk request with full browser-like headers
+// 2. If 403, fall back to fetching ONE country at a time (smaller
+//    requests are less likely to trigger bot detection)
+// 3. Add small delay between per-country requests to be polite
 //
-// We try the SDMX 2.0 JSON endpoint first (most battle-tested),
-// then fall back to DataMapper if it works.
-//
-// Response shape (SDMX 2.0 CompactData JSON):
-// { CompactData: { DataSet: { Series: [
-//   { @REF_AREA: "GIN", @INDICATOR: "NGDP_RPCH", Obs: [
-//     { @TIME_PERIOD: "2026", @OBS_VALUE: "10.5" }, ...
-//   ] }, ...
-// ] } } }
+// Response shape:
+// { values: { NGDP_RPCH: { "GIN": { "2026": 10.5 }, ... } } }
 // ═══════════════════════════════════════════════════════════════════════
  
-async function fetchIMFData(countryCodes, fantasyYear) {
-  // Try SDMX 2.0 first, then DataMapper as fallback
-  var result = await fetchIMF_SDMX(countryCodes, fantasyYear);
-  if (result) return result;
+var BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Referer': 'https://www.imf.org/external/datamapper/NGDP_RPCH@WEO',
+  'Origin': 'https://www.imf.org',
+  'Connection': 'keep-alive',
+  'Sec-Fetch-Dest': 'empty',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Site': 'same-origin',
+};
  
-  console.log('  SDMX API failed, trying DataMapper fallback...');
-  return await fetchIMF_DataMapper(countryCodes, fantasyYear);
-}
+function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
  
-async function fetchIMF_SDMX(countryCodes, fantasyYear) {
-  try {
-    var countryKey = countryCodes.join('+');
-    var startYear = fantasyYear - 1;
-    var endYear = fantasyYear + 1;
+function parseIMFValues(values, countryCodes, fantasyYear) {
+  var targetYear = String(fantasyYear);
+  var fallback1 = String(fantasyYear - 1);
+  var fallback2 = String(fantasyYear + 1);
+  var gdpByCountry = {};
  
-    var url = 'http://dataservices.imf.org/REST/SDMX_JSON.svc/CompactData/WEO/' +
-      countryKey + '.NGDP_RPCH.A' +
-      '?startPeriod=' + startYear + '&endPeriod=' + endYear;
+  for (var iso of countryCodes) {
+    var countryData = values[iso];
+    if (!countryData) continue;
  
-    console.log('  SDMX API URL: ' + url);
+    var usedYear = null;
+    var value = null;
+    if (countryData[targetYear] != null) { usedYear = targetYear; value = countryData[targetYear]; }
+    else if (countryData[fallback1] != null) { usedYear = fallback1; value = countryData[fallback1]; }
+    else if (countryData[fallback2] != null) { usedYear = fallback2; value = countryData[fallback2]; }
  
-    var res = await fetch(url, {
-      headers: {
-        'User-Agent': 'FantasyLife/1.0',
-        'Accept': 'application/json'
-      }
-    });
- 
-    if (!res.ok) {
-      console.error('  SDMX API returned HTTP ' + res.status);
-      return null;
+    if (value != null && usedYear != null) {
+      gdpByCountry[iso] = {
+        year: parseInt(usedYear),
+        gdpGrowth: Math.round(parseFloat(value) * 10) / 10,
+        isForecast: parseInt(usedYear) >= new Date().getFullYear()
+      };
+      console.log('  ' + iso + ': ' + gdpByCountry[iso].gdpGrowth + '% (' + usedYear +
+        (gdpByCountry[iso].isForecast ? ', forecast' : ', actual') + ')');
     }
- 
-    var data = await res.json();
- 
-    // Navigate SDMX CompactData structure
-    var dataset = data && data.CompactData && data.CompactData.DataSet;
-    if (!dataset || !dataset.Series) {
-      console.error('  SDMX response has no Series data');
-      console.error('  Response structure:', JSON.stringify(data).substring(0, 500));
-      return null;
-    }
- 
-    // Series can be a single object or array
-    var seriesArr = Array.isArray(dataset.Series) ? dataset.Series : [dataset.Series];
-    console.log('  SDMX returned ' + seriesArr.length + ' series');
- 
-    var targetYear = String(fantasyYear);
-    var fallback1 = String(fantasyYear - 1);
-    var fallback2 = String(fantasyYear + 1);
-    var gdpByCountry = {};
- 
-    for (var series of seriesArr) {
-      var iso = series['@REF_AREA'];
-      if (!iso || !countryCodes.includes(iso)) continue;
- 
-      // Obs can be single object or array
-      var obs = series.Obs;
-      if (!obs) continue;
-      var obsArr = Array.isArray(obs) ? obs : [obs];
- 
-      // Build year→value map
-      var yearMap = {};
-      for (var o of obsArr) {
-        var yr = o['@TIME_PERIOD'];
-        var val = o['@OBS_VALUE'];
-        if (yr && val) yearMap[yr] = parseFloat(val);
-      }
- 
-      // Priority: fantasy year > year-1 > year+1
-      var usedYear = null;
-      var value = null;
-      if (yearMap[targetYear] != null) { usedYear = targetYear; value = yearMap[targetYear]; }
-      else if (yearMap[fallback1] != null) { usedYear = fallback1; value = yearMap[fallback1]; console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback1 + ' fallback'); }
-      else if (yearMap[fallback2] != null) { usedYear = fallback2; value = yearMap[fallback2]; console.log('  ' + iso + ': no ' + targetYear + ' data, using ' + fallback2 + ' fallback'); }
- 
-      if (value != null && usedYear != null) {
-        gdpByCountry[iso] = {
-          year: parseInt(usedYear),
-          gdpGrowth: Math.round(value * 10) / 10,
-          isForecast: parseInt(usedYear) >= new Date().getFullYear()
-        };
-        console.log('  ' + iso + ': ' + gdpByCountry[iso].gdpGrowth + '% (' + usedYear +
-          (gdpByCountry[iso].isForecast ? ', forecast' : ', actual') + ')');
-      } else {
-        console.log('  ' + iso + ': no data for years ' + [fallback1, targetYear, fallback2].join(', '));
-      }
-    }
- 
-    if (Object.keys(gdpByCountry).length === 0) {
-      console.error('  SDMX: parsed 0 countries from response');
-      return null;
-    }
- 
-    return gdpByCountry;
-  } catch (err) {
-    console.error('  SDMX fetch error:', err.message);
-    return null;
   }
+  return gdpByCountry;
 }
  
-async function fetchIMF_DataMapper(countryCodes, fantasyYear) {
-  try {
-    var years = [fantasyYear - 1, fantasyYear, fantasyYear + 1];
-    var periodsParam = years.join(',');
-    var countriesPath = countryCodes.join('/');
+async function fetchIMFData(countryCodes, fantasyYear) {
+  var periodsParam = [fantasyYear - 1, fantasyYear, fantasyYear + 1].join(',');
  
-    var url = 'https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH/' +
+  // ── Attempt 1: Bulk request (all countries at once) ──
+  try {
+    var countriesPath = countryCodes.join('/');
+    var bulkUrl = 'https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH/' +
       countriesPath + '?periods=' + periodsParam;
  
-    console.log('  DataMapper URL: ' + url);
+    console.log('  Attempt 1 (bulk): ' + bulkUrl);
+    var res = await fetch(bulkUrl, { headers: BROWSER_HEADERS });
  
-    var res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
-    });
- 
-    if (!res.ok) {
-      console.error('  DataMapper API returned HTTP ' + res.status);
-      return null;
-    }
- 
-    var data = await res.json();
-    var values = data && data.values && data.values.NGDP_RPCH;
-    if (!values) {
-      console.error('  DataMapper returned no values');
-      return null;
-    }
- 
-    var targetYear = String(fantasyYear);
-    var fallback1 = String(fantasyYear - 1);
-    var fallback2 = String(fantasyYear + 1);
-    var gdpByCountry = {};
- 
-    for (var iso of countryCodes) {
-      var countryData = values[iso];
-      if (!countryData) continue;
- 
-      var usedYear = null;
-      var value = null;
-      if (countryData[targetYear] != null) { usedYear = targetYear; value = countryData[targetYear]; }
-      else if (countryData[fallback1] != null) { usedYear = fallback1; value = countryData[fallback1]; }
-      else if (countryData[fallback2] != null) { usedYear = fallback2; value = countryData[fallback2]; }
- 
-      if (value != null && usedYear != null) {
-        gdpByCountry[iso] = {
-          year: parseInt(usedYear),
-          gdpGrowth: Math.round(parseFloat(value) * 10) / 10,
-          isForecast: parseInt(usedYear) >= new Date().getFullYear()
-        };
-        console.log('  ' + iso + ': ' + gdpByCountry[iso].gdpGrowth + '% (' + usedYear + ')');
+    if (res.ok) {
+      var data = await res.json();
+      var values = data && data.values && data.values.NGDP_RPCH;
+      if (values) {
+        var result = parseIMFValues(values, countryCodes, fantasyYear);
+        if (Object.keys(result).length > 0) {
+          console.log('  Bulk request succeeded: ' + Object.keys(result).length + ' countries');
+          return result;
+        }
       }
+    } else {
+      console.log('  Bulk request returned HTTP ' + res.status);
     }
- 
-    return Object.keys(gdpByCountry).length > 0 ? gdpByCountry : null;
   } catch (err) {
-    console.error('  DataMapper fetch error:', err.message);
-    return null;
+    console.log('  Bulk request failed: ' + err.message);
   }
+ 
+  // ── Attempt 2: Fetch all data (no country filter, just period filter) ──
+  // The DataMapper allows fetching ALL countries and filtering by period.
+  // This avoids the long URL with 12 country paths that might trigger WAF.
+  try {
+    var allUrl = 'https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH?periods=' + periodsParam;
+    console.log('  Attempt 2 (all countries): ' + allUrl);
+    var res2 = await fetch(allUrl, { headers: BROWSER_HEADERS });
+ 
+    if (res2.ok) {
+      var data2 = await res2.json();
+      var values2 = data2 && data2.values && data2.values.NGDP_RPCH;
+      if (values2) {
+        var result2 = parseIMFValues(values2, countryCodes, fantasyYear);
+        if (Object.keys(result2).length > 0) {
+          console.log('  All-countries request succeeded: ' + Object.keys(result2).length + ' countries');
+          return result2;
+        }
+      }
+    } else {
+      console.log('  All-countries request returned HTTP ' + res2.status);
+    }
+  } catch (err) {
+    console.log('  All-countries request failed: ' + err.message);
+  }
+ 
+  // ── Attempt 3: One country at a time ──
+  console.log('  Attempt 3 (per-country):');
+  var gdpByCountry = {};
+  for (var iso of countryCodes) {
+    try {
+      var singleUrl = 'https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH/' +
+        iso + '?periods=' + periodsParam;
+      var res3 = await fetch(singleUrl, { headers: BROWSER_HEADERS });
+ 
+      if (res3.ok) {
+        var data3 = await res3.json();
+        var values3 = data3 && data3.values && data3.values.NGDP_RPCH;
+        if (values3) {
+          var parsed = parseIMFValues(values3, [iso], fantasyYear);
+          Object.assign(gdpByCountry, parsed);
+        }
+      } else {
+        console.log('  ' + iso + ': HTTP ' + res3.status);
+      }
+      // Small delay to avoid rate limiting
+      await sleep(200);
+    } catch (err) {
+      console.log('  ' + iso + ': error — ' + err.message);
+    }
+  }
+ 
+  if (Object.keys(gdpByCountry).length > 0) {
+    console.log('  Per-country requests got: ' + Object.keys(gdpByCountry).length + ' countries');
+    return gdpByCountry;
+  }
+ 
+  console.error('  All IMF fetch attempts failed');
+  return null;
 }
  
 async function fetchOlympicMedals() {
