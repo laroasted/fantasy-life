@@ -25,7 +25,7 @@
     },
     {
       "path": "/api/cron/update-billboard",
-      "schedule": "0 3 * * 3"
+      "schedule": "0 3 * * 5"
     },
     {
       "path": "/api/cron/update-entertainment",
