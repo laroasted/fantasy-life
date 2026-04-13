@@ -82,8 +82,10 @@ export const CATEGORY_BONUS_RULES = {
   NCAAF: "10:Win Natl Champ | 7:Lose Natl Champ | 5:Lose Semi | 3:Win BCS Bowl | 2:Lose BCS Bowl | 1:Win Other Bowl",
   NCAAB: "10:Win Natl Champ | 7:Lose Champ | 5:Lose F4 | 3:Lose E8 | 2:Lose S16 | 1:Lose R32",
   MLS: "10:Win MLS Cup | 7:Lose Finals | 5:Lose Conf Final | 3:Lose Semi | 2:Lose 1st Rd",
-  Tennis: "3:Win Major | 2:Lose Major Final | 1:Lose Major SF",
-  Golf: "3:Win Major | 2:Runner-up Major | 1:Top 5 Major",
+  // ── CORRECTED per Constitution Section 3.2 ──
+  Tennis: "5:Win Major | 3:Lose Major Final | 2:Lose Major SF",
+  Golf: "5:Win Major | 3:Runner-up Major | 2:Top 10 Major",
+  // ─────────────────────────────────────────────
   F1: "3:Win Featured GP | 2:2nd Featured GP | 1:3rd Featured GP (AUS, MIA, ATX, LV)",
   Actor: "10:Win Best Actor | 7:Win Supporting | 3:Nom Best Actor | 2:Nom Supporting",
   Actress: "10:Win Best Actress | 7:Win Supporting | 3:Nom Best Actress | 2:Nom Supporting",
