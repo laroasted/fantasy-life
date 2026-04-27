@@ -468,29 +468,8 @@ export default function DraftRecap({ seasonYear = 2026 }) {
               );
             })}
           </div>
-          {(() => {
-            const scored = catBreakdown.filter(r => r.total !== null);
-            if (scored.length === 0) return null;
-            const best = [...scored].sort((a, b) => b.total - a.total)[0];
-            const earliest = catBreakdown[0];
-            return (
-              <div style={{ ...cardStyle, marginTop: 12, fontSize: 12, color: theme.dim, lineHeight: 1.8 }}>
-                <span style={{ fontWeight: 700, color: theme.txt }}>📝 Insight: </span>
-                <span style={{ color: memberColorMap[earliest.memberId], fontWeight: 700 }}>{earliest.member}</span>
-                {" "}took {selCat} earliest in Rd {earliest.round}.
-                {best && (
-                  <> The top scorer is{" "}
-                    <span style={{ color: memberColorMap[best.memberId], fontWeight: 700 }}>{best.member}</span>
-                    {" "}with {best.total} pts (Rd {best.round})
-                    {best.round >= 8 ? " — a late-round steal!" : best.round <= 3 ? " — the early investment paid off." : "."}
-                  </>
-                )}
-              </div>
-            );
-          })()}
         </div>
       )}
     </div>
   );
 }
- 
