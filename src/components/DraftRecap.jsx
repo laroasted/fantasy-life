@@ -2,8 +2,9 @@
 // Shows the snake draft order with live scores from Supabase.
 // Three sub-views: Draft Order, Member Report Card, Category Breakdown.
 //
-// Draft board data is stored per-season. Currently only 2026 is populated.
-// To add future seasons, add a new key to DRAFT_BOARDS below.
+// Draft board data is read from the `draft_board` JSONB column on the
+// `seasons` table. The 2026 board is also hardcoded as a fallback.
+// Future seasons auto-populate when DraftTool saves on finalize.
  
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../utils/storage";
@@ -11,12 +12,10 @@ import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
  
 // ═══════════════════════════════════════════════════════════════════
-// DRAFT BOARD DATA — which category each member picked per round
+// HARDCODED FALLBACK — only used if seasons.draft_board is null
 // ═══════════════════════════════════════════════════════════════════
-// Key = season year. Value = { memberOrder: [...], board: { memberId: [cat per round] } }
-// memberOrder defines draft position (index 0 = 1st overall pick).
  
-const DRAFT_BOARDS = {
+const FALLBACK_BOARDS = {
   2026: {
     memberOrder: ["jordan","jack","larosa","marsh","alan","dhruv","danny","mike","auzy","adam","evan","scott"],
     board: {
@@ -96,19 +95,25 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   const [selMember, setSelMember] = useState(null);
   const [selCat, setSelCat] = useState("NFL");
   const [filterRound, setFilterRound] = useState("All");
-  const [picks, setPicks] = useState([]);    // { member_id, category, pick, total }
-  const [members, setMembers] = useState([]); // { id, name }
+  const [picks, setPicks] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [draftBoard, setDraftBoard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
  
-  // ── Fetch picks + members from Supabase ──
+  // ── Fetch draft board, picks, and members from Supabase ──
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        const [{ data: pickData, error: pErr }, { data: memberData, error: mErr }] = await Promise.all([
+        const [
+          { data: seasonData, error: sErr },
+          { data: pickData, error: pErr },
+          { data: memberData, error: mErr },
+        ] = await Promise.all([
+          supabase.from("seasons").select("draft_board").eq("year", seasonYear).single(),
           supabase.from("picks").select("member_id, category, pick, total").eq("season_year", seasonYear),
           supabase.from("members").select("id, name, color"),
         ]);
@@ -117,6 +122,9 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         if (!cancelled) {
           setPicks(pickData || []);
           setMembers(memberData || []);
+          // Use Supabase draft_board if available, else fall back to hardcoded
+          const board = seasonData?.draft_board || FALLBACK_BOARDS[seasonYear] || null;
+          setDraftBoard(board);
         }
       } catch (e) {
         if (!cancelled) setError(e.message);
@@ -129,9 +137,6 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   }, [seasonYear]);
  
   // ── Derived data ──
-  const draftBoard = DRAFT_BOARDS[seasonYear];
-  const hasDraftBoard = !!draftBoard;
- 
   const memberNameMap = useMemo(() => {
     const m = {};
     members.forEach(mem => { m[mem.id] = mem.name; });
@@ -144,7 +149,6 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     return m;
   }, [members]);
  
-  // Pick lookup: memberId → category → { pick, total }
   const pickLookup = useMemo(() => {
     const m = {};
     picks.forEach(p => {
@@ -164,14 +168,23 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     return buildRoundLookup(draftBoard);
   }, [draftBoard]);
  
-  // Default selected member to first in draft order
+  // Default selected member
   useEffect(() => {
     if (draftBoard && !selMember) {
       setSelMember(draftBoard.memberOrder[0]);
     }
   }, [draftBoard, selMember]);
  
-  // ── Enriched snake picks (with pick name + total from DB) ──
+  // Build pickNum lookup: memberId+category → overall pick number
+  const pickNumLookup = useMemo(() => {
+    const m = {};
+    snakeOrder.forEach(s => {
+      m[s.memberId + "|" + s.category] = s.pickNum;
+    });
+    return m;
+  }, [snakeOrder]);
+ 
+  // ── Enriched snake picks ──
   const enrichedSnake = useMemo(() => {
     return snakeOrder.map(s => {
       const pl = pickLookup[s.memberId]?.[s.category];
@@ -185,9 +198,10 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     return ALL_CATS.map(cat => {
       const round = roundLookup[selMember]?.[cat] ?? "—";
       const pl = pickLookup[selMember]?.[cat];
-      return { category: cat, pick: pl?.pick || "—", total: pl?.total ?? null, round };
-    }).sort((a, b) => a.round - b.round);
-  }, [selMember, roundLookup, pickLookup]);
+      const pickNum = pickNumLookup[selMember + "|" + cat] ?? 999;
+      return { category: cat, pick: pl?.pick || "—", total: pl?.total ?? null, round, pickNum };
+    }).sort((a, b) => a.pickNum - b.pickNum);
+  }, [selMember, roundLookup, pickLookup, pickNumLookup]);
  
   // ── Category Breakdown ──
   const catBreakdown = useMemo(() => {
@@ -195,9 +209,10 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     return draftBoard.memberOrder.map(mid => {
       const round = roundLookup[mid]?.[selCat] ?? 99;
       const pl = pickLookup[mid]?.[selCat];
-      return { memberId: mid, member: memberNameMap[mid] || mid, pick: pl?.pick || "—", total: pl?.total ?? null, round };
-    }).sort((a, b) => a.round - b.round);
-  }, [draftBoard, selCat, roundLookup, pickLookup, memberNameMap]);
+      const pickNum = pickNumLookup[mid + "|" + selCat] ?? 999;
+      return { memberId: mid, member: memberNameMap[mid] || mid, pick: pl?.pick || "—", total: pl?.total ?? null, round, pickNum };
+    }).sort((a, b) => a.pickNum - b.pickNum);
+  }, [draftBoard, selCat, roundLookup, pickLookup, pickNumLookup, memberNameMap]);
  
   // ── Filtered draft order ──
   const draftFiltered = useMemo(() => {
@@ -231,7 +246,7 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     };
   };
  
-  // ── Loading / Error / No data states ──
+  // ── Loading / Error / No data ──
   if (loading) {
     return (
       <div style={{ textAlign: "center", padding: 60, color: theme.dim }}>
@@ -250,13 +265,13 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     );
   }
  
-  if (!hasDraftBoard) {
+  if (!draftBoard) {
     return (
       <div style={{ textAlign: "center", padding: 60, color: theme.dim }}>
         <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
         <div style={{ fontSize: 14 }}>No draft board data available for {seasonYear}.</div>
         <div style={{ fontSize: 12, marginTop: 4, color: theme.mut }}>
-          Draft board data needs to be added to DraftRecap.jsx for this season.
+          Draft board data is saved automatically when a draft is finalized.
         </div>
       </div>
     );
@@ -285,9 +300,7 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         <button onClick={() => setView("category")} style={pill(view === "category")}>📊 By Category</button>
       </div>
  
-      {/* ═══════════════════════════════════════════════════════════ */}
-      {/* VIEW: DRAFT ORDER                                         */}
-      {/* ═══════════════════════════════════════════════════════════ */}
+      {/* ═══════════ DRAFT ORDER ═══════════ */}
       {view === "draft" && (
         <div>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
@@ -297,7 +310,6 @@ export default function DraftRecap({ seasonYear = 2026 }) {
               {Array.from({ length: numRounds }, (_, i) => <option key={i} value={i + 1}>Round {i + 1}</option>)}
             </select>
           </div>
- 
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {draftFiltered.map((p, idx) => {
               const prev = idx > 0 ? draftFiltered[idx - 1].round : null;
@@ -342,12 +354,9 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         </div>
       )}
  
-      {/* ═══════════════════════════════════════════════════════════ */}
-      {/* VIEW: MEMBER REPORT CARD                                  */}
-      {/* ═══════════════════════════════════════════════════════════ */}
+      {/* ═══════════ MEMBER REPORT CARD ═══════════ */}
       {view === "member" && (
         <div>
-          {/* Member selector */}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 20 }}>
             {draftBoard.memberOrder.map(mid => (
               <button key={mid} onClick={() => setSelMember(mid)} style={memberBtn(mid, selMember === mid)}>
@@ -355,40 +364,37 @@ export default function DraftRecap({ seasonYear = 2026 }) {
               </button>
             ))}
           </div>
- 
-          {/* Header */}
           {selMember && (
             <div style={{ textAlign: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: memberColorMap[selMember] }}>
                 {memberNameMap[selMember]}'s Draft
               </div>
               <div style={{ fontSize: 12, color: theme.dim, marginTop: 2 }}>
-                #{draftBoard.memberOrder.indexOf(selMember) + 1} overall pick · sorted by round
+                #{draftBoard.memberOrder.indexOf(selMember) + 1} overall pick · sorted by pick order
               </div>
             </div>
           )}
- 
-          {/* Report card rows */}
           <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
-            {/* Header */}
             <div style={{
-              display: "grid", gridTemplateColumns: "34px 72px 1fr 54px",
+              display: "grid", gridTemplateColumns: "34px 40px 72px 1fr 54px",
               padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
               letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
             }}>
-              <span>RD</span><span>Category</span><span>Pick</span><span style={{ textAlign: "right" }}>PTS</span>
+              <span>RD</span><span>PICK</span><span>Category</span><span>Pick</span><span style={{ textAlign: "right" }}>PTS</span>
             </div>
- 
             {memberCard.map((row, i) => {
               const ptsColor = getPointsColor(row.total);
               return (
                 <div key={row.category} style={{
-                  display: "grid", gridTemplateColumns: "34px 72px 1fr 54px",
+                  display: "grid", gridTemplateColumns: "34px 40px 72px 1fr 54px",
                   alignItems: "center", padding: "9px 14px",
                   background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                   borderTop: `1px solid ${theme.bdr}22`,
                 }}>
                   <div style={roundBadge(row.round)}>{row.round}</div>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
+                    #{row.pickNum}
+                  </span>
                   <span style={{ fontSize: 11, color: theme.dim }}>{CAT_ICONS[row.category]} {row.category}</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: theme.txt }}>{row.pick}</span>
                   <div style={{ textAlign: "right" }}>
@@ -399,8 +405,6 @@ export default function DraftRecap({ seasonYear = 2026 }) {
                 </div>
               );
             })}
- 
-            {/* Total row */}
             <div style={{
               display: "flex", justifyContent: "space-between", alignItems: "center",
               padding: "12px 14px", borderTop: `1px solid ${theme.bdr}`, background: "rgba(0,0,0,0.15)",
@@ -416,12 +420,9 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         </div>
       )}
  
-      {/* ═══════════════════════════════════════════════════════════ */}
-      {/* VIEW: CATEGORY BREAKDOWN                                  */}
-      {/* ═══════════════════════════════════════════════════════════ */}
+      {/* ═══════════ CATEGORY BREAKDOWN ═══════════ */}
       {view === "category" && (
         <div>
-          {/* Category selector */}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 20 }}>
             {ALL_CATS.map(cat => (
               <button key={cat} onClick={() => setSelCat(cat)} style={pill(selCat === cat)}>
@@ -429,38 +430,34 @@ export default function DraftRecap({ seasonYear = 2026 }) {
               </button>
             ))}
           </div>
- 
-          {/* Header */}
           <div style={{ textAlign: "center", marginBottom: 16 }}>
             <div style={{ fontSize: 24, fontWeight: 800 }}>{CAT_ICONS[selCat]} {selCat}</div>
             <div style={{ fontSize: 12, color: theme.dim, marginTop: 2 }}>
-              Sorted by draft round — who reached and who found late value?
+              Sorted by draft pick order — who reached and who found late value?
             </div>
           </div>
- 
-          {/* Category rows */}
           <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
             <div style={{
-              display: "grid", gridTemplateColumns: "34px 76px 1fr 54px",
+              display: "grid", gridTemplateColumns: "34px 40px 76px 1fr 54px",
               padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
               letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
             }}>
-              <span>RD</span><span>Member</span><span>Pick</span><span style={{ textAlign: "right" }}>PTS</span>
+              <span>RD</span><span>PICK</span><span>Member</span><span>Pick</span><span style={{ textAlign: "right" }}>PTS</span>
             </div>
- 
             {catBreakdown.map((row, i) => {
               const ptsColor = getPointsColor(row.total);
               return (
                 <div key={row.memberId} style={{
-                  display: "grid", gridTemplateColumns: "34px 76px 1fr 54px",
+                  display: "grid", gridTemplateColumns: "34px 40px 76px 1fr 54px",
                   alignItems: "center", padding: "9px 14px",
                   background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                   borderTop: `1px solid ${theme.bdr}22`,
                 }}>
                   <div style={roundBadge(row.round)}>{row.round}</div>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[row.memberId] }}>
-                    {row.member}
+                  <span style={{ fontSize: 11, fontWeight: 600, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
+                    #{row.pickNum}
                   </span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[row.memberId] }}>{row.member}</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: theme.txt }}>{row.pick}</span>
                   <div style={{ textAlign: "right" }}>
                     <span style={{ fontSize: 15, fontWeight: 800, color: ptsColor, fontVariantNumeric: "tabular-nums" }}>
@@ -471,16 +468,11 @@ export default function DraftRecap({ seasonYear = 2026 }) {
               );
             })}
           </div>
- 
-          {/* Insight */}
           {(() => {
             const scored = catBreakdown.filter(r => r.total !== null);
             if (scored.length === 0) return null;
             const best = [...scored].sort((a, b) => b.total - a.total)[0];
             const earliest = catBreakdown[0];
-            const latest = catBreakdown[catBreakdown.length - 1];
-            const latestScored = scored.length > 0 ? [...scored].sort((a, b) => b.round - a.round)[0] : null;
-            const steal = latestScored && best && latestScored.memberId === best.memberId;
             return (
               <div style={{ ...cardStyle, marginTop: 12, fontSize: 12, color: theme.dim, lineHeight: 1.8 }}>
                 <span style={{ fontWeight: 700, color: theme.txt }}>📝 Insight: </span>
@@ -490,12 +482,8 @@ export default function DraftRecap({ seasonYear = 2026 }) {
                   <> The top scorer is{" "}
                     <span style={{ color: memberColorMap[best.memberId], fontWeight: 700 }}>{best.member}</span>
                     {" "}with {best.total} pts (Rd {best.round})
-                    {steal ? " — a late-round steal!" : best.round <= 3 ? " — the early investment paid off." : "."}
+                    {best.round >= 8 ? " — a late-round steal!" : best.round <= 3 ? " — the early investment paid off." : "."}
                   </>
-                )}
-                {latest.total !== null && latest.total <= 2 && latest.round >= 12 && (
-                  <> <span style={{ color: memberColorMap[latest.memberId], fontWeight: 700 }}>{latest.member}</span>
-                    {" "}waited until Rd {latest.round} and has only {latest.total} pts — but it was a late pick anyway.</>
                 )}
               </div>
             );
@@ -505,3 +493,4 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     </div>
   );
 }
+ 
