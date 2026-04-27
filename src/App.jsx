@@ -18,10 +18,12 @@ import SeasonHistory from "./components/SeasonHistory";
 import DraftTool from "./components/DraftTool";
 import SeasonSettings from "./components/SeasonSettings";
 import Calendar from "./components/Calendar";
+import DraftRecap from "./components/DraftRecap";
  
 const TABS = [
   { id: "scoreboard", label: "📊 Scoreboard", short: "📊" },
   { id: "calendar",   label: "📅 Calendar",   short: "📅" },
+  { id: "recap",      label: "📋 Recap",      short: "📋" },
   { id: "history",    label: "🏛️ History",    short: "🏛️" },
   { id: "draft",      label: "🎯 Draft",      short: "🎯" },
   { id: "settings",   label: "⚙️ Settings",   short: "⚙️" },
@@ -365,6 +367,9 @@ export default function App() {
         )}
         {activeTab === "calendar" && (
           <Calendar seasonYear={year} />
+        )}
+        {activeTab === "recap" && (
+          <DraftRecap seasonYear={year} />
         )}
         {activeTab === "history" && <SeasonHistory archivedSeasons={archivedSeasons} />}
         {activeTab === "draft" && (
