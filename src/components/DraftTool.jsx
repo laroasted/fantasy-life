@@ -4,9 +4,16 @@ import { DRAFT_CATEGORIES, CATEGORY_ORDER, CATEGORY_KEY_TO_ID } from "../constan
 import { PICK_OPTIONS } from "../constants/pickOptions";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { generateSnakeOrder } from "../utils/helpers";
-
+import { supabase } from "../utils/storage";
+ 
 const TIMER_DURATION = 120;
-
+ 
+// Invert CATEGORY_KEY_TO_ID: { nfl: "NFL", nba: "NBA", ... }
+const DRAFT_ID_TO_CATEGORY_KEY = {};
+Object.entries(CATEGORY_KEY_TO_ID).forEach(([key, id]) => {
+  DRAFT_ID_TO_CATEGORY_KEY[id] = key;
+});
+ 
 export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail }) {
   const [phase, setPhase] = useState("setup");
   const [draftOrder, setDraftOrder] = useState([]);
@@ -18,7 +25,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberFull, setNewMemberFull] = useState("");
   const [manualOrder, setManualOrder] = useState(null);
-
+ 
   const [picks, setPicks] = useState({});
   const [currentPick, setCurrentPick] = useState(0);
   const [snakeOrder, setSnakeOrder] = useState([]);
@@ -32,26 +39,28 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [pickHistory, setPickHistory] = useState([]);
   const [seasonName, setSeasonName] = useState("" + new Date().getFullYear());
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
-
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState("");
+ 
   // Mobile: toggle panels instead of always showing
   const [mobilePanel, setMobilePanel] = useState("draft"); // "draft" | "rosters" | "history"
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-
+ 
   const timerRef = useRef(null);
-
+ 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-
+ 
   useEffect(() => {
     if (timerActive && timer > 0) {
       timerRef.current = setTimeout(() => setTimer((t) => t - 1), 1000);
     } else { setTimerActive(false); }
     return () => clearTimeout(timerRef.current);
   }, [timerActive, timer]);
-
+ 
   const addMember = () => {
     if (!newMemberName.trim()) return;
     const id = newMemberName.trim().toLowerCase().replace(/\s+/g, "_");
@@ -60,7 +69,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setActiveMembers((prev) => [...prev, { id, name: newMemberName.trim(), full: newMemberFull.trim() || newMemberName.trim() }]);
     setNewMemberName(""); setNewMemberFull("");
   };
-
+ 
   const removeMember = (memberId) => {
     if (activeMembers.length <= 2) return;
     setActiveMembers((prev) => prev.filter((m) => m.id !== memberId));
@@ -68,7 +77,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setDraftOrder((prev) => prev.filter((m) => m.id !== memberId));
     if (manualOrder) setManualOrder((prev) => prev.filter((m) => m.id !== memberId));
   };
-
+ 
   const calculateOrder = () => {
     const actual = parseInt(actualResults);
     if (isNaN(actual)) return;
@@ -78,14 +87,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       .sort((a, b) => a.diff - b.diff);
     setDraftOrder(sorted);
   };
-
+ 
   const randomizeOrder = () => {
     const shuffled = [...activeMembers]
       .map((m) => ({ ...m, guess: null, diff: null }))
       .sort(() => Math.random() - 0.5);
     setDraftOrder(shuffled);
   };
-
+ 
   const startDraft = () => {
     if (draftOrder.length < 2) return;
     const so = generateSnakeOrder(draftOrder, DRAFT_CATEGORIES.length);
@@ -94,20 +103,20 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setCurrentPick(0);
     setTimer(TIMER_DURATION);
   };
-
+ 
   const isComplete = phase === "draft" && snakeOrder.length > 0 && currentPick >= snakeOrder.length;
   const slot = !isComplete && snakeOrder[currentPick];
   const member = slot ? draftOrder.find((m) => m.id === slot.memberId) : null;
-
+ 
   const getRoster = (mid) =>
     pickHistory.filter((h) => h.memberId === mid).map((h) => ({
       category: DRAFT_CATEGORIES.find((c) => c.id === h.categoryId), pick: h.selection,
     }));
-
+ 
   const availCats = DRAFT_CATEGORIES.filter((cat) =>
     !Object.keys(picks).some((k) => k.endsWith("-" + cat.id) && picks[k] && k.startsWith((member ? member.id : "") + "-"))
   );
-
+ 
   const makePick = (catId, selection) => {
     if (!member) return;
     const key = member.id + "-" + catId;
@@ -118,7 +127,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setTimer(TIMER_DURATION); setTimerActive(false);
     if (isMobile) setMobilePanel("draft");
   };
-
+ 
   const undoPick = () => {
     if (pickHistory.length === 0) return;
     const last = pickHistory[pickHistory.length - 1];
@@ -127,26 +136,168 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setCurrentPick((c) => c - 1);
     setSelectedCategory(null);
   };
-
-  const handleFinalize = () => {
+ 
+  // ═══════════════════════════════════════════════════════════════
+  // FINALIZE — saves everything to Supabase then calls onFinalize
+  // ═══════════════════════════════════════════════════════════════
+  const handleFinalize = async () => {
     if (!isCommissioner) return;
-    const categories = {};
-    CATEGORY_ORDER.forEach((catKey) => {
-      const catId = CATEGORY_KEY_TO_ID[catKey];
-      categories[catKey] = draftOrder.map((m) => ({
-        owner: m.name, pick: picks[m.id + "-" + catId] || "—", base: 0, bonus: 0, total: 0,
+    setFinalizing(true);
+    setFinalizeError("");
+ 
+    const yearNum = parseInt(seasonName) || new Date().getFullYear();
+ 
+    try {
+      // ── 0. Pre-flight: check if picks already exist for this year ──
+      const { count, error: checkErr } = await supabase
+        .from("picks")
+        .select("id", { count: "exact", head: true })
+        .eq("season_year", yearNum);
+ 
+      if (checkErr) {
+        console.warn("Could not check existing picks:", checkErr.message);
+      } else if (count && count > 0) {
+        throw new Error(
+          `Season ${yearNum} already has ${count} picks in the database. ` +
+          `If you need to re-draft, delete the existing picks in Supabase first, ` +
+          `or change the season year to ${yearNum + 1}.`
+        );
+      }
+ 
+      // ── 1. Build the draft board JSONB ──
+      // For each member, record which Supabase category key they picked in each round.
+      // pickHistory is in global chronological order. snakeOrder tells us which member
+      // was on the clock for each pick. We rebuild per-member round arrays.
+      const memberRoundCats = {};
+      draftOrder.forEach((m) => { memberRoundCats[m.id] = []; });
+ 
+      snakeOrder.forEach((slot, idx) => {
+        const histEntry = pickHistory[idx];
+        if (histEntry && histEntry.memberId === slot.memberId) {
+          const catKey = DRAFT_ID_TO_CATEGORY_KEY[histEntry.categoryId] || histEntry.categoryId;
+          memberRoundCats[slot.memberId].push(catKey);
+        }
+      });
+ 
+      const draftBoardData = {
+        memberOrder: draftOrder.map((m) => m.id),
+        board: memberRoundCats,
+      };
+ 
+      // ── 2. Ensure all draft members exist in the members table ──
+      // This handles new members added during draft setup (e.g. Scott in 2026).
+      // Uses upsert so existing members are untouched.
+      const memberRows = draftOrder.map((m) => ({
+        id: m.id,
+        name: m.name,
+        full_name: m.full || m.name,
+        color: MEMBER_COLORS[m.id] || "#64748b",
       }));
-    });
-    onFinalize({
-      year: parseInt(seasonName) || new Date().getFullYear(),
-      name: "Fantasy Life " + seasonName,
-      draftDate: new Date().toISOString(),
-      memberCount: draftOrder.length,
-      members: draftOrder.map((m) => ({ id: m.id, name: m.name, full: m.full })),
-      categories, detailedData: {}, status: "active",
-    });
+ 
+      const { error: memberErr } = await supabase
+        .from("members")
+        .upsert(memberRows, { onConflict: "id" });
+ 
+      if (memberErr) {
+        console.warn("Failed to upsert members:", memberErr.message);
+        // Non-fatal — existing members will still work, only new members might fail on pick insert
+      }
+ 
+      // ── 3. Archive the current active season ──
+      const { error: archiveErr } = await supabase
+        .from("seasons")
+        .update({ status: "archived" })
+        .eq("status", "active");
+ 
+      if (archiveErr) {
+        console.warn("Failed to archive current season:", archiveErr.message);
+        // Non-fatal — continue even if there's no active season to archive
+      }
+ 
+      // ── 4. Create (or update) the new season row ──
+      // Use upsert so it works whether the row already exists or not.
+      // We do NOT overwrite locks — if the row already exists with locks, keep them.
+      const { data: existingSeason } = await supabase
+        .from("seasons")
+        .select("locks")
+        .eq("year", yearNum)
+        .maybeSingle();
+ 
+      const { error: seasonErr } = await supabase
+        .from("seasons")
+        .upsert({
+          year: yearNum,
+          name: "Fantasy Life " + yearNum,
+          status: "active",
+          draft_date: new Date().toISOString(),
+          draft_board: draftBoardData,
+          locks: existingSeason?.locks || {},
+        }, { onConflict: "year" });
+ 
+      if (seasonErr) throw new Error("Failed to create season: " + seasonErr.message);
+ 
+      // ── 5. Insert all picks (one row per member per category) ──
+      const pickRows = [];
+      CATEGORY_ORDER.forEach((catKey) => {
+        const catId = CATEGORY_KEY_TO_ID[catKey];
+        draftOrder.forEach((m) => {
+          const selection = picks[m.id + "-" + catId] || "—";
+          pickRows.push({
+            season_year: yearNum,
+            member_id: m.id,
+            category: catKey,
+            pick: selection,
+            base: 0,
+            bonus: 0,
+            // Do NOT include total — it's a generated column
+          });
+        });
+      });
+ 
+      const { error: pickErr } = await supabase
+        .from("picks")
+        .insert(pickRows);
+ 
+      if (pickErr) throw new Error("Failed to insert picks: " + pickErr.message);
+ 
+      console.log(`✅ Season ${yearNum} saved to Supabase: ${pickRows.length} picks + draft board`);
+ 
+      // ── 6. Build local season object and call onFinalize ──
+      // This updates App.jsx state so Scoreboard shows the new season immediately.
+      // On next refresh, App.jsx will re-fetch from Supabase anyway.
+      const categories = {};
+      CATEGORY_ORDER.forEach((catKey) => {
+        const catId = CATEGORY_KEY_TO_ID[catKey];
+        categories[catKey] = draftOrder.map((m) => ({
+          owner: m.name,
+          pick: picks[m.id + "-" + catId] || "—",
+          base: 0,
+          bonus: 0,
+          total: 0,
+        }));
+      });
+ 
+      onFinalize({
+        year: yearNum,
+        name: "Fantasy Life " + seasonName,
+        draftDate: new Date().toISOString(),
+        memberCount: draftOrder.length,
+        members: draftOrder.map((m) => ({ id: m.id, name: m.name, full: m.full })),
+        categories,
+        detailedData: {},
+        locks: existingSeason?.locks || {},
+        status: "active",
+      });
+ 
+      setShowFinalizeModal(false);
+    } catch (err) {
+      console.error("Finalize error:", err);
+      setFinalizeError(err.message || "Something went wrong saving to Supabase.");
+    } finally {
+      setFinalizing(false);
+    }
   };
-
+ 
   const exportCSV = () => {
     const lines = ["Member," + DRAFT_CATEGORIES.map((c) => c.name).join(",")];
     draftOrder.forEach((m) => {
@@ -156,7 +307,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = "draft_" + seasonName + ".csv"; a.click();
   };
-
+ 
   // ===== SETUP PHASE =====
   if (phase === "setup") {
     return (
@@ -166,7 +317,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           <h2 style={{ margin: "0 0 8px", fontSize: isMobile ? 18 : 22 }}>New Season Draft</h2>
           <p style={{ color: theme.dim, fontSize: 13 }}>Set up members, enter guesses, and determine draft order.</p>
         </div>
-
+ 
         {/* Member Management */}
         <div style={{ ...cardStyle, marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -194,7 +345,6 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               </div>
               <div style={{ padding: 12, borderRadius: 8, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)" }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: theme.acc, marginBottom: 8 }}>+ Add New Member</div>
-                {/* Stack inputs on mobile */}
                 <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 8 }}>
                   <input value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)}
                     placeholder="Display name" style={{ ...inputStyle, flex: 1 }}
@@ -211,7 +361,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             </div>
           )}
         </div>
-
+ 
         {/* Google Results */}
         <div style={{ ...cardStyle, marginBottom: 16 }}>
           <label style={{ fontSize: 13, fontWeight: 600, color: theme.mut, display: "block", marginBottom: 6 }}>Secret Word/Phrase</label>
@@ -223,8 +373,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               placeholder="e.g. 1234567" type="number" style={inputStyle} />
           </div>
         </div>
-
-        {/* Guesses — single column on mobile */}
+ 
+        {/* Guesses */}
         <div style={{ ...cardStyle, marginBottom: 16 }}>
           <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Member Guesses</h3>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
@@ -238,7 +388,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             ))}
           </div>
         </div>
-
+ 
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           <button onClick={calculateOrder} style={{ ...buttonStyle(), width: "100%" }}>Calculate Draft Order</button>
           <button onClick={randomizeOrder}
@@ -246,7 +396,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             🎲 Or Skip & Randomize Order
           </button>
         </div>
-
+ 
         {draftOrder.length > 0 && (
           <div style={{ ...cardStyle, marginBottom: 16 }}>
             <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>🏆 Draft Order (Snake)</h3>
@@ -272,7 +422,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       </div>
     );
   }
-
+ 
   // ===== DRAFT PHASE =====
   // Mobile panel toggle bar
   const panelToggle = isMobile && (
@@ -293,8 +443,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       ))}
     </div>
   );
-
-  // Roster panel content (shared between mobile/desktop)
+ 
+  // Roster panel content
   const rosterPanel = (
     <div style={{ width: isMobile ? "100%" : 200, flexShrink: 0 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: theme.mut, marginBottom: 8 }}>ROSTERS</div>
@@ -324,7 +474,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       })}
     </div>
   );
-
+ 
   // History panel content
   const historyPanel = (
     <div style={{ width: isMobile ? "100%" : 200, flexShrink: 0 }}>
@@ -349,7 +499,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       </div>
     </div>
   );
-
+ 
   // Main draft area
   const draftMainArea = (
     <div style={{ flex: 1, minWidth: 0 }}>
@@ -367,7 +517,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               <input value={seasonName} onChange={(e) => setSeasonName(e.target.value)}
                 style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700 }} />
             </div>
-                <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
               <button onClick={() => setShowFinalizeModal(true)} disabled={!isCommissioner}
                 style={{ ...buttonStyle(theme.grn), padding: "12px 24px", fontSize: isMobile ? 13 : 15, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default" }}>
                 🏆 Finalize & Launch {seasonName}
@@ -380,26 +530,37 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               </div>
             )}
           </div>
-
+ 
+          {/* Finalize confirmation modal */}
           {showFinalizeModal && (
             <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
               display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
               <div style={{ ...cardStyle, maxWidth: 500, width: "100%", padding: 24 }}>
                 <h3 style={{ margin: "0 0 12px", fontSize: 18, color: theme.red }}>⚠️ Commissioner Authorization</h3>
                 <div style={{ fontSize: 13, color: theme.mut, lineHeight: 1.7, marginBottom: 16 }}>
-                  This will archive the current season and launch {seasonName}. Base scale: {draftOrder.length} members. All scores start at 0.
+                  This will archive the current season and launch <strong>{seasonName}</strong> as the new active season.
+                  All {draftOrder.length} members × 15 categories = {draftOrder.length * 15} picks will be saved to Supabase.
+                  Scores start at 0. The draft board will be saved for the Recap tab.
                 </div>
                 <div style={{ ...inputStyle, marginBottom: 8, opacity: 0.7 }}>
                   {commissionerEmail || "Commissioner session required"}
                 </div>
-                <div style={{ fontSize: 12, color: theme.dim, marginBottom: 8 }}>
-                  This step now uses your authenticated commissioner session instead of the old shared password.
-                </div>
+                {finalizeError && (
+                  <div style={{ fontSize: 12, color: theme.red, marginBottom: 8, padding: 8, borderRadius: 6,
+                    background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)" }}>
+                    ❌ {finalizeError}
+                  </div>
+                )}
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => { setShowFinalizeModal(false); }}
+                  <button onClick={() => { setShowFinalizeModal(false); setFinalizeError(""); }}
+                    disabled={finalizing}
                     style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>Cancel</button>
-                  <button onClick={handleFinalize} disabled={!isCommissioner}
-                    style={{ ...buttonStyle(theme.red), flex: 2, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default" }}>Confirm & Launch</button>
+                  <button onClick={handleFinalize} disabled={!isCommissioner || finalizing}
+                    style={{ ...buttonStyle(theme.red), flex: 2,
+                      opacity: isCommissioner && !finalizing ? 1 : 0.5,
+                      cursor: isCommissioner && !finalizing ? "pointer" : "default" }}>
+                    {finalizing ? "Saving to Supabase..." : "Confirm & Launch"}
+                  </button>
                 </div>
               </div>
             </div>
@@ -434,7 +595,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               )}
             </div>
           </div>
-
+ 
           {/* Category selection */}
           {!selectedCategory && (
             <div style={cardStyle}>
@@ -453,7 +614,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               </div>
             </div>
           )}
-
+ 
           {/* Pick selection */}
           {selectedCategory && (
             <div style={cardStyle}>
@@ -498,12 +659,11 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       )}
     </div>
   );
-
+ 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20 }}>🎯 {seasonName} Draft</h2>
-        {/* Desktop: toggle history. Mobile: handled by panel bar */}
         {!isMobile && (
           <button onClick={() => setShowHistory(!showHistory)}
             style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>
@@ -511,11 +671,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           </button>
         )}
       </div>
-
-      {/* Mobile panel toggle */}
+ 
       {panelToggle}
-
-      {/* Desktop: 3-column layout. Mobile: single panel */}
+ 
       {isMobile ? (
         <div>
           {mobilePanel === "draft" && draftMainArea}
@@ -529,8 +687,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           {showHistory && historyPanel}
         </div>
       )}
-
-      {/* Draft Board — always shown */}
+ 
+      {/* Draft Board */}
       <div style={{ marginTop: 16, ...cardStyle, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>📊 Draft Board</h3>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: isMobile ? 10 : 11 }}>
