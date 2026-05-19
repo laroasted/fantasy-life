@@ -6,6 +6,11 @@
  * they collectively occupy.
  * e.g. 2-way tie for ranks 1–2 out of 12 = (12+11)/2 = 11.5 each
  *
+ * CHANGELOG (2026-05-19):
+ *   - FIX: Added normalizeStr() to strip diacritics (Å→A, ø→o, etc.)
+ *     before name matching. Fixes Ludvig Åberg ranking as 201.
+ *   - matchAthlete now uses normalizeStr for all comparisons.
+ *
  * CHANGELOG (2026-03-17):
  *   - F1: Added Jolpica API (Ergast successor) as PRIMARY data source
  *   - F1: ESPN kept as fallback (currently returning empty for 2026)
@@ -24,6 +29,15 @@ const EVENT_LEAGUES = {
 };
  
 const NAME_ALIASES = { 'Ludvig Åberg': 'Aberg', 'Ludvig Aberg': 'Aberg' };
+ 
+/**
+ * Strips diacritics / accent marks and lowercases.
+ * e.g. "Ludvig Åberg" → "ludvig aberg"
+ *      "Nicolai Højgaard" → "nicolai hojgaard"
+ */
+function normalizeStr(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
  
 /**
  * Assigns base points with split/average tiebreaker logic.
@@ -265,14 +279,19 @@ async function fetchF1Standings(seasonYear) {
   return drivers;
 }
  
+/**
+ * Matches a pick name against ESPN athlete data.
+ * Uses normalizeStr() to strip diacritics before comparing,
+ * so "Åberg" matches "Aberg", "Højgaard" matches "Hojgaard", etc.
+ */
 function matchAthlete(pickName, espnAthletes) {
   var pick = pickName.trim(), alias = NAME_ALIASES[pick], terms = alias ? [alias, pick] : [pick];
   for (var term of terms) {
-    var lower = term.toLowerCase();
-    var exact = espnAthletes.find(function(a) { return a.name.toLowerCase() === lower; }); if (exact) return exact;
+    var lower = normalizeStr(term);
+    var exact = espnAthletes.find(function(a) { return normalizeStr(a.name) === lower; }); if (exact) return exact;
     var lastName = lower.split(' ').pop();
-    var lnm = espnAthletes.find(function(a) { return a.name.toLowerCase().split(' ').pop() === lastName; }); if (lnm) return lnm;
-    var con = espnAthletes.find(function(a) { return a.name.toLowerCase().includes(lower) || lower.includes(a.name.toLowerCase()); }); if (con) return con;
+    var lnm = espnAthletes.find(function(a) { return normalizeStr(a.name).split(' ').pop() === lastName; }); if (lnm) return lnm;
+    var con = espnAthletes.find(function(a) { return normalizeStr(a.name).includes(lower) || lower.includes(normalizeStr(a.name)); }); if (con) return con;
   }
   return null;
 }
