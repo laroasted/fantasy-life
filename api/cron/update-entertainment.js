@@ -16,6 +16,8 @@
  *   non-theatrical TMDB entries before processing.
  * - FIX: Fuzzy title dedup threshold raised from 1 shared word to 2, to avoid
  *   false positives on unrelated films sharing one common word.
+ * - FIX: Title containment dedup — "X" inside "Y: X" dedupes regardless of month.
+ * - FIX: /gala/i → /\bgala\b/i so "Galaxy" is not filtered as non-theatrical.
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -49,7 +51,7 @@ const NON_FILM_PATTERNS = [
   /talk show/i,
   /interview/i,
   /press conference/i,
-  /gala/i,
+  /\bgala\b/i,
   /photocall/i,
 ];
  
@@ -123,23 +125,39 @@ async function getActorFilms(personId, FY_START, FY_END) {
       }
     }
  
-    // Layer 2: Deduplicate by fuzzy title + same release month
-    // Requires 2+ shared words of 4+ chars to count as a duplicate
+    // Layer 2: Deduplicate by fuzzy title match
+    // Two checks (either triggers a dedup):
+    //   A) Title containment — one title is a substring of the other (any month)
+    //      e.g. "The Mandalorian and Grogu" inside "Star Wars: The Mandalorian and Grogu"
+    //   B) 2+ shared words of 4+ chars in the same release month
     var final = [];
     for (var j = 0; j < deduped.length; j++) {
       var film = deduped[j];
       var dominated = false;
-      var filmWords = film.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(function(w) { return w.length >= 4; });
+      var filmLower = film.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+      var filmWords = filmLower.split(/\s+/).filter(function(w) { return w.length >= 4; });
  
       for (var k = 0; k < final.length; k++) {
         var existing = final[k];
-        if (film.releaseDate.substring(0, 7) !== existing.releaseDate.substring(0, 7)) continue;
-        var existingWords = existing.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(function(w) { return w.length >= 4; });
-        var sharedWords = 0;
-        for (var w = 0; w < filmWords.length; w++) {
-          if (existingWords.indexOf(filmWords[w]) >= 0) sharedWords++;
+        var existingLower = existing.title.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+        var isDupe = false;
+ 
+        // Check A: title containment (no month restriction)
+        if (filmLower.indexOf(existingLower) >= 0 || existingLower.indexOf(filmLower) >= 0) {
+          isDupe = true;
         }
-        if (sharedWords >= 2) {
+ 
+        // Check B: shared words (same month only)
+        if (!isDupe && film.releaseDate.substring(0, 7) === existing.releaseDate.substring(0, 7)) {
+          var existingWords = existingLower.split(/\s+/).filter(function(w) { return w.length >= 4; });
+          var sharedWords = 0;
+          for (var w = 0; w < filmWords.length; w++) {
+            if (existingWords.indexOf(filmWords[w]) >= 0) sharedWords++;
+          }
+          if (sharedWords >= 2) isDupe = true;
+        }
+ 
+        if (isDupe) {
           console.log('    Dedup: "' + film.title + '" looks like duplicate of "' + existing.title + '" — skipping');
           dominated = true;
           if (film.title.length > existing.title.length) {
