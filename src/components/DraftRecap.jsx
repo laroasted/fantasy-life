@@ -220,16 +220,29 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   }, [enrichedSnake, filterRound]);
 
   // ── Draft value (steals & busts) ──
-  // Ranks every scored pick by points, then compares that finish rank to the
-  // pick's original draft slot. A pick that finished much higher than it was
-  // drafted (e.g. picked #170 of 180, finished #8 of 180) is a "steal"; the
-  // reverse is a "bust". This mixes categories with different scoring scales
-  // (base points are capped ~1-12 everywhere, but bonus ranges from 0 in Stock
-  // to 10 in NFL/NBA/etc.), so treat it as a fun approximation, not a precise
-  // stat — a Stock pick can never out-"value" a bonus-heavy NFL pick by this
+  // Ranks every scored pick twice — by draft order and by points — among only
+  // the picks that have been scored so far, then compares the two ranks. A
+  // pick that finished much higher than it was drafted is a "steal"; the
+  // reverse is a "bust". Both ranks MUST come from the same population: most
+  // of a season has plenty of unscored picks (categories freeze at different
+  // times of year), and comparing a scored pick's raw draft-board slot
+  // (1..totalPicks, including unscored ones) against a finish rank computed
+  // only among scored picks would systematically inflate value for anything
+  // drafted after a lot of still-unscored picks — not because it performed
+  // well, but because most of the draft hasn't been scored yet.
+  //
+  // This also mixes categories with different scoring scales (base points
+  // are capped ~1-12 everywhere, but bonus ranges from 0 in Stock to 10 in
+  // NFL/NBA/etc.), so treat it as a fun approximation, not a precise stat —
+  // a Stock pick can never out-"value" a bonus-heavy NFL pick by this
   // measure alone.
   const valueBoard = useMemo(() => {
     const scored = enrichedSnake.filter(p => p.total !== null);
+
+    const byDraftOrder = [...scored].sort((a, b) => a.pickNum - b.pickNum);
+    const draftRankByPick = new Map();
+    byDraftOrder.forEach((p, i) => draftRankByPick.set(p.pickNum, i + 1));
+
     const byFinish = [...scored].sort((a, b) => b.total - a.total);
     // Equal totals share an averaged rank (same tiebreaker convention the
     // scoring crons use for tied base points) so a tie never masquerades as
@@ -247,13 +260,14 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     }
     return scored
       .map(p => {
+        const draftRank = draftRankByPick.get(p.pickNum);
         const finishRank = finishRankByPick.get(p.pickNum);
-        return { ...p, finishRank, value: p.pickNum - finishRank };
+        return { ...p, draftRank, finishRank, value: draftRank - finishRank };
       })
       .sort((a, b) => b.value - a.value);
   }, [enrichedSnake]);
 
-  const topSteals = valueBoard.slice(0, 10);
+  const topSteals = valueBoard.slice(0, 10).filter(p => p.value > 0);
   const topBusts = [...valueBoard].reverse().slice(0, 10).filter(p => p.value < 0);
  
   // ── Styles ──
@@ -515,11 +529,13 @@ export default function DraftRecap({ seasonYear = 2026 }) {
           <div style={{ textAlign: "center", marginBottom: 16 }}>
             <div style={{ fontSize: 24, fontWeight: 800 }}>💎 Steals & Busts</div>
             <div style={{ fontSize: 12, color: theme.dim, marginTop: 2, maxWidth: 520, margin: "4px auto 0" }}>
-              Compares where a pick landed in the draft (pick #) to where it finished
-              by points, across all {valueBoard.length} scored picks. A big positive
-              value means a late pick massively outscored where it was drafted; a big
-              negative value means an early pick underperformed. It mixes categories
-              with different scoring ranges, so treat it as a fun approximation, not gospel.
+              Ranks each of the {valueBoard.length} scored picks two ways — by draft
+              order and by points — and compares the two ranks. A big positive value
+              means a pick massively outscored the others drafted around the same
+              time; a big negative value means it underperformed. Only scored picks
+              count on both sides, so this shifts as more of the season gets scored.
+              It also mixes categories with different scoring ranges, so treat it as
+              a fun approximation, not gospel.
             </div>
           </div>
 
@@ -530,6 +546,7 @@ export default function DraftRecap({ seasonYear = 2026 }) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               {/* Steals */}
+              {topSteals.length > 0 && (
               <div>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#4ade80", marginBottom: 8, letterSpacing: 1 }}>
                   🚀 BIGGEST STEALS
@@ -540,7 +557,7 @@ export default function DraftRecap({ seasonYear = 2026 }) {
                     padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
                     letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
                   }}>
-                    <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Drafted</span>
+                    <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Draft Rank</span>
                     <span style={{ textAlign: "center" }}>Finish</span><span style={{ textAlign: "right" }}>Value</span>
                   </div>
                   {topSteals.map((p, i) => (
@@ -555,13 +572,14 @@ export default function DraftRecap({ seasonYear = 2026 }) {
                       <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {CAT_ICONS[p.category]} {p.pick}
                       </span>
-                      <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.pickNum}</span>
+                      <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.draftRank}</span>
                       <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
                       <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#4ade80" }}>+{p.value}</span>
                     </div>
                   ))}
                 </div>
               </div>
+              )}
 
               {/* Busts */}
               {topBusts.length > 0 && (
@@ -575,7 +593,7 @@ export default function DraftRecap({ seasonYear = 2026 }) {
                       padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
                       letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
                     }}>
-                      <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Drafted</span>
+                      <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Draft Rank</span>
                       <span style={{ textAlign: "center" }}>Finish</span><span style={{ textAlign: "right" }}>Value</span>
                     </div>
                     {topBusts.map((p, i) => (
@@ -590,12 +608,18 @@ export default function DraftRecap({ seasonYear = 2026 }) {
                         <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {CAT_ICONS[p.category]} {p.pick}
                         </span>
-                        <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.pickNum}</span>
+                        <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.draftRank}</span>
                         <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
                         <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#f87171" }}>{p.value}</span>
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {topSteals.length === 0 && topBusts.length === 0 && (
+                <div style={{ textAlign: "center", padding: 40, color: theme.dim, fontSize: 13 }}>
+                  Every scored pick finished right where it was drafted — no steals or busts yet.
                 </div>
               )}
             </div>
