@@ -50,14 +50,30 @@ export default function Trends({ seasonData }) {
       if (!seasonYear) { setLoading(false); return; }
       setLoading(true);
       setError(null);
-      const { data, error: err } = await supabase
-        .from("score_history")
-        .select("snapshot_date, member_id, category, total")
-        .eq("season_year", seasonYear)
-        .order("snapshot_date");
+      // PostgREST caps unpaginated responses at 1000 rows. At 11 members x 15
+      // categories = 165 rows/day, a season blows past that in under a week,
+      // so this paginates the same way api/cron/update-billboard.js does.
+      const pageSize = 1000;
+      let page = 0;
+      let allRows = [];
+      let keepFetching = true;
+      let fetchError = null;
+      while (keepFetching) {
+        const { data, error: err } = await supabase
+          .from("score_history")
+          .select("snapshot_date, member_id, category, total")
+          .eq("season_year", seasonYear)
+          .order("snapshot_date")
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (err) { fetchError = err; break; }
+        const batch = data || [];
+        allRows = allRows.concat(batch);
+        page++;
+        if (batch.length < pageSize) keepFetching = false;
+      }
       if (cancelled) return;
-      if (err) { setError(err.message); setLoading(false); return; }
-      setRows(data || []);
+      if (fetchError) { setError(fetchError.message); setLoading(false); return; }
+      setRows(allRows);
       setLoading(false);
     }
     load();
@@ -70,11 +86,15 @@ export default function Trends({ seasonData }) {
     return m;
   }, [members]);
 
-  // ── date x member x category -> total ──
+  // Rows visible in the current view (all categories, or just the selected one).
+  const filteredRows = useMemo(() => {
+    return viewCat === "ALL" ? rows : rows.filter((r) => r.category === viewCat);
+  }, [rows, viewCat]);
+
+  // ── date x member -> total, within the current view ──
   const byDate = useMemo(() => {
     const m = new Map();
-    rows.forEach((r) => {
-      if (viewCat !== "ALL" && r.category !== viewCat) return;
+    filteredRows.forEach((r) => {
       if (!m.has(r.snapshot_date)) m.set(r.snapshot_date, {});
       const d = m.get(r.snapshot_date);
       const sum = (d[r.member_id] || 0) + (Number(r.total) || 0);
@@ -82,17 +102,21 @@ export default function Trends({ seasonData }) {
       d[r.member_id] = Math.round(sum * 100) / 100;
     });
     return m;
-  }, [rows, viewCat]);
+  }, [filteredRows]);
 
   const dates = useMemo(() => [...byDate.keys()].sort(), [byDate]);
 
-  // Only chart members who actually have a snapshot row somewhere — a member
-  // with none yet (just added, or snapshotting hasn't caught up) would otherwise
-  // draw as a flat line at 0 and clutter the legend/tooltip for everyone else.
+  // Only chart members who actually have a snapshot row in the current view —
+  // a member with none yet (just added, snapshotting hasn't caught up, or no
+  // history in this specific category) would otherwise draw as a flat line at
+  // 0 and clutter the legend/tooltip for everyone else. Must come from the
+  // same filtered set as byDate, not all rows, or switching to a category a
+  // member has no history in reintroduces the flat-zero-line bug scoped to
+  // that view.
   const memberIds = useMemo(() => {
-    const ids = new Set(rows.map((r) => r.member_id));
+    const ids = new Set(filteredRows.map((r) => r.member_id));
     return [...ids];
-  }, [rows]);
+  }, [filteredRows]);
 
   const series = useMemo(() => {
     return memberIds
