@@ -218,6 +218,57 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   const draftFiltered = useMemo(() => {
     return enrichedSnake.filter(p => filterRound === "All" || p.round === parseInt(filterRound));
   }, [enrichedSnake, filterRound]);
+
+  // ── Draft value (steals & busts) ──
+  // Ranks every scored pick twice — by draft order and by points — among only
+  // the picks that have been scored so far, then compares the two ranks. A
+  // pick that finished much higher than it was drafted is a "steal"; the
+  // reverse is a "bust". Both ranks MUST come from the same population: most
+  // of a season has plenty of unscored picks (categories freeze at different
+  // times of year), and comparing a scored pick's raw draft-board slot
+  // (1..totalPicks, including unscored ones) against a finish rank computed
+  // only among scored picks would systematically inflate value for anything
+  // drafted after a lot of still-unscored picks — not because it performed
+  // well, but because most of the draft hasn't been scored yet.
+  //
+  // This also mixes categories with different scoring scales (base points
+  // are capped ~1-12 everywhere, but bonus ranges from 0 in Stock to 10 in
+  // NFL/NBA/etc.), so treat it as a fun approximation, not a precise stat —
+  // a Stock pick can never out-"value" a bonus-heavy NFL pick by this
+  // measure alone.
+  const valueBoard = useMemo(() => {
+    const scored = enrichedSnake.filter(p => p.total !== null);
+
+    const byDraftOrder = [...scored].sort((a, b) => a.pickNum - b.pickNum);
+    const draftRankByPick = new Map();
+    byDraftOrder.forEach((p, i) => draftRankByPick.set(p.pickNum, i + 1));
+
+    const byFinish = [...scored].sort((a, b) => b.total - a.total);
+    // Equal totals share an averaged rank (same tiebreaker convention the
+    // scoring crons use for tied base points) so a tie never masquerades as
+    // a steal or bust just because of incidental sort order.
+    const finishRankByPick = new Map();
+    let i = 0;
+    while (i < byFinish.length) {
+      let j = i;
+      while (j < byFinish.length && byFinish[j].total === byFinish[i].total) j++;
+      let rankSum = 0;
+      for (let p = i; p < j; p++) rankSum += p + 1;
+      const avgRank = rankSum / (j - i);
+      for (let p = i; p < j; p++) finishRankByPick.set(byFinish[p].pickNum, avgRank);
+      i = j;
+    }
+    return scored
+      .map(p => {
+        const draftRank = draftRankByPick.get(p.pickNum);
+        const finishRank = finishRankByPick.get(p.pickNum);
+        return { ...p, draftRank, finishRank, value: draftRank - finishRank };
+      })
+      .sort((a, b) => b.value - a.value);
+  }, [enrichedSnake]);
+
+  const topSteals = valueBoard.slice(0, 10).filter(p => p.value > 0);
+  const topBusts = [...valueBoard].reverse().slice(0, 10).filter(p => p.value < 0);
  
   // ── Styles ──
   const pill = (active) => ({
@@ -298,6 +349,7 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         <button onClick={() => setView("draft")} style={pill(view === "draft")}>📜 Draft Order</button>
         <button onClick={() => setView("member")} style={pill(view === "member")}>🪪 Report Card</button>
         <button onClick={() => setView("category")} style={pill(view === "category")}>📊 By Category</button>
+        <button onClick={() => setView("value")} style={pill(view === "value")}>💎 Value</button>
       </div>
  
       {/* ═══════════ DRAFT ORDER ═══════════ */}
@@ -468,6 +520,110 @@ export default function DraftRecap({ seasonYear = 2026 }) {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ═══════════ DRAFT VALUE (STEALS & BUSTS) ═══════════ */}
+      {view === "value" && (
+        <div>
+          <div style={{ textAlign: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: 24, fontWeight: 800 }}>💎 Steals & Busts</div>
+            <div style={{ fontSize: 12, color: theme.dim, marginTop: 2, maxWidth: 520, margin: "4px auto 0" }}>
+              Ranks each of the {valueBoard.length} scored picks two ways — by draft
+              order and by points — and compares the two ranks. A big positive value
+              means a pick massively outscored the others drafted around the same
+              time; a big negative value means it underperformed. Only scored picks
+              count on both sides, so this shifts as more of the season gets scored.
+              It also mixes categories with different scoring ranges, so treat it as
+              a fun approximation, not gospel.
+            </div>
+          </div>
+
+          {valueBoard.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: theme.dim, fontSize: 13 }}>
+              No scored picks yet — value shows up once points start coming in.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {/* Steals */}
+              {topSteals.length > 0 && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#4ade80", marginBottom: 8, letterSpacing: 1 }}>
+                  🚀 BIGGEST STEALS
+                </div>
+                <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                    padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+                    letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
+                  }}>
+                    <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Draft Rank</span>
+                    <span style={{ textAlign: "center" }}>Finish</span><span style={{ textAlign: "right" }}>Value</span>
+                  </div>
+                  {topSteals.map((p, i) => (
+                    <div key={p.pickNum} style={{
+                      display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                      alignItems: "center", padding: "9px 14px",
+                      background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
+                      borderTop: `1px solid ${theme.bdr}22`,
+                    }}>
+                      <span style={{ fontSize: 11, color: theme.dim }}>{i + 1}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
+                      <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {CAT_ICONS[p.category]} {p.pick}
+                      </span>
+                      <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.draftRank}</span>
+                      <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
+                      <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#4ade80" }}>+{p.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              )}
+
+              {/* Busts */}
+              {topBusts.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#f87171", marginBottom: 8, letterSpacing: 1 }}>
+                    📉 BIGGEST BUSTS
+                  </div>
+                  <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+                    <div style={{
+                      display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                      padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+                      letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
+                    }}>
+                      <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Draft Rank</span>
+                      <span style={{ textAlign: "center" }}>Finish</span><span style={{ textAlign: "right" }}>Value</span>
+                    </div>
+                    {topBusts.map((p, i) => (
+                      <div key={p.pickNum} style={{
+                        display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                        alignItems: "center", padding: "9px 14px",
+                        background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
+                        borderTop: `1px solid ${theme.bdr}22`,
+                      }}>
+                        <span style={{ fontSize: 11, color: theme.dim }}>{i + 1}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
+                        <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {CAT_ICONS[p.category]} {p.pick}
+                        </span>
+                        <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.draftRank}</span>
+                        <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
+                        <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#f87171" }}>{p.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {topSteals.length === 0 && topBusts.length === 0 && (
+                <div style={{ textAlign: "center", padding: 40, color: theme.dim, fontSize: 13 }}>
+                  Every scored pick finished right where it was drafted — no steals or busts yet.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

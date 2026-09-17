@@ -34,6 +34,10 @@
     {
       "path": "/api/cron/update-country",
       "schedule": "0 7 1 * *"
+    },
+    {
+      "path": "/api/cron/snapshot-scores",
+      "schedule": "0 8 * * *"
     }
   ]
 }
