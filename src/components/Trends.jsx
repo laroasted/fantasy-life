@@ -64,6 +64,11 @@ export default function Trends({ seasonData }) {
           .select("snapshot_date, member_id, category, total")
           .eq("season_year", seasonYear)
           .order("snapshot_date")
+          // snapshot_date alone isn't unique (~165 rows share each date), so
+          // ties can land in a different order across separate paginated
+          // requests without a unique tiebreaker — silently duplicating or
+          // dropping rows at page boundaries. `id` is the table's identity PK.
+          .order("id")
           .range(page * pageSize, (page + 1) * pageSize - 1);
         if (err) { fetchError = err; break; }
         const batch = data || [];
