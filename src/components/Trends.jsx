@@ -77,26 +77,32 @@ export default function Trends({ seasonData }) {
       if (viewCat !== "ALL" && r.category !== viewCat) return;
       if (!m.has(r.snapshot_date)) m.set(r.snapshot_date, {});
       const d = m.get(r.snapshot_date);
-      d[r.member_id] = (d[r.member_id] || 0) + (Number(r.total) || 0);
+      const sum = (d[r.member_id] || 0) + (Number(r.total) || 0);
+      // Round away float noise from summing decimal totals (e.g. tie-split points).
+      d[r.member_id] = Math.round(sum * 100) / 100;
     });
     return m;
   }, [rows, viewCat]);
 
   const dates = useMemo(() => [...byDate.keys()].sort(), [byDate]);
 
+  // Only chart members who actually have a snapshot row somewhere — a member
+  // with none yet (just added, or snapshotting hasn't caught up) would otherwise
+  // draw as a flat line at 0 and clutter the legend/tooltip for everyone else.
   const memberIds = useMemo(() => {
-    const ids = new Set(members.map((m) => m.id));
-    rows.forEach((r) => ids.add(r.member_id));
+    const ids = new Set(rows.map((r) => r.member_id));
     return [...ids];
-  }, [members, rows]);
+  }, [rows]);
 
   const series = useMemo(() => {
-    return memberIds.map((mid) => ({
-      id: mid,
-      name: memberMeta[mid]?.name || mid,
-      color: MEMBER_COLORS[mid] || FALLBACK_COLOR,
-      values: dates.map((d) => byDate.get(d)?.[mid] ?? 0),
-    }));
+    return memberIds
+      .map((mid) => ({
+        id: mid,
+        name: memberMeta[mid]?.name || mid,
+        color: MEMBER_COLORS[mid] || FALLBACK_COLOR,
+        values: dates.map((d) => byDate.get(d)?.[mid] ?? 0),
+      }))
+      .sort((a, b) => (b.values[b.values.length - 1] || 0) - (a.values[a.values.length - 1] || 0));
   }, [memberIds, memberMeta, dates, byDate]);
 
   const visibleSeries = series.filter((sr) => !hidden.has(sr.id));

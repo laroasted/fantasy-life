@@ -324,13 +324,18 @@ export default function App() {
           </div>
  
           {/* Tab bar */}
-          <div style={{ display: "flex", gap: 0 }}>
+          <div style={{
+            display: "flex", gap: 0,
+            overflowX: isMobile ? "auto" : "visible",
+            WebkitOverflowScrolling: "touch",
+            msOverflowStyle: "none", scrollbarWidth: "none",
+          }}>
             {TABS.map(function (t) {
               return (
                 <button key={t.id} onClick={function () { setActiveTab(t.id); }}
                   style={{
-                    flex: isMobile ? 1 : "unset",
-                    padding: isMobile ? "8px 4px" : "10px 20px",
+                    flex: isMobile ? "0 0 auto" : "unset",
+                    padding: isMobile ? "8px 10px" : "10px 20px",
                     background: "none", border: "none",
                     borderBottom: activeTab === t.id ? "2px solid " + theme.acc : "2px solid transparent",
                     color: activeTab === t.id ? "#f8fafc" : theme.dim,
