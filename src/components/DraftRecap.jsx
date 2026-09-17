@@ -218,6 +218,28 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   const draftFiltered = useMemo(() => {
     return enrichedSnake.filter(p => filterRound === "All" || p.round === parseInt(filterRound));
   }, [enrichedSnake, filterRound]);
+
+  // ── Draft value (steals & busts) ──
+  // Ranks every scored pick by points, then compares that finish rank to the
+  // pick's original draft slot. A pick that finished much higher than it was
+  // drafted (e.g. picked #170 of 180, finished #8 of 180) is a "steal"; the
+  // reverse is a "bust". This mixes categories with different scoring scales
+  // (base points are capped ~1-12 everywhere, but bonus ranges from 0 in Stock
+  // to 10 in NFL/NBA/etc.), so treat it as a fun approximation, not a precise
+  // stat — a Stock pick can never out-"value" a bonus-heavy NFL pick by this
+  // measure alone.
+  const valueBoard = useMemo(() => {
+    const scored = enrichedSnake.filter(p => p.total !== null);
+    const byFinish = [...scored].sort((a, b) => b.total - a.total);
+    const finishRankByPick = new Map();
+    byFinish.forEach((p, i) => finishRankByPick.set(p.pickNum, i + 1));
+    return scored
+      .map(p => ({ ...p, finishRank: finishRankByPick.get(p.pickNum), value: p.pickNum - finishRankByPick.get(p.pickNum) }))
+      .sort((a, b) => b.value - a.value);
+  }, [enrichedSnake]);
+
+  const topSteals = valueBoard.slice(0, 10);
+  const topBusts = [...valueBoard].reverse().slice(0, 10).filter(p => p.value < 0);
  
   // ── Styles ──
   const pill = (active) => ({
@@ -298,6 +320,7 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         <button onClick={() => setView("draft")} style={pill(view === "draft")}>📜 Draft Order</button>
         <button onClick={() => setView("member")} style={pill(view === "member")}>🪪 Report Card</button>
         <button onClick={() => setView("category")} style={pill(view === "category")}>📊 By Category</button>
+        <button onClick={() => setView("value")} style={pill(view === "value")}>💎 Value</button>
       </div>
  
       {/* ═══════════ DRAFT ORDER ═══════════ */}
@@ -468,6 +491,100 @@ export default function DraftRecap({ seasonYear = 2026 }) {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ═══════════ DRAFT VALUE (STEALS & BUSTS) ═══════════ */}
+      {view === "value" && (
+        <div>
+          <div style={{ textAlign: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: 24, fontWeight: 800 }}>💎 Steals & Busts</div>
+            <div style={{ fontSize: 12, color: theme.dim, marginTop: 2, maxWidth: 520, margin: "4px auto 0" }}>
+              Compares where a pick landed in the draft (pick #) to where it finished
+              by points, across all {valueBoard.length} scored picks. A big positive
+              value means a late pick massively outscored where it was drafted; a big
+              negative value means an early pick underperformed. It mixes categories
+              with different scoring ranges, so treat it as a fun approximation, not gospel.
+            </div>
+          </div>
+
+          {valueBoard.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: theme.dim, fontSize: 13 }}>
+              No scored picks yet — value shows up once points start coming in.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {/* Steals */}
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#4ade80", marginBottom: 8, letterSpacing: 1 }}>
+                  🚀 BIGGEST STEALS
+                </div>
+                <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                    padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+                    letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
+                  }}>
+                    <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Drafted</span>
+                    <span style={{ textAlign: "center" }}>Finish</span><span style={{ textAlign: "right" }}>Value</span>
+                  </div>
+                  {topSteals.map((p, i) => (
+                    <div key={p.pickNum} style={{
+                      display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                      alignItems: "center", padding: "9px 14px",
+                      background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
+                      borderTop: `1px solid ${theme.bdr}22`,
+                    }}>
+                      <span style={{ fontSize: 11, color: theme.dim }}>{i + 1}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
+                      <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {CAT_ICONS[p.category]} {p.pick}
+                      </span>
+                      <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.pickNum}</span>
+                      <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
+                      <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#4ade80" }}>+{p.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Busts */}
+              {topBusts.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#f87171", marginBottom: 8, letterSpacing: 1 }}>
+                    📉 BIGGEST BUSTS
+                  </div>
+                  <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+                    <div style={{
+                      display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                      padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+                      letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
+                    }}>
+                      <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Drafted</span>
+                      <span style={{ textAlign: "center" }}>Finish</span><span style={{ textAlign: "right" }}>Value</span>
+                    </div>
+                    {topBusts.map((p, i) => (
+                      <div key={p.pickNum} style={{
+                        display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
+                        alignItems: "center", padding: "9px 14px",
+                        background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
+                        borderTop: `1px solid ${theme.bdr}22`,
+                      }}>
+                        <span style={{ fontSize: 11, color: theme.dim }}>{i + 1}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
+                        <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {CAT_ICONS[p.category]} {p.pick}
+                        </span>
+                        <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.pickNum}</span>
+                        <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
+                        <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#f87171" }}>{p.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
