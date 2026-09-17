@@ -231,10 +231,25 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   const valueBoard = useMemo(() => {
     const scored = enrichedSnake.filter(p => p.total !== null);
     const byFinish = [...scored].sort((a, b) => b.total - a.total);
+    // Equal totals share an averaged rank (same tiebreaker convention the
+    // scoring crons use for tied base points) so a tie never masquerades as
+    // a steal or bust just because of incidental sort order.
     const finishRankByPick = new Map();
-    byFinish.forEach((p, i) => finishRankByPick.set(p.pickNum, i + 1));
+    let i = 0;
+    while (i < byFinish.length) {
+      let j = i;
+      while (j < byFinish.length && byFinish[j].total === byFinish[i].total) j++;
+      let rankSum = 0;
+      for (let p = i; p < j; p++) rankSum += p + 1;
+      const avgRank = rankSum / (j - i);
+      for (let p = i; p < j; p++) finishRankByPick.set(byFinish[p].pickNum, avgRank);
+      i = j;
+    }
     return scored
-      .map(p => ({ ...p, finishRank: finishRankByPick.get(p.pickNum), value: p.pickNum - finishRankByPick.get(p.pickNum) }))
+      .map(p => {
+        const finishRank = finishRankByPick.get(p.pickNum);
+        return { ...p, finishRank, value: p.pickNum - finishRank };
+      })
       .sort((a, b) => b.value - a.value);
   }, [enrichedSnake]);
 
