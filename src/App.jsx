@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { theme } from "./constants/theme";
+import { MEMBER_COLORS } from "./constants/members";
 import { build2025 } from "./data";
 import {
   supabase,
@@ -24,6 +25,7 @@ import {
   track,
   EVENTS,
   identifyCommissioner,
+  identifyViewer,
   resetIdentity,
   setDeviceTypeSuperProperty,
   setSeasonSuperProperties,
@@ -55,7 +57,9 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
- 
+  const [viewerMemberId, setViewerMemberId] = useState(null);
+  const [showViewerPicker, setShowViewerPicker] = useState(false);
+
   const configuredCommissioners = getConfiguredCommissionerEmails();
   const isCommissioner = commissionerRole === "commissioner" || commissionerRole === "admin";
  
@@ -120,6 +124,35 @@ export default function App() {
     }
     prevSignedInRef.current = signedIn;
   }, [authReady, commissionerRole, commissionerSession, commissionerEmail]);
+
+  // Restore a previously self-reported viewer identity (not commissioner
+  // auth — a lightweight "this is me" pick stored in localStorage, see
+  // handlePickViewerIdentity). Runs on load and again whenever commissioner
+  // mode turns off, so signing out of the admin session falls back to the
+  // viewer's own identity instead of going fully anonymous.
+  useEffect(() => {
+    if (!authReady || isCommissioner || !activeSeason) return;
+    (async () => {
+      const r = await storageGet(STORAGE_KEYS.VIEWER_MEMBER_ID);
+      if (r && r.value && r.value !== viewerMemberId) {
+        const m = (activeSeason.members || []).find((x) => x.id === r.value);
+        if (m) {
+          setViewerMemberId(m.id);
+          identifyViewer(m.id, m.name);
+        }
+      }
+    })();
+  }, [authReady, isCommissioner, activeSeason, viewerMemberId]);
+
+  const handlePickViewerIdentity = useCallback((memberId) => {
+    const m = (activeSeason?.members || []).find((x) => x.id === memberId);
+    if (!m) return;
+    identifyViewer(m.id, m.name);
+    storageSet(STORAGE_KEYS.VIEWER_MEMBER_ID, m.id);
+    track(EVENTS.VIEWER_IDENTIFIED, { member_id: m.id, is_change: !!viewerMemberId });
+    setViewerMemberId(m.id);
+    setShowViewerPicker(false);
+  }, [activeSeason, viewerMemberId]);
  
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false) => {
@@ -366,7 +399,57 @@ export default function App() {
             </button>
             <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
           </div>
- 
+
+          {/* Viewer self-identification — optional, lets analytics attribute
+              activity to a person instead of just a device. Hidden while
+              signed in as commissioner (that session is already identified). */}
+          {loaded && !isCommissioner && (
+            <div style={{
+              display: "flex", justifyContent: isMobile ? "flex-start" : "center",
+              marginBottom: 8,
+            }}>
+              {showViewerPicker ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 10, color: theme.dim }}>Who are you?</span>
+                  <select
+                    defaultValue={viewerMemberId || ""}
+                    onChange={(e) => { if (e.target.value) handlePickViewerIdentity(e.target.value); }}
+                    style={{
+                      fontSize: 10, background: "#0f172a", color: theme.txt,
+                      border: "1px solid " + theme.bdr, borderRadius: 6, padding: "2px 6px",
+                    }}>
+                    <option value="" disabled>Select your name</option>
+                    {(activeSeason?.members || []).map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                  <button onClick={() => setShowViewerPicker(false)}
+                    style={{ background: "none", border: "none", color: theme.dim, fontSize: 10, cursor: "pointer" }}>
+                    ✕
+                  </button>
+                </div>
+              ) : viewerMemberId ? (
+                <div style={{ fontSize: 10, color: theme.dim, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>
+                    👋 Viewing as{" "}
+                    <b style={{ color: MEMBER_COLORS[viewerMemberId] || theme.txt }}>
+                      {(activeSeason?.members || []).find((m) => m.id === viewerMemberId)?.name || viewerMemberId}
+                    </b>
+                  </span>
+                  <button onClick={() => setShowViewerPicker(true)}
+                    style={{ background: "none", border: "none", color: theme.acc, fontSize: 10, cursor: "pointer", textDecoration: "underline" }}>
+                    change
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setShowViewerPicker(true)}
+                  style={{ background: "none", border: "none", color: theme.dim, fontSize: 10, cursor: "pointer", textDecoration: "underline" }}>
+                  👋 Who are you?
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Tab bar */}
           <div style={{
             display: "flex", gap: 0,

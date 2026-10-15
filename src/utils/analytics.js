@@ -83,6 +83,32 @@ export function resetIdentity() {
   }
 }
 
+// Self-reported identity for regular (non-commissioner) viewers — lets a
+// league member say "this is me" from a dropdown of the current season's
+// members, so events can be attributed to a person instead of just a
+// device. This is opt-in and not an authenticated identity: anyone could
+// pick anyone's name. distinct_id is prefixed "member:" so it can never
+// collide with a commissioner's Supabase UUID.
+//
+// The super property is named viewer_member_id, not member_id — several
+// existing events (draft_pick_made, draft_roster_viewed) already use
+// member_id for "whose turn/roster this is", which is a different
+// question from "who is looking at the screen right now". Mixpanel lets
+// an event's own properties shadow a super property of the same name, so
+// reusing member_id here would have silently overwritten the real signal
+// on exactly those two events.
+export function identifyViewer(memberId, memberName) {
+  if (!ready || !memberId) return;
+  try {
+    mixpanel.identify("member:" + memberId);
+    mixpanel.people.set({ $name: memberName, viewer_member_id: memberId });
+    mixpanel.people.set_once({ first_identified_at: new Date().toISOString() });
+    mixpanel.register({ viewer_member_id: memberId });
+  } catch (e) {
+    console.warn("Mixpanel: identifyViewer failed.", e);
+  }
+}
+
 export function setDeviceTypeSuperProperty(isMobile) {
   if (!ready) return;
   try {
@@ -109,6 +135,7 @@ export function setSeasonSuperProperties({ year, dataSource }) {
 export const EVENTS = {
   // Shared / cross-surface
   TAB_VIEWED: "tab_viewed",
+  VIEWER_IDENTIFIED: "viewer_identified",
   CATEGORY_FILTER_CHANGED: "category_filter_changed",
   MEMBER_ROW_EXPANDED: "member_row_expanded",
   DATA_FALLBACK_USED: "data_fallback_used",

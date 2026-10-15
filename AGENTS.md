@@ -34,9 +34,33 @@ the long-form version; this file is the in-repo quick reference.
 - On sign-out, `resetIdentity()` calls `mixpanel.reset()` — breaks the
   identity link so a later visitor on a shared device doesn't inherit the
   previous commissioner's profile.
-- **Never call `identify()` with an email or a league member's display
-  name.** If a future "who are you?" picker is added for regular members,
-  identify with a generated/stable `member_id`, not their display name.
+- **Regular (non-commissioner) viewers can also self-identify**, opt-in,
+  via the "👋 Who are you?" picker in the header (`App.jsx`). This is
+  *not* authentication — anyone can pick anyone's name, it's just a
+  standing "this is me" declaration, the same trust level as a display
+  name in any casual multiplayer app.
+  - Picking a name calls `identifyViewer(memberId, memberName)`:
+    `mixpanel.identify("member:" + memberId)` — prefixed so it can never
+    collide with a commissioner's Supabase UUID — plus `people.set` for
+    `$name`/`viewer_member_id`, and registers `viewer_member_id` as a
+    **super property**, so it attaches to every event the viewer fires
+    from then on without touching any of the existing `track()` call
+    sites.
+  - **Why `viewer_member_id`, not `member_id`:** `draft_pick_made` and
+    `draft_roster_viewed` already use `member_id` for "whose turn/roster
+    this is" — a different question from "who is looking at the
+    screen." An event's own properties shadow a same-named super
+    property in Mixpanel, so reusing `member_id` here would have
+    silently overwritten that signal on exactly those two events.
+  - The choice persists in `localStorage` (`fl-viewer-member-id`, via
+    `STORAGE_KEYS.VIEWER_MEMBER_ID`) and is restored on every load. On
+    commissioner sign-out, the app re-identifies as the stored viewer
+    (if any) rather than dropping back to fully anonymous.
+  - Picking (or changing) a name fires `viewer_identified` with
+    `member_id` and `is_change`.
+- **Never call `identify()` with an email.** League member display names
+  are fine (see Naming conventions below) — they're not emails and
+  they're already public throughout the UI.
 
 ## Naming conventions
 
@@ -65,8 +89,10 @@ the long-form version; this file is the in-repo quick reference.
 ## Super properties (registered globally)
 
 `is_commissioner`, `device_type` (`mobile`/`desktop`), `season_year`,
-`data_source` (`supabase`/`local`/`hardcoded`) — see `analytics.js` for the
-setter functions (`setDeviceTypeSuperProperty`, `setSeasonSuperProperties`).
+`data_source` (`supabase`/`local`/`hardcoded`), `viewer_member_id` (set only
+once someone self-identifies, see Identity above) — see `analytics.js` for
+the setter functions (`setDeviceTypeSuperProperty`, `setSeasonSuperProperties`,
+`identifyViewer`).
 
 ## Value Moment
 
@@ -97,6 +123,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | Event | Surface(s) | Key properties |
 | --- | --- | --- |
 | `tab_viewed` | app-wide | `tab_name`, `previous_tab`, `is_mobile` |
+| `viewer_identified` | header | `member_id`, `is_change` (also calls `identifyViewer()`) |
 | `category_filter_changed` | scoreboard, trends, settings, recap | `surface`, `category`, `previous_category` |
 | `member_row_expanded` | scoreboard, history | `surface`, `category`, `member_name` |
 | `data_fallback_used` | season, calendar | `surface`, `fallback_level`, `reason` |

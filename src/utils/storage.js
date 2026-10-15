@@ -53,6 +53,7 @@ try {
 export const STORAGE_KEYS = {
 ACTIVE_SEASON: "active-season",
 ARCHIVED_SEASONS: "archived-seasons",
+VIEWER_MEMBER_ID: "viewer-member-id",
 };
 
 export function getConfiguredCommissionerEmails() {
