@@ -5,6 +5,7 @@ import { PICK_OPTIONS } from "../constants/pickOptions";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { generateSnakeOrder } from "../utils/helpers";
 import { supabase } from "../utils/storage";
+import { track, timeEvent, EVENTS } from "../utils/analytics";
  
 const TIMER_DURATION = 120;
  
@@ -66,13 +67,21 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     const id = newMemberName.trim().toLowerCase().replace(/\s+/g, "_");
     if (activeMembers.find((m) => m.id === id)) return;
     if (!MEMBER_COLORS[id]) MEMBER_COLORS[id] = NEW_MEMBER_COLORS[activeMembers.length % NEW_MEMBER_COLORS.length];
-    setActiveMembers((prev) => [...prev, { id, name: newMemberName.trim(), full: newMemberFull.trim() || newMemberName.trim() }]);
+    setActiveMembers((prev) => {
+      const next = [...prev, { id, name: newMemberName.trim(), full: newMemberFull.trim() || newMemberName.trim() }];
+      track(EVENTS.DRAFT_MEMBER_ADDED, { member_count_after: next.length });
+      return next;
+    });
     setNewMemberName(""); setNewMemberFull("");
   };
  
   const removeMember = (memberId) => {
     if (activeMembers.length <= 2) return;
-    setActiveMembers((prev) => prev.filter((m) => m.id !== memberId));
+    setActiveMembers((prev) => {
+      const next = prev.filter((m) => m.id !== memberId);
+      track(EVENTS.DRAFT_MEMBER_REMOVED, { member_count_after: next.length });
+      return next;
+    });
     setGuesses((g) => { const n = { ...g }; delete n[memberId]; return n; });
     setDraftOrder((prev) => prev.filter((m) => m.id !== memberId));
     if (manualOrder) setManualOrder((prev) => prev.filter((m) => m.id !== memberId));
@@ -86,15 +95,17 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       .map((m) => ({ ...m, diff: Math.abs(m.guess - actual) }))
       .sort((a, b) => a.diff - b.diff);
     setDraftOrder(sorted);
+    track(EVENTS.DRAFT_ORDER_GENERATED, { method: "guess", member_count: sorted.length });
   };
- 
+
   const randomizeOrder = () => {
     const shuffled = [...activeMembers]
       .map((m) => ({ ...m, guess: null, diff: null }))
       .sort(() => Math.random() - 0.5);
     setDraftOrder(shuffled);
+    track(EVENTS.DRAFT_ORDER_GENERATED, { method: "random", member_count: shuffled.length });
   };
- 
+
   const startDraft = () => {
     if (draftOrder.length < 2) return;
     const so = generateSnakeOrder(draftOrder, DRAFT_CATEGORIES.length);
@@ -102,6 +113,12 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setPhase("draft");
     setCurrentPick(0);
     setTimer(TIMER_DURATION);
+    timeEvent(EVENTS.DRAFT_FINALIZED);
+    track(EVENTS.DRAFT_STARTED, {
+      member_count: draftOrder.length,
+      round_count: DRAFT_CATEGORIES.length,
+      total_picks: draftOrder.length * DRAFT_CATEGORIES.length,
+    });
   };
  
   const isComplete = phase === "draft" && snakeOrder.length > 0 && currentPick >= snakeOrder.length;
@@ -117,11 +134,20 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     !Object.keys(picks).some((k) => k.endsWith("-" + cat.id) && picks[k] && k.startsWith((member ? member.id : "") + "-"))
   );
  
-  const makePick = (catId, selection) => {
+  const makePick = (catId, selection, isCustom) => {
     if (!member) return;
     const key = member.id + "-" + catId;
     setPicks((p) => ({ ...p, [key]: selection }));
     setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
+    track(EVENTS.DRAFT_PICK_MADE, {
+      pick_number: currentPick + 1,
+      round: snakeOrder[currentPick] ? snakeOrder[currentPick].round + 1 : null,
+      category: DRAFT_ID_TO_CATEGORY_KEY[catId] || catId,
+      member_id: member.id,
+      is_custom_pick: !!isCustom,
+      seconds_remaining: timer,
+      is_timer_active: timerActive,
+    });
     setCurrentPick((c) => c + 1);
     setSelectedCategory(null); setSearchFilter(""); setCustomInput("");
     setTimer(TIMER_DURATION); setTimerActive(false);
@@ -130,6 +156,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
  
   const undoPick = () => {
     if (pickHistory.length === 0) return;
+    track(EVENTS.DRAFT_PICK_UNDONE, { pick_number: pickHistory.length });
     const last = pickHistory[pickHistory.length - 1];
     setPicks((p) => { const n = { ...p }; delete n[last.memberId + "-" + last.categoryId]; return n; });
     setPickHistory((h) => h.slice(0, -1));
@@ -261,6 +288,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       if (pickErr) throw new Error("Failed to insert picks: " + pickErr.message);
  
       console.log(`✅ Season ${yearNum} saved to Supabase: ${pickRows.length} picks + draft board`);
+      track(EVENTS.DRAFT_FINALIZED, { season_year: yearNum, member_count: draftOrder.length, total_picks: pickRows.length });
  
       // ── 6. Build local season object and call onFinalize ──
       // This updates App.jsx state so Scoreboard shows the new season immediately.
@@ -293,12 +321,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     } catch (err) {
       console.error("Finalize error:", err);
       setFinalizeError(err.message || "Something went wrong saving to Supabase.");
+      track(EVENTS.DRAFT_FINALIZE_FAILED, { season_year: yearNum, error_message: err.message || "unknown_error" });
     } finally {
       setFinalizing(false);
     }
   };
  
   const exportCSV = () => {
+    track(EVENTS.DRAFT_CSV_EXPORTED, { member_count: draftOrder.length });
     const lines = ["Member," + DRAFT_CATEGORIES.map((c) => c.name).join(",")];
     draftOrder.forEach((m) => {
       lines.push(m.name + "," + DRAFT_CATEGORIES.map((c) => '"' + (picks[m.id + "-" + c.id] || "") + '"').join(","));
@@ -412,7 +442,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               </div>
             ))}
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-              <button onClick={() => { setManualOrder(draftOrder); setDraftOrder([]); }}
+              <button onClick={() => { track(EVENTS.DRAFT_ORDER_EDIT_REOPENED); setManualOrder(draftOrder); setDraftOrder([]); }}
                 style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>✏️ Edit</button>
               <button onClick={startDraft}
                 style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 16 }}>🚀 Start Draft!</button>
@@ -432,7 +462,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         { id: "rosters", label: "👥 Rosters" },
         { id: "history", label: "📋 History" },
       ].map((p) => (
-        <button key={p.id} onClick={() => setMobilePanel(p.id)}
+        <button key={p.id} onClick={() => { track(EVENTS.DRAFT_PANEL_SWITCHED, { panel: p.id }); setMobilePanel(p.id); }}
           style={{
             ...buttonStyle(mobilePanel === p.id ? theme.acc : theme.srf),
             flex: 1, fontSize: 12,
@@ -452,7 +482,10 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         const roster = getRoster(m.id);
         const isOnClock = !isComplete && member && m.id === member.id;
         return (
-          <div key={m.id} onClick={() => setShowRoster(showRoster === m.id ? null : m.id)}
+          <div key={m.id} onClick={() => {
+              if (showRoster !== m.id) track(EVENTS.DRAFT_ROSTER_VIEWED, { member_id: m.id });
+              setShowRoster(showRoster === m.id ? null : m.id);
+            }}
             style={{ ...cardStyle, padding: "10px 12px", marginBottom: 6, cursor: "pointer",
               border: isOnClock ? `2px solid ${MEMBER_COLORS[m.id]}` : `1px solid ${theme.bdr}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -518,7 +551,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                 style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700 }} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-              <button onClick={() => setShowFinalizeModal(true)} disabled={!isCommissioner}
+              <button onClick={() => { track(EVENTS.DRAFT_FINALIZE_MODAL_OPENED, { season_name: seasonName }); setShowFinalizeModal(true); }} disabled={!isCommissioner}
                 style={{ ...buttonStyle(theme.grn), padding: "12px 24px", fontSize: isMobile ? 13 : 15, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default" }}>
                 🏆 Finalize & Launch {seasonName}
               </button>
@@ -585,9 +618,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
               {timerActive
-                ? <button onClick={() => setTimerActive(false)} style={buttonStyle(theme.yel)}>⏸ Pause</button>
-                : <button onClick={() => setTimerActive(true)} style={buttonStyle(theme.grn)}>▶ Start</button>}
-              <button onClick={() => { setTimer(TIMER_DURATION); setTimerActive(false); }}
+                ? <button onClick={() => { track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "pause" }); setTimerActive(false); }} style={buttonStyle(theme.yel)}>⏸ Pause</button>
+                : <button onClick={() => { track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "start" }); setTimerActive(true); }} style={buttonStyle(theme.grn)}>▶ Start</button>}
+              <button onClick={() => { track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "reset" }); setTimer(TIMER_DURATION); setTimerActive(false); }}
                 style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↻ Reset</button>
               {pickHistory.length > 0 && (
                 <button onClick={undoPick}
@@ -636,16 +669,16 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                           <input value={customInput} onChange={(e) => setCustomInput(e.target.value)}
                             placeholder="Type custom pick..." style={{ ...inputStyle, flex: 1 }}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter" && customInput.trim()) makePick(selectedCategory.id, customInput.trim());
+                              if (e.key === "Enter" && customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
                             }} />
                           <button onClick={() => {
-                            if (customInput.trim()) makePick(selectedCategory.id, customInput.trim());
+                            if (customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
                           }} style={{ ...buttonStyle(theme.grn), padding: "8px 16px" }}>Pick</button>
                         </div>
                       );
                     }
                     return (
-                      <button key={opt} onClick={() => makePick(selectedCategory.id, opt)}
+                      <button key={opt} onClick={() => makePick(selectedCategory.id, opt, false)}
                         style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
                           textAlign: "left", padding: "8px 12px" }}>
                         {opt}
@@ -665,7 +698,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20 }}>🎯 {seasonName} Draft</h2>
         {!isMobile && (
-          <button onClick={() => setShowHistory(!showHistory)}
+          <button onClick={() => { track(EVENTS.DRAFT_HISTORY_PANEL_TOGGLED, { is_visible: !showHistory }); setShowHistory(!showHistory); }}
             style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>
             {showHistory ? "Hide History" : "History"}
           </button>

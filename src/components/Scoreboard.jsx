@@ -3,6 +3,7 @@ import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES
 import { MEMBER_COLORS } from "../constants/members";
 import { theme } from "../constants/theme";
 import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock } from "../utils/helpers";
+import { track, EVENTS } from "../utils/analytics";
  
 // ─── Small lock indicator that players see on the scoreboard ───
 function LockIndicator({ note }) {
@@ -25,7 +26,8 @@ function LockIndicator({ note }) {
  );
 }
  
-export default function Scoreboard({ seasonData }) {
+export default function Scoreboard({ seasonData, surface }) {
+ var surfaceName = surface || "scoreboard";
  var _s = useState(null), selCat = _s[0], setSelCat = _s[1];
  var _e = useState(null), expRow = _e[0], setExpRow = _e[1];
  var _m = useState(window.innerWidth < 640), isMobile = _m[0], setIsMobile = _m[1];
@@ -459,7 +461,10 @@ export default function Scoreboard({ seasonData }) {
     paddingBottom: isMobile ? 4 : 0,
     msOverflowStyle: "none", scrollbarWidth: "none",
    }}>
-    <button onClick={function () { setSelCat(null); setExpRow(null); }}
+    <button onClick={function () {
+       track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: "overall", previous_category: selCat || "overall" });
+       setSelCat(null); setExpRow(null);
+      }}
      style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
       border: "1px solid " + (!selCat ? "#3b82f6" : "#334155"),
       background: !selCat ? "#3b82f6" : "#1e293b",
@@ -468,7 +473,10 @@ export default function Scoreboard({ seasonData }) {
     </button>
     {CATEGORY_ORDER.map(function (k) {
      return (
-      <button key={k} onClick={function () { setSelCat(k); setExpRow(null); }}
+      <button key={k} onClick={function () {
+         track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: k, previous_category: selCat || "overall" });
+         setSelCat(k); setExpRow(null);
+        }}
        style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
         border: "1px solid " + (selCat === k ? "#3b82f6" : "#334155"),
         background: selCat === k ? "#3b82f6" : "#1e293b",
@@ -486,7 +494,10 @@ export default function Scoreboard({ seasonData }) {
       var isExp = expRow === m.owner;
       return (
        <div key={m.owner}>
-        <div onClick={function () { setExpRow(isExp ? null : m.owner); }}
+        <div onClick={function () {
+           if (!isExp) track(EVENTS.MEMBER_ROW_EXPANDED, { surface: surfaceName, category: "overall", member_name: m.owner });
+           setExpRow(isExp ? null : m.owner);
+          }}
          style={{ display: "grid",
           gridTemplateColumns: isMobile ? "28px 1fr 50px" : "32px 1fr 60px",
           alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px",
@@ -510,7 +521,11 @@ export default function Scoreboard({ seasonData }) {
             var pickName = pickEntry ? pickEntry.pick : "";
             return (
              <div key={k}
-              onClick={function (e) { e.stopPropagation(); setSelCat(k); setExpRow(null); }}
+              onClick={function (e) {
+                e.stopPropagation();
+                track(EVENTS.OVERALL_CATEGORY_TILE_CLICKED, { category: k });
+                setSelCat(k); setExpRow(null);
+               }}
               style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", cursor: "pointer",
                background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(51,65,85,0.3)" }}>
               <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
@@ -543,7 +558,10 @@ export default function Scoreboard({ seasonData }) {
        var memberHasLocks = hasAnyLock(seasonData, selCat, m.owner);
        return (
         <div key={m.owner}>
-         <div onClick={function () { setExpRow(isExp ? null : m.owner); }}
+         <div onClick={function () {
+            if (!isExp) track(EVENTS.MEMBER_ROW_EXPANDED, { surface: surfaceName, category: selCat, member_name: m.owner });
+            setExpRow(isExp ? null : m.owner);
+           }}
           style={{
            display: "grid",
            gridTemplateColumns: isMobile ? "28px 1fr auto" : "32px 1fr auto",

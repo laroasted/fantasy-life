@@ -10,6 +10,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
+import { track, EVENTS } from "../utils/analytics";
  
 // ═══════════════════════════════════════════════════════════════════
 // HARDCODED FALLBACK — only used if seasons.draft_board is null
@@ -346,17 +347,17 @@ export default function DraftRecap({ seasonYear = 2026 }) {
  
       {/* ── View Tabs ── */}
       <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
-        <button onClick={() => setView("draft")} style={pill(view === "draft")}>📜 Draft Order</button>
-        <button onClick={() => setView("member")} style={pill(view === "member")}>🪪 Report Card</button>
-        <button onClick={() => setView("category")} style={pill(view === "category")}>📊 By Category</button>
-        <button onClick={() => setView("value")} style={pill(view === "value")}>💎 Value</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "draft" }); setView("draft"); }} style={pill(view === "draft")}>📜 Draft Order</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "member" }); setView("member"); }} style={pill(view === "member")}>🪪 Report Card</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "category" }); setView("category"); }} style={pill(view === "category")}>📊 By Category</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "value" }); setView("value"); }} style={pill(view === "value")}>💎 Value</button>
       </div>
- 
+
       {/* ═══════════ DRAFT ORDER ═══════════ */}
       {view === "draft" && (
         <div>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
-            <select value={filterRound} onChange={e => setFilterRound(e.target.value)}
+            <select value={filterRound} onChange={e => { track(EVENTS.DRAFT_RECAP_ROUND_FILTERED, { round: e.target.value }); setFilterRound(e.target.value); }}
               style={{ ...cardStyle, padding: "8px 14px", fontSize: 13, color: theme.txt, cursor: "pointer", outline: "none" }}>
               <option value="All">All Rounds</option>
               {Array.from({ length: numRounds }, (_, i) => <option key={i} value={i + 1}>Round {i + 1}</option>)}
@@ -411,7 +412,10 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         <div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 20 }}>
             {draftBoard.memberOrder.map(mid => (
-              <button key={mid} onClick={() => setSelMember(mid)} style={memberBtn(mid, selMember === mid)}>
+              <button key={mid} onClick={() => {
+                  track(EVENTS.DRAFT_RECAP_MEMBER_SELECTED, { member_name: memberNameMap[mid] || mid });
+                  setSelMember(mid);
+                }} style={memberBtn(mid, selMember === mid)}>
                 {memberNameMap[mid] || mid}
               </button>
             ))}
@@ -477,7 +481,10 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         <div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 20 }}>
             {ALL_CATS.map(cat => (
-              <button key={cat} onClick={() => setSelCat(cat)} style={pill(selCat === cat)}>
+              <button key={cat} onClick={() => {
+                  track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "recap", category: cat, previous_category: selCat });
+                  setSelCat(cat);
+                }} style={pill(selCat === cat)}>
                 {CAT_ICONS[cat]} {cat}
               </button>
             ))}

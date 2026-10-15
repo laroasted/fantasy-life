@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { theme, cardStyle } from "../constants/theme";
 import Scoreboard from "./Scoreboard";
+import { track, EVENTS } from "../utils/analytics";
 
 /**
  * SeasonHistory — displays archived past seasons.
@@ -30,7 +31,10 @@ export default function SeasonHistory({ archivedSeasons }) {
         return (
           <div key={szn.year}>
             <div
-              onClick={() => setViewingYear(isOpen ? null : szn.year)}
+              onClick={() => {
+                if (!isOpen) track(EVENTS.ARCHIVED_SEASON_EXPANDED, { season_year: szn.year });
+                setViewingYear(isOpen ? null : szn.year);
+              }}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "14px 16px",
@@ -58,7 +62,7 @@ export default function SeasonHistory({ archivedSeasons }) {
                 borderTop: "none",
                 borderRadius: "0 0 12px 12px",
               }}>
-                <Scoreboard seasonData={szn} />
+                <Scoreboard seasonData={szn} surface="history" />
               </div>
             )}
           </div>
