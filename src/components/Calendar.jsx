@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { supabase } from "../utils/storage";
 import { theme } from "../constants/theme";
+import { track, EVENTS } from "../utils/analytics";
  
 // ══════════════════════════════════════════════════════
 //  FANTASY LIFE CALENDAR
@@ -183,6 +184,7 @@ export default function Calendar({ seasonYear }) {
             console.warn("Calendar: Supabase returned no data or error, using fallback.", error);
             setEvents(FALLBACK_EVENTS);
             setSource("fallback");
+            track(EVENTS.DATA_FALLBACK_USED, { surface: "calendar", fallback_level: "hardcoded", reason: error ? error.message : "empty_response" });
           }
         }
       } catch (e) {
@@ -190,6 +192,7 @@ export default function Calendar({ seasonYear }) {
           console.error("Calendar: fetch failed, using fallback.", e);
           setEvents(FALLBACK_EVENTS);
           setSource("fallback");
+          track(EVENTS.DATA_FALLBACK_USED, { surface: "calendar", fallback_level: "hardcoded", reason: e.message || "fetch_threw" });
         }
       }
       if (!cancelled) setLoading(false);
@@ -243,7 +246,7 @@ export default function Calendar({ seasonYear }) {
         {FILTERS.map(f => {
           const on = filter === f.id;
           return (
-            <button key={f.id} onClick={() => setFilter(f.id)}
+            <button key={f.id} onClick={() => { track(EVENTS.CALENDAR_FILTER_CHANGED, { filter: f.id }); setFilter(f.id); }}
               style={{ padding:"5px 10px", borderRadius:20,
                 border:"1px solid " + (on ? s.acc : "#334155"),
                 background: on ? s.acc : "#1e293b",
@@ -285,7 +288,15 @@ export default function Calendar({ seasonYear }) {
  
               return (
                 <div key={eid} ref={isFirst ? activeRef : null}
-                  onClick={() => setExpId(isExp ? null : eid)}
+                  onClick={() => {
+                    if (!isExp) {
+                      track(EVENTS.CALENDAR_EVENT_EXPANDED, {
+                        event_title: ev.title, category: ev.category, event_type: ev.type,
+                        status: st, is_bonus_eligible: !!ev.bonus,
+                      });
+                    }
+                    setExpId(isExp ? null : eid);
+                  }}
                   style={{
                     display:"grid", gridTemplateColumns:"52px 36px 1fr", gap:8, alignItems:"start",
                     padding:"10px 8px", margin:"1px 0", borderRadius:10, cursor:"pointer",

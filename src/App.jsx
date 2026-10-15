@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
 import {
@@ -20,6 +20,14 @@ import SeasonSettings from "./components/SeasonSettings";
 import Calendar from "./components/Calendar";
 import DraftRecap from "./components/DraftRecap";
 import Trends from "./components/Trends";
+import {
+  track,
+  EVENTS,
+  identifyCommissioner,
+  resetIdentity,
+  setDeviceTypeSuperProperty,
+  setSeasonSuperProperties,
+} from "./utils/analytics";
 
 const TABS = [
   { id: "scoreboard", label: "📊 Scoreboard", short: "📊" },
@@ -57,6 +65,8 @@ export default function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  useEffect(() => { setDeviceTypeSuperProperty(isMobile); }, [isMobile]);
  
   useEffect(() => {
     let isMounted = true;
@@ -92,7 +102,25 @@ export default function App() {
       listener?.subscription?.unsubscribe();
     };
   }, []);
+
+  // Fire Commissioner Signed In / Signed Out exactly once per real transition,
+  // not on every re-render or on the initial unauthenticated state.
+  const prevSignedInRef = useRef(false);
+  useEffect(() => {
+    if (!authReady) return;
+    const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
+    if (signedIn && !prevSignedInRef.current) {
+      const email = commissionerSession?.user?.email || commissionerEmail;
+      identifyCommissioner(email, commissionerRole);
+      track(EVENTS.COMMISSIONER_SIGNED_IN, { role: commissionerRole });
+    } else if (!signedIn && prevSignedInRef.current) {
+      track(EVENTS.COMMISSIONER_SIGNED_OUT);
+      resetIdentity();
+    }
+    prevSignedInRef.current = signedIn;
+  }, [authReady, commissionerRole, commissionerSession, commissionerEmail]);
  
+  const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     let active = await fetchSeasonFromSupabase();
@@ -103,11 +131,19 @@ export default function App() {
         const r = await storageGet(STORAGE_KEYS.ACTIVE_SEASON);
         if (r && r.value) { active = JSON.parse(r.value); source = "local"; }
       } catch (e) { console.error("Failed to load from localStorage:", e); }
+      track(EVENTS.DATA_FALLBACK_USED, {
+        surface: "season",
+        fallback_level: source === "local" ? "local" : "hardcoded",
+        reason: "supabase_fetch_failed",
+      });
     }
     if (!active) { console.warn("No stored data, using hardcoded build2025()..."); active = build2025(); source = "hardcoded"; }
     setActiveSeason(active);
     setDataSource(source);
     setLastUpdated(new Date());
+    setSeasonSuperProperties({ year: active?.year, dataSource: source });
+    track(EVENTS.SEASON_LOADED, { data_source: source, year: active?.year, is_refresh: showRefreshing });
+    lastSourceRef.current = source;
     if (showRefreshing) setRefreshing(false);
     return active;
   }, []);
@@ -131,6 +167,11 @@ export default function App() {
       } catch (e) { console.error("Failed to load archived seasons:", e); }
       setArchivedSeasons(archived);
       setLoaded(true);
+      track(EVENTS.APP_LOADED, {
+        data_source: lastSourceRef.current,
+        is_mobile: window.innerWidth < 640,
+        archived_season_count: archived.length,
+      });
     })();
   }, [loadSeason]);
  
@@ -160,11 +201,13 @@ export default function App() {
     setAuthLoading(true);
     setAuthError("");
     setAuthMessage("");
+    track(EVENTS.COMMISSIONER_LOGIN_SUBMITTED);
     const result = await signInCommissioner(commissionerEmail);
     if (result.ok) {
       setAuthMessage("Magic link sent. Open it from your email on this device to unlock commissioner actions.");
     } else {
       setAuthError(result.error);
+      track(EVENTS.COMMISSIONER_LOGIN_FAILED, { error_message: result.error });
     }
     setAuthLoading(false);
   }, [commissionerEmail]);
@@ -332,7 +375,10 @@ export default function App() {
           }}>
             {TABS.map(function (t) {
               return (
-                <button key={t.id} onClick={function () { setActiveTab(t.id); }}
+                <button key={t.id} onClick={function () {
+                    track(EVENTS.TAB_VIEWED, { tab_name: t.id, previous_tab: activeTab, is_mobile: isMobile });
+                    setActiveTab(t.id);
+                  }}
                   style={{
                     flex: isMobile ? "0 0 auto" : "unset",
                     padding: isMobile ? "8px 10px" : "10px 20px",

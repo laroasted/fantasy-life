@@ -3,6 +3,7 @@ import { supabase } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
+import { track, EVENTS } from "../utils/analytics";
 
 // ══════════════════════════════════════════════════════
 //  TRENDS — standings-over-time chart, backed by the
@@ -77,7 +78,12 @@ export default function Trends({ seasonData }) {
         if (batch.length < pageSize) keepFetching = false;
       }
       if (cancelled) return;
-      if (fetchError) { setError(fetchError.message); setLoading(false); return; }
+      if (fetchError) {
+        setError(fetchError.message);
+        setLoading(false);
+        track(EVENTS.TRENDS_LOAD_FAILED, { error_message: fetchError.message });
+        return;
+      }
       setRows(allRows);
       setLoading(false);
     }
@@ -143,6 +149,8 @@ export default function Trends({ seasonData }) {
   }, [visibleSeries]);
 
   function toggleMember(mid) {
+    const nowHidden = !hidden.has(mid);
+    track(EVENTS.TRENDS_SERIES_TOGGLED, { member_name: memberMeta[mid]?.name || mid, now_hidden: nowHidden });
     setHidden((prev) => {
       const n = new Set(prev);
       if (n.has(mid)) n.delete(mid); else n.add(mid);
@@ -236,7 +244,10 @@ export default function Trends({ seasonData }) {
         overflowX: isMobile ? "auto" : "visible", WebkitOverflowScrolling: "touch",
         paddingBottom: isMobile ? 4 : 0, msOverflowStyle: "none", scrollbarWidth: "none",
       }}>
-        <button onClick={() => setViewCat("ALL")}
+        <button onClick={() => {
+            track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "trends", category: "overall", previous_category: viewCat });
+            setViewCat("ALL");
+          }}
           style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
             border: "1px solid " + (viewCat === "ALL" ? "#3b82f6" : "#334155"),
             background: viewCat === "ALL" ? "#3b82f6" : "#1e293b",
@@ -244,7 +255,10 @@ export default function Trends({ seasonData }) {
           Overall
         </button>
         {CATEGORY_ORDER.map((k) => (
-          <button key={k} onClick={() => setViewCat(k)}
+          <button key={k} onClick={() => {
+              track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "trends", category: k, previous_category: viewCat });
+              setViewCat(k);
+            }}
             style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
               border: "1px solid " + (viewCat === k ? "#3b82f6" : "#334155"),
               background: viewCat === k ? "#3b82f6" : "#1e293b",
@@ -365,7 +379,10 @@ export default function Trends({ seasonData }) {
 
         {/* Table view toggle (accessible alternative to the chart) */}
         <div style={{ marginTop: 14, textAlign: "center" }}>
-          <button onClick={() => setShowTable(showTable ? false : 21)}
+          <button onClick={() => {
+              track(EVENTS.TRENDS_VIEW_TOGGLED, { view: showTable ? "chart" : "table" });
+              setShowTable(showTable ? false : 21);
+            }}
             style={{ background: "none", border: "1px solid " + s.bdr, borderRadius: 8,
               padding: "5px 12px", color: s.mut, fontSize: 11, cursor: "pointer" }}>
             {showTable ? "Hide data table" : "View as table"}
@@ -408,7 +425,10 @@ export default function Trends({ seasonData }) {
             </table>
             {showTable !== "all" && dates.length > 21 && (
               <div style={{ textAlign: "center", marginTop: 8 }}>
-                <button onClick={() => setShowTable("all")}
+                <button onClick={() => {
+                    track(EVENTS.TRENDS_TABLE_EXPANDED, { total_snapshots: dates.length });
+                    setShowTable("all");
+                  }}
                   style={{ background: "none", border: "none", color: s.acc, fontSize: 11, cursor: "pointer" }}>
                   Show all {dates.length} snapshots
                 </button>

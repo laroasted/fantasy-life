@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
+import { track, EVENTS } from "../utils/analytics";
 
 // ─── Which type of category is this? ───
 var FILM_CATS = ["Actor", "Actress"];
@@ -161,11 +162,13 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  function toggleLock(key) {
   var newSeason = JSON.parse(JSON.stringify(seasonData));
   if (!newSeason.locks) newSeason.locks = {};
+  var nowLocked = !newSeason.locks[key];
   if (newSeason.locks[key]) {
    delete newSeason.locks[key];
   } else {
    newSeason.locks[key] = { at: new Date().toISOString(), by: "commissioner" };
   }
+  track(EVENTS.LOCK_TOGGLED, { category: editCat, field_key: key, now_locked: nowLocked });
   onSave(newSeason);
  }
 
@@ -181,6 +184,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   else if (ct === "music" && subArray === "grammys") { d.grammys = d.grammys || []; d.grammys.push(newDetailRow("music-grammy")); }
   else if (ct === "event") { d.majors = d.majors || []; d.majors.push(newDetailRow("event")); }
   setChangelog(function (prev) { return [cat + " \u2014 " + owner + ": added new " + (subArray || ct) + " row"].concat(prev); });
+  track(EVENTS.DETAIL_ROW_ADDED, { category: cat, row_type: subArray || ct });
   onSave(newSeason);
  }
 
@@ -201,6 +205,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    var label = removed.title || removed.round || removed.event || removed.category || "row";
    arr.splice(idx, 1);
    setChangelog(function (prev) { return [cat + " \u2014 " + owner + ': deleted "' + label + '"'].concat(prev); });
+   track(EVENTS.DETAIL_ROW_DELETED, { category: cat, row_type: subArray || ct });
    if (newSeason.locks) {
     var prefix = cat + "|" + owner + "|";
     Object.keys(newSeason.locks).forEach(function (k) {
@@ -358,6 +363,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   });
 
   if (log.length === 0) { setSaved(true); return; }
+  track(EVENTS.SETTINGS_CHANGES_SAVED, { mode: mode, changes_count: log.length });
   setChangelog(function (prev) { return log.concat(prev); });
   onSave(newSeason);
   setSaved(true);
@@ -627,7 +633,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
      { id: "log", label: isMobile ? "Log" : "Log" + (changelog.length ? " (" + changelog.length + ")" : "") },
     ].map(function (tab) {
      return (
-      <button key={tab.id} onClick={function () { setMode(tab.id); }}
+      <button key={tab.id} onClick={function () { track(EVENTS.SETTINGS_MODE_CHANGED, { mode: tab.id }); setMode(tab.id); }}
        style={{ ...buttonStyle(mode === tab.id ? theme.acc : theme.srf), flex: 1,
         border: mode === tab.id ? "none" : "1px solid " + theme.bdr,
         fontSize: isMobile ? 11 : 12, padding: isMobile ? "8px 4px" : "10px 12px" }}>
@@ -649,7 +655,10 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
      {CATEGORY_ORDER.map(function (k) {
       var lockCount = Object.keys(locks).filter(function (l) { return l.startsWith(k + "|"); }).length;
       return (
-       <button key={k} onClick={function () { setEditCat(k); setExpandedMember(null); }}
+       <button key={k} onClick={function () {
+          track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "settings", category: k, previous_category: editCat });
+          setEditCat(k); setExpandedMember(null);
+         }}
         style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
          border: "1px solid " + (editCat === k ? "#3b82f6" : "#334155"),
          background: editCat === k ? "#3b82f6" : "#1e293b",
@@ -750,7 +759,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
       <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
        Save Changes
       </button>
-      <button onClick={function () { setEdits({}); setBonusNotes({}); setSaved(false); }}
+      <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "scores" }); setEdits({}); setBonusNotes({}); setSaved(false); }}
        style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
@@ -820,7 +829,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
       <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
        Save All Detail Edits
       </button>
-      <button onClick={function () { setDetailEdits({}); setSaved(false); }}
+      <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "details" }); setDetailEdits({}); setSaved(false); }}
        style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
@@ -873,7 +882,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
       <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
        Save Swaps
       </button>
-      <button onClick={function () { setSwaps({}); setSaved(false); }}
+      <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "swaps" }); setSwaps({}); setSaved(false); }}
        style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
