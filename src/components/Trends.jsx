@@ -150,7 +150,7 @@ export default function Trends({ seasonData }) {
 
   function toggleMember(mid) {
     const nowHidden = !hidden.has(mid);
-    track(EVENTS.TRENDS_SERIES_TOGGLED, { member_name: memberMeta[mid]?.name || mid, now_hidden: nowHidden });
+    track(EVENTS.TRENDS_SERIES_TOGGLED, { member_name: memberMeta[mid]?.name || mid, is_hidden: nowHidden });
     setHidden((prev) => {
       const n = new Set(prev);
       if (n.has(mid)) n.delete(mid); else n.add(mid);

@@ -146,7 +146,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       member_id: member.id,
       is_custom_pick: !!isCustom,
       seconds_remaining: timer,
-      timer_was_active: timerActive,
+      is_timer_active: timerActive,
     });
     setCurrentPick((c) => c + 1);
     setSelectedCategory(null); setSearchFilter(""); setCustomInput("");
@@ -698,7 +698,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20 }}>🎯 {seasonName} Draft</h2>
         {!isMobile && (
-          <button onClick={() => { track(EVENTS.DRAFT_HISTORY_PANEL_TOGGLED, { visible: !showHistory }); setShowHistory(!showHistory); }}
+          <button onClick={() => { track(EVENTS.DRAFT_HISTORY_PANEL_TOGGLED, { is_visible: !showHistory }); setShowHistory(!showHistory); }}
             style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>
             {showHistory ? "Hide History" : "History"}
           </button>

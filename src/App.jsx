@@ -110,8 +110,9 @@ export default function App() {
     if (!authReady) return;
     const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
     if (signedIn && !prevSignedInRef.current) {
+      const userId = commissionerSession?.user?.id;
       const email = commissionerSession?.user?.email || commissionerEmail;
-      identifyCommissioner(email, commissionerRole);
+      identifyCommissioner(userId, email, commissionerRole);
       track(EVENTS.COMMISSIONER_SIGNED_IN, { role: commissionerRole });
     } else if (!signedIn && prevSignedInRef.current) {
       track(EVENTS.COMMISSIONER_SIGNED_OUT);

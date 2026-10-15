@@ -22,8 +22,9 @@ export function initAnalytics() {
   }
   try {
     mixpanel.init(TOKEN, {
+      debug: process.env.NODE_ENV !== "production",
       autocapture: false, // manual, deliberate events only
-      track_pageview: false, // single-page tab-switcher — "Tab Viewed" covers navigation
+      track_pageview: false, // single-page tab-switcher — "tab_viewed" covers navigation
       cross_subdomain_cookie: false,
       ignore_dnt: false, // respect the browser's Do Not Track setting
       persistence: "localStorage",
@@ -54,10 +55,14 @@ export function timeEvent(eventName) {
   }
 }
 
-export function identifyCommissioner(email, role) {
-  if (!ready || !email) return;
+// Per Mixpanel's identity guidance: identify with a stable database ID,
+// never an email (emails can change or be reused). Supabase Auth's
+// session.user.id is that stable ID here; email is stored as a profile
+// property only, not as the distinct_id.
+export function identifyCommissioner(userId, email, role) {
+  if (!ready || !userId) return;
   try {
-    mixpanel.identify(email);
+    mixpanel.identify(userId);
     mixpanel.people.set({ $email: email, role: role || "commissioner" });
     mixpanel.people.set_once({ first_commissioner_login: new Date().toISOString() });
     mixpanel.people.set({ last_commissioner_login: new Date().toISOString() });
@@ -97,72 +102,74 @@ export function setSeasonSuperProperties({ year, dataSource }) {
 }
 
 // ─── Event name constants ───
-// Title Case, {Object} {Verb}. Keep this list and the "Event Taxonomy" doc
-// tab in sync — it is the single source of truth for what exists.
+// snake_case, {object}_{past_tense_verb} — per Mixpanel's own setup-skill
+// naming convention (docs.mixpanel.com / the mixpanel-skill reference).
+// Keep this list and the "Event Taxonomy" doc tab in sync — it is the
+// single source of truth for what exists.
 export const EVENTS = {
   // Shared / cross-surface
-  TAB_VIEWED: "Tab Viewed",
-  CATEGORY_FILTER_CHANGED: "Category Filter Changed",
-  MEMBER_ROW_EXPANDED: "Member Row Expanded",
-  DATA_FALLBACK_USED: "Data Fallback Used",
+  TAB_VIEWED: "tab_viewed",
+  CATEGORY_FILTER_CHANGED: "category_filter_changed",
+  MEMBER_ROW_EXPANDED: "member_row_expanded",
+  DATA_FALLBACK_USED: "data_fallback_used",
 
   // App lifecycle
-  APP_LOADED: "App Loaded",
-  SEASON_LOADED: "Season Loaded",
+  APP_LOADED: "app_loaded",
+  SEASON_LOADED: "season_loaded",
 
   // Scoreboard
-  OVERALL_CATEGORY_TILE_CLICKED: "Overall Category Tile Clicked",
+  OVERALL_CATEGORY_TILE_CLICKED: "overall_category_tile_clicked",
 
   // Trends
-  TRENDS_VIEW_TOGGLED: "Trends View Toggled",
-  TRENDS_SERIES_TOGGLED: "Trends Series Toggled",
-  TRENDS_TABLE_EXPANDED: "Trends Table Expanded",
-  TRENDS_LOAD_FAILED: "Trends Load Failed",
+  TRENDS_VIEW_TOGGLED: "trends_view_toggled",
+  TRENDS_SERIES_TOGGLED: "trends_series_toggled",
+  TRENDS_TABLE_EXPANDED: "trends_table_expanded",
+  TRENDS_LOAD_FAILED: "trends_load_failed",
 
   // Calendar
-  CALENDAR_FILTER_CHANGED: "Calendar Filter Changed",
-  CALENDAR_EVENT_EXPANDED: "Calendar Event Expanded",
+  CALENDAR_FILTER_CHANGED: "calendar_filter_changed",
+  CALENDAR_EVENT_EXPANDED: "calendar_event_expanded",
 
   // Draft Recap
-  DRAFT_RECAP_VIEW_CHANGED: "Draft Recap View Changed",
-  DRAFT_RECAP_MEMBER_SELECTED: "Draft Recap Member Selected",
-  DRAFT_RECAP_ROUND_FILTERED: "Draft Recap Round Filtered",
+  DRAFT_RECAP_VIEW_CHANGED: "draft_recap_view_changed",
+  DRAFT_RECAP_MEMBER_SELECTED: "draft_recap_member_selected",
+  DRAFT_RECAP_ROUND_FILTERED: "draft_recap_round_filtered",
 
   // Season History
-  ARCHIVED_SEASON_EXPANDED: "Archived Season Expanded",
+  ARCHIVED_SEASON_EXPANDED: "archived_season_expanded",
 
   // Draft Tool — setup
-  DRAFT_MEMBER_ADDED: "Draft Member Added",
-  DRAFT_MEMBER_REMOVED: "Draft Member Removed",
-  DRAFT_ORDER_GENERATED: "Draft Order Generated",
-  DRAFT_ORDER_EDIT_REOPENED: "Draft Order Edit Reopened",
-  DRAFT_STARTED: "Draft Started",
+  DRAFT_MEMBER_ADDED: "draft_member_added",
+  DRAFT_MEMBER_REMOVED: "draft_member_removed",
+  DRAFT_ORDER_GENERATED: "draft_order_generated",
+  DRAFT_ORDER_EDIT_REOPENED: "draft_order_edit_reopened",
+  DRAFT_STARTED: "draft_started",
 
   // Draft Tool — in-draft
-  DRAFT_PICK_MADE: "Draft Pick Made",
-  DRAFT_PICK_UNDONE: "Draft Pick Undone",
-  DRAFT_TIMER_TOGGLED: "Draft Timer Toggled",
-  DRAFT_PANEL_SWITCHED: "Draft Panel Switched",
-  DRAFT_ROSTER_VIEWED: "Draft Roster Viewed",
-  DRAFT_HISTORY_PANEL_TOGGLED: "Draft History Panel Toggled",
+  DRAFT_PICK_MADE: "draft_pick_made",
+  DRAFT_PICK_UNDONE: "draft_pick_undone",
+  DRAFT_TIMER_TOGGLED: "draft_timer_toggled",
+  DRAFT_PANEL_SWITCHED: "draft_panel_switched",
+  DRAFT_ROSTER_VIEWED: "draft_roster_viewed",
+  DRAFT_HISTORY_PANEL_TOGGLED: "draft_history_panel_toggled",
 
   // Draft Tool — finish
-  DRAFT_CSV_EXPORTED: "Draft CSV Exported",
-  DRAFT_FINALIZE_MODAL_OPENED: "Draft Finalize Modal Opened",
-  DRAFT_FINALIZED: "Draft Finalized",
-  DRAFT_FINALIZE_FAILED: "Draft Finalize Failed",
+  DRAFT_CSV_EXPORTED: "draft_csv_exported",
+  DRAFT_FINALIZE_MODAL_OPENED: "draft_finalize_modal_opened",
+  DRAFT_FINALIZED: "draft_finalized",
+  DRAFT_FINALIZE_FAILED: "draft_finalize_failed",
 
   // Commissioner auth
-  COMMISSIONER_LOGIN_SUBMITTED: "Commissioner Login Submitted",
-  COMMISSIONER_LOGIN_FAILED: "Commissioner Login Failed",
-  COMMISSIONER_SIGNED_IN: "Commissioner Signed In",
-  COMMISSIONER_SIGNED_OUT: "Commissioner Signed Out",
+  COMMISSIONER_LOGIN_SUBMITTED: "commissioner_login_submitted",
+  COMMISSIONER_LOGIN_FAILED: "commissioner_login_failed",
+  COMMISSIONER_SIGNED_IN: "commissioner_signed_in",
+  COMMISSIONER_SIGNED_OUT: "commissioner_signed_out",
 
   // Season Settings (commissioner-only)
-  SETTINGS_MODE_CHANGED: "Settings Mode Changed",
-  LOCK_TOGGLED: "Lock Toggled",
-  DETAIL_ROW_ADDED: "Detail Row Added",
-  DETAIL_ROW_DELETED: "Detail Row Deleted",
-  SETTINGS_CHANGES_SAVED: "Settings Changes Saved",
-  SETTINGS_CHANGES_RESET: "Settings Changes Reset",
+  SETTINGS_MODE_CHANGED: "settings_mode_changed",
+  LOCK_TOGGLED: "lock_toggled",
+  DETAIL_ROW_ADDED: "detail_row_added",
+  DETAIL_ROW_DELETED: "detail_row_deleted",
+  SETTINGS_CHANGES_SAVED: "settings_changes_saved",
+  SETTINGS_CHANGES_RESET: "settings_changes_reset",
 };

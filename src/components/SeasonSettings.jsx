@@ -168,7 +168,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   } else {
    newSeason.locks[key] = { at: new Date().toISOString(), by: "commissioner" };
   }
-  track(EVENTS.LOCK_TOGGLED, { category: editCat, field_key: key, now_locked: nowLocked });
+  track(EVENTS.LOCK_TOGGLED, { category: editCat, field_key: key, is_locked: nowLocked });
   onSave(newSeason);
  }
 
