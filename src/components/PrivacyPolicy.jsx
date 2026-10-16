@@ -59,8 +59,7 @@ export default function PrivacyPolicy() {
       <h3 style={{ fontSize: 15, margin: "20px 0 8px" }}>Contact</h3>
       <p style={{ fontSize: 14, margin: 0, color: theme.dim }}>
         Questions about this policy? Contact the league commissioner at{" "}
-        {/* TODO: replace with a real contact address before this page goes live */}
-        <span style={{ color: theme.yel }}>[add contact email here]</span>.
+        <a href="mailto:flstaff@gmail.com" style={{ color: theme.acc }}>flstaff@gmail.com</a>.
       </p>
     </div>
   );

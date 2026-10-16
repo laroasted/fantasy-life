@@ -24,6 +24,7 @@ import Calendar from "./components/Calendar";
 import DraftRecap from "./components/DraftRecap";
 import Trends from "./components/Trends";
 import PrivacyPolicy from "./components/PrivacyPolicy";
+import AdUnit from "./components/AdUnit";
 import {
   track,
   EVENTS,
@@ -461,6 +462,10 @@ export default function App() {
               )}
             </div>
             <Scoreboard seasonData={activeSeason} onUnlockPaywall={handlePaywallUnlock} />
+            <div style={{ maxWidth: 760, margin: "20px auto 0" }}>
+              {/* TODO: replace with a real ad unit slot ID from AdSense (Ads → By ad unit → Display ads) */}
+              <AdUnit slot="0000000000" />
+            </div>
           </div>
         )}
         {activeTab === "trends" && (
