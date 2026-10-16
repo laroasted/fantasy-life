@@ -10,7 +10,7 @@ import {
   saveLocksToSupabase,
   savePaywallsToSupabase,
   unlockPaywallRpc,
-  signInCommissioner,
+  signInWithGoogle,
   signOutCommissioner,
   getCommissionerSession,
   getConfiguredCommissionerEmails,
@@ -53,8 +53,6 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [commissionerSession, setCommissionerSession] = useState(null);
   const [commissionerRole, setCommissionerRole] = useState(null);
-  const [commissionerEmail, setCommissionerEmail] = useState("");
-  const [authMessage, setAuthMessage] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
  
@@ -79,13 +77,17 @@ export default function App() {
         if (!isMounted) return;
         setCommissionerSession(session);
         setCommissionerRole(role);
-        if (session?.user?.email) setCommissionerEmail(session.user.email);
       } catch (e) {
         // A stale/corrupted stored session can make getSession() throw
-        // outright rather than return { error }. Don't let that leave the
-        // commissioner login UI permanently hidden — fall back to signed-out
-        // so the user can retry.
-        console.error("loadAuth failed:", e);
+        // outright rather than return { error }. Resetting React state alone
+        // isn't enough here — the broken token is still sitting in
+        // localStorage and supabase-js will keep trying (and failing) to use
+        // it on every future load, so this looks like a permanent lockout
+        // even though the UI "recovers." Purge it locally (no network
+        // round-trip needed — it's already broken) so the next load starts
+        // clean and a fresh sign-in actually sticks.
+        console.error("loadAuth failed, clearing local session:", e);
+        try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
         if (!isMounted) return;
         setCommissionerSession(null);
         setCommissionerRole(null);
@@ -99,7 +101,6 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
       setCommissionerSession(session || null);
-      setCommissionerEmail(session?.user?.email || "");
       if (!session) {
         setCommissionerRole(null);
         setAuthReady(true);
@@ -110,7 +111,8 @@ export default function App() {
         if (!isMounted) return;
         setCommissionerRole(role);
       } catch (e) {
-        console.error("Auth state change role lookup failed:", e);
+        console.error("Auth state change role lookup failed, clearing local session:", e);
+        try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
         if (!isMounted) return;
         setCommissionerRole(null);
       } finally {
@@ -132,7 +134,7 @@ export default function App() {
     const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
     if (signedIn && !prevSignedInRef.current) {
       const userId = commissionerSession?.user?.id;
-      const email = commissionerSession?.user?.email || commissionerEmail;
+      const email = commissionerSession?.user?.email;
       identifyCommissioner(userId, email, commissionerRole);
       track(EVENTS.COMMISSIONER_SIGNED_IN, { role: commissionerRole });
     } else if (!signedIn && prevSignedInRef.current) {
@@ -140,7 +142,7 @@ export default function App() {
       resetIdentity();
     }
     prevSignedInRef.current = signedIn;
-  }, [authReady, commissionerRole, commissionerSession, commissionerEmail]);
+  }, [authReady, commissionerRole, commissionerSession]);
  
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false) => {
@@ -249,25 +251,24 @@ export default function App() {
     return true;
   }, [activeSeason]);
  
-  const handleCommissionerSignIn = useCallback(async () => {
+  const handleGoogleSignIn = useCallback(async () => {
     setAuthLoading(true);
     setAuthError("");
-    setAuthMessage("");
     track(EVENTS.COMMISSIONER_LOGIN_SUBMITTED);
-    const result = await signInCommissioner(commissionerEmail);
-    if (result.ok) {
-      setAuthMessage("Magic link sent. Open it from your email on this device to unlock commissioner actions.");
-    } else {
+    const result = await signInWithGoogle();
+    if (!result.ok) {
       setAuthError(result.error);
       track(EVENTS.COMMISSIONER_LOGIN_FAILED, { error_message: result.error });
+      setAuthLoading(false);
     }
-    setAuthLoading(false);
-  }, [commissionerEmail]);
- 
+    // On success, signInWithOAuth triggers a full-page redirect to Google's
+    // consent screen, so there's nothing further to do here — authLoading
+    // intentionally stays true until the page navigates away.
+  }, []);
+
   const handleCommissionerSignOut = useCallback(async () => {
     setAuthLoading(true);
     setAuthError("");
-    setAuthMessage("");
     const result = await signOutCommissioner();
     if (!result.ok) setAuthError(result.error || "Unable to sign out.");
     setAuthLoading(false);
@@ -355,45 +356,24 @@ export default function App() {
                       </button>
                     </>
                   ) : (
-                    <>
-                      <input
-                        value={commissionerEmail}
-                        onChange={(e) => { setCommissionerEmail(e.target.value); setAuthError(""); setAuthMessage(""); }}
-                        placeholder="Admin email"
-                        style={{
-                          background: "#0f172a",
-                          border: "1px solid " + theme.bdr,
-                          borderRadius: 8,
-                          color: theme.txt,
-                          padding: isMobile ? "5px 8px" : "6px 10px",
-                          fontSize: 11,
-                          minWidth: isMobile ? 0 : 180,
-                        }}
-                      />
-                      <button
-                        onClick={handleCommissionerSignIn}
-                        disabled={authLoading || !commissionerEmail.trim()}
-                        style={{
-                          background: "linear-gradient(135deg, #2563eb, #7c3aed)",
-                          border: "none",
-                          borderRadius: 8,
-                          padding: isMobile ? "5px 8px" : "6px 10px",
-                          color: "#fff",
-                          fontSize: 11,
-                          fontWeight: 700,
-                          cursor: authLoading || !commissionerEmail.trim() ? "default" : "pointer",
-                          opacity: authLoading || !commissionerEmail.trim() ? 0.6 : 1,
-                        }}>
-                        {authLoading ? "Sending..." : "Admin login"}
-                      </button>
-                    </>
+                    <button
+                      onClick={() => { setAuthError(""); handleGoogleSignIn(); }}
+                      disabled={authLoading}
+                      style={{
+                        background: "linear-gradient(135deg, #2563eb, #7c3aed)",
+                        border: "none",
+                        borderRadius: 8,
+                        padding: isMobile ? "5px 8px" : "6px 10px",
+                        color: "#fff",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: authLoading ? "default" : "pointer",
+                        opacity: authLoading ? 0.6 : 1,
+                      }}>
+                      {authLoading ? "Redirecting…" : "Sign in with Google"}
+                    </button>
                   )}
                 </div>
-                {authMessage && (
-                  <div style={{ fontSize: 10, color: "#86efac", textAlign: isMobile ? "left" : "right" }}>
-                    {authMessage}
-                  </div>
-                )}
                 {authError && (
                   <div style={{ fontSize: 10, color: "#fca5a5", textAlign: isMobile ? "left" : "right" }}>
                     {authError}
@@ -484,7 +464,7 @@ export default function App() {
           <DraftTool
             onFinalize={handleFinalize}
             isCommissioner={isCommissioner}
-            commissionerEmail={commissionerSession?.user?.email || commissionerEmail}
+            commissionerEmail={commissionerSession?.user?.email || ""}
           />
         )}
         {activeTab === "settings" && (
@@ -492,7 +472,7 @@ export default function App() {
             seasonData={activeSeason}
             onSave={handleSettingsSave}
             isCommissioner={isCommissioner}
-            commissionerEmail={commissionerSession?.user?.email || commissionerEmail}
+            commissionerEmail={commissionerSession?.user?.email || ""}
           />
         )}
       </div>

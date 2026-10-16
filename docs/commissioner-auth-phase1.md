@@ -20,14 +20,22 @@ REACT_APP_COMMISSIONER_EMAILS=you@example.com,backup@example.com
 
 Only authenticated users whose email matches this list will unlock commissioner actions from the UI.
 
-### 2. Enable Supabase email auth
+### 2. Enable Google OAuth in Supabase
 
-In Supabase Auth, enable either:
+In Supabase Auth → Sign In / Providers, enable **Google** and paste in the
+Client ID / Client Secret from a Google Cloud OAuth client (Web application
+type). The authorized redirect URI on the Google side must be
+`https://<project-ref>.supabase.co/auth/v1/callback`.
 
-- Email OTP / magic link, or
-- Email + password
+The current UI sends users through Google's OAuth consent screen
+(`signInWithOAuth`) rather than emailing a magic link — this sidesteps
+Supabase's default shared-mailer rate limit entirely, since no email is
+sent as part of sign-in.
 
-The current UI sends a magic-link email.
+Prior to this, sign-in used Supabase's email OTP/magic-link flow. That was
+dropped after hitting two real issues in practice: the shared mailer's low
+rate limit, and a session that could get stuck in a corrupted state in the
+browser's localStorage after a flaky magic-link exchange.
 
 ### 3. Recommended database hardening
 

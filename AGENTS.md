@@ -22,8 +22,10 @@ the long-form version; this file is the in-repo quick reference.
 - No login for regular viewers — the app is open to anyone with the URL.
   Anonymous visitors are tracked by Mixpanel's auto-generated `$device_id`,
   never identified.
-- The only authenticated role is **commissioner** (Supabase magic-link
-  auth, small email allow-list). On a successful sign-in, `App.jsx` calls
+- The only authenticated role is **commissioner** (Supabase Google OAuth,
+  small email allow-list — switched from magic-link email after hitting
+  Supabase's shared-mailer rate limit and a localStorage session-corruption
+  issue; see `docs/commissioner-auth-phase1.md`). On a successful sign-in, `App.jsx` calls
   `identifyCommissioner(userId, email, role)`, which:
   - `mixpanel.identify(userId)` — **the Supabase Auth `session.user.id`
     (a stable UUID), not the email.** Emails can change; the database ID
