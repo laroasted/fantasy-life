@@ -163,3 +163,24 @@ export function getLocksForEntry(seasonData, category, owner) {
   .filter(([k]) => k.startsWith(prefix))
   .map(([k, v]) => ({ key: k, field: k.slice(prefix.length), ...v }));
 }
+
+// ═══════════════════════════════════════════════════════════
+// PAYWALL HELPERS — Used by Scoreboard and SeasonSettings
+// ═══════════════════════════════════════════════════════════
+
+/**
+* Check whether a member's scoreboard row is currently paywalled.
+* Keyed by member id (stable), not display name.
+*/
+export function isPaywalled(seasonData, memberId) {
+ const paywalls = seasonData?.paywalls || {};
+ return !!(memberId && paywalls[memberId] && paywalls[memberId].enabled);
+}
+
+/**
+* Get the commissioner's custom paywall message for a member, if any.
+*/
+export function getPaywallMessage(seasonData, memberId) {
+ const paywalls = seasonData?.paywalls || {};
+ return (memberId && paywalls[memberId] && paywalls[memberId].message) || "";
+}

@@ -89,6 +89,7 @@ export function build2025() {
   categories,
   detailedData: ALL_DETAIL_2025,
   locks: {},
+  paywalls: {},
   status: "active",
  };
 }

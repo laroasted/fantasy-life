@@ -3,6 +3,7 @@ import { CATEGORY_ORDER, CATEGORY_LABELS, SPORT_CATEGORIES } from "../constants/
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
+import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
 
 // ─── Which type of category is this? ───
 var FILM_CATS = ["Actor", "Actress"];
@@ -67,6 +68,8 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  var _i = useState(window.innerWidth < 640), isMobile = _i[0], setIsMobile = _i[1];
  var _j = useState(null), expandedMember = _j[0], setExpandedMember = _j[1];
  var _k = useState(null), confirmDelete = _k[0], setConfirmDelete = _k[1];
+ var _l = useState({}), paywallEdits = _l[0], setPaywallEdits = _l[1];
+ var _m = useState(false), savedPaywall = _m[0], setSavedPaywall = _m[1];
 
  useEffect(function () {
   var onResize = function () { setIsMobile(window.innerWidth < 640); };
@@ -170,6 +173,58 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   }
   track(EVENTS.LOCK_TOGGLED, { category: editCat, field_key: key, is_locked: nowLocked });
   onSave(newSeason);
+ }
+
+ // ─── Paywall settings (per member) ───
+ var paywalls = seasonData.paywalls || {};
+ function getPaywallVal(memberId, field) {
+  var key = memberId + "|" + field;
+  if (paywallEdits[key] !== undefined) return paywallEdits[key];
+  var entry = paywalls[memberId];
+  if (field === "enabled") return !!(entry && entry.enabled);
+  return (entry && entry.message) || "";
+ }
+ function setPaywallVal(memberId, field, val) {
+  setPaywallEdits(function (prev) {
+   var n = Object.assign({}, prev);
+   n[memberId + "|" + field] = val;
+   return n;
+  });
+  setSavedPaywall(false);
+ }
+ function applyPaywallChanges() {
+  var newSeason = JSON.parse(JSON.stringify(seasonData));
+  if (!newSeason.paywalls) newSeason.paywalls = {};
+  var log = [];
+  var touchedMembers = {};
+  Object.keys(paywallEdits).forEach(function (key) {
+   var sep = key.lastIndexOf("|");
+   touchedMembers[key.slice(0, sep)] = true;
+  });
+  Object.keys(touchedMembers).forEach(function (memberId) {
+   var member = members.find(function (m) { return m.id === memberId; });
+   var memberName = member ? member.name : memberId;
+   var existing = newSeason.paywalls[memberId] || { enabled: false, message: "" };
+   var newEnabled = getPaywallVal(memberId, "enabled");
+   var newMessage = getPaywallVal(memberId, "message");
+   if (!!existing.enabled !== !!newEnabled) {
+    log.push("Paywall — " + memberName + ": " + (newEnabled ? "turned ON" : "turned OFF"));
+   }
+   if ((existing.message || "") !== newMessage) {
+    log.push("Paywall — " + memberName + ': message "' + (existing.message || "") + '" → "' + newMessage + '"');
+   }
+   newSeason.paywalls[memberId] = {
+    enabled: !!newEnabled,
+    message: newMessage,
+    updatedAt: new Date().toISOString(),
+   };
+  });
+  if (log.length === 0) { setSavedPaywall(true); return; }
+  track(EVENTS.SETTINGS_CHANGES_SAVED, { mode: "paywall", changes_count: log.length });
+  setChangelog(function (prev) { return log.concat(prev); });
+  onSave(newSeason);
+  setSavedPaywall(true);
+  setPaywallEdits({});
  }
 
  // ─── Add a detail row ───
@@ -630,6 +685,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
      { id: "details", label: isMobile ? "Details" : "Detail Lines" },
      { id: "swaps", label: isMobile ? "Swaps" : "Swap Picks" },
      { id: "locks", label: isMobile ? "Locks" : "Locks (" + Object.keys(locks).length + ")" },
+     { id: "paywall", label: isMobile ? "Paywall" : "💰 Paywall" },
      { id: "log", label: isMobile ? "Log" : "Log" + (changelog.length ? " (" + changelog.length + ")" : "") },
     ].map(function (tab) {
      return (
@@ -644,7 +700,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    </div>
 
    {/* ─── Category pills ─── */}
-   {mode !== "log" && (
+   {mode !== "log" && mode !== "paywall" && (
     <div style={{
      display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
      gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
@@ -955,6 +1011,65 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        If a field is locked, the cron skips it and logs what it skipped.
       </div>
      </div>
+    </div>
+   )}
+
+   {/* ═══ PAYWALL MODE ═══ */}
+   {mode === "paywall" && (
+    <div style={cardStyle}>
+     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{"💰"} Paywall</h3>
+     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
+      Turn a member's scoreboard row into a toll booth. When on, their total and
+      category breakdown are blurred out until they pay ${PAYWALL_TOLL_AMOUNT} {PAYWALL_TOLL_CURRENCY} via
+      PayPal (or you flip this back off). Off = no change from normal.
+     </p>
+     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {members.map(function (m) {
+       var enabled = getPaywallVal(m.id, "enabled");
+       var message = getPaywallVal(m.id, "message");
+       var liveEntry = paywalls[m.id];
+       var isLive = !!(liveEntry && liveEntry.enabled);
+       return (
+        <div key={m.id} style={{
+         padding: "10px 12px", borderRadius: 8,
+         background: enabled ? "rgba(234,179,8,0.08)" : "rgba(51,65,85,0.2)",
+         border: "1px solid " + (enabled ? "rgba(234,179,8,0.35)" : theme.bdr),
+        }}>
+         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+           <span style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[m.id] || theme.txt }}>
+            {m.name}
+           </span>
+           {isLive && <span style={{ fontSize: 9, color: "#eab308" }}>{"🔒"} currently live</span>}
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11, color: theme.dim }}>
+           <input type="checkbox" checked={enabled}
+            onChange={function (e) { setPaywallVal(m.id, "enabled", e.target.checked); }} />
+           {enabled ? "On" : "Off"}
+          </label>
+         </div>
+         <input value={message}
+          onChange={function (e) { setPaywallVal(m.id, "message", e.target.value); }}
+          placeholder="e.g. Paywalled until you pick our next location"
+          style={{ ...inputStyle, padding: "6px 8px", fontSize: 11, marginTop: 8 }} />
+        </div>
+       );
+      })}
+     </div>
+     <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+      <button onClick={applyPaywallChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
+       Save Changes
+      </button>
+      <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "paywall" }); setPaywallEdits({}); setSavedPaywall(false); }}
+       style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
+     </div>
+     {savedPaywall && (
+      <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
+       background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)",
+       textAlign: "center", fontSize: 12, color: theme.grn }}>
+       Paywall settings saved and synced to scoreboard.
+      </div>
+     )}
     </div>
    )}
 

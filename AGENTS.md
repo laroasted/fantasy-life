@@ -136,8 +136,30 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `lock_toggled` | settings | `category`, `field_key`, `is_locked` |
 | `detail_row_added` | settings | `category`, `row_type` |
 | `detail_row_deleted` | settings | `category`, `row_type` |
-| `settings_changes_saved` | settings | `mode`, `changes_count` |
+| `settings_changes_saved` | settings | `mode`, `changes_count` (also fires for `mode: "paywall"`) |
 | `settings_changes_reset` | settings | `mode` |
+| `paywall_payment_completed` | scoreboard | `member_id`, `member_name` |
+
+## Paywall (commissioner novelty feature)
+
+- Commissioner-only toggle in Settings → Paywall: per-member `enabled` +
+  custom `message`, stored as `seasonData.paywalls[memberId]` (parallel to
+  `locks`, persisted via `savePaywallsToSupabase` in `src/utils/storage.js`).
+- Enforced in `src/components/Scoreboard.jsx`: blurs a paywalled member's
+  total/category numbers and swaps their expanded breakdown for a
+  `PayPalButton` (`src/components/PayPalButton.jsx`) + the commissioner's
+  message. Off = zero behavior change from status quo.
+- PayPal is loaded via the public JS SDK (`REACT_APP_PAYPAL_CLIENT_ID`,
+  safe to expose client-side — see `.env.example`), with order create/capture
+  done entirely in the browser since this app has no backend. There is no
+  server-side verification of the payment — acceptable for a joke toll in a
+  private friend league, not a pattern to copy for anything that matters.
+- A paying visitor unlocks only their own row through the
+  `unlock_paywall` Postgres RPC (`supabase/phase3_paywalls.sql`), a
+  security-definer function that can only flip one member's `enabled` flag.
+  Anonymous visitors have no other write access to `seasons` — don't widen
+  that without re-checking the RLS policies in `supabase/phase1_commissioner_auth.sql`.
+- Toll amount/currency: `src/constants/paywall.js`.
 
 ## Governance
 

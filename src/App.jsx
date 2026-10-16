@@ -8,6 +8,8 @@ import {
   STORAGE_KEYS,
   fetchSeasonFromSupabase,
   saveLocksToSupabase,
+  savePaywallsToSupabase,
+  unlockPaywallRpc,
   signInCommissioner,
   signOutCommissioner,
   getCommissionerSession,
@@ -196,7 +198,28 @@ export default function App() {
     if (updatedSeason.locks && updatedSeason.year) {
       await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
     }
+    if (updatedSeason.paywalls && updatedSeason.year) {
+      await savePaywallsToSupabase(updatedSeason.year, updatedSeason.paywalls);
+    }
   }, [isCommissioner]);
+
+  // No commissioner gate here on purpose: any visitor who pays their own
+  // toll can lift their own paywall. The actual write goes through a
+  // security-definer RPC (see supabase/phase3_paywalls.sql) that can only
+  // flip that one member's `enabled` flag — nothing else is writable by
+  // an anonymous visitor.
+  const handlePaywallUnlock = useCallback(async (memberId) => {
+    if (!memberId) return;
+    setActiveSeason((prev) => {
+      if (!prev) return prev;
+      const updated = JSON.parse(JSON.stringify(prev));
+      if (!updated.paywalls) updated.paywalls = {};
+      updated.paywalls[memberId] = Object.assign({}, updated.paywalls[memberId], { enabled: false });
+      storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(updated)).catch(() => {});
+      if (updated.year) unlockPaywallRpc(updated.year, memberId).catch(() => {});
+      return updated;
+    });
+  }, []);
  
   const handleCommissionerSignIn = useCallback(async () => {
     setAuthLoading(true);
@@ -416,7 +439,7 @@ export default function App() {
                 </p>
               )}
             </div>
-            <Scoreboard seasonData={activeSeason} />
+            <Scoreboard seasonData={activeSeason} onUnlockPaywall={handlePaywallUnlock} />
           </div>
         )}
         {activeTab === "trends" && (

@@ -163,6 +163,60 @@ try {
 }
 
 /**
+* Save paywall settings to Supabase seasons table.
+* Called by SeasonSettings when the commissioner saves the Paywall tab.
+*
+* @param {number} year - Season year (e.g. 2026)
+* @param {object} paywalls - The full paywalls object, keyed by member id
+* @returns {boolean} true if saved successfully
+*/
+export async function savePaywallsToSupabase(year, paywalls) {
+try {
+ const { error } = await supabase
+ .from('seasons')
+ .update({ paywalls: paywalls || {} })
+ .eq('year', year);
+
+ if (error) {
+ console.error('Failed to save paywalls to Supabase:', error.message);
+ return false;
+ }
+ return true;
+} catch (err) {
+ console.error('savePaywallsToSupabase error:', err);
+ return false;
+}
+}
+
+/**
+* Unlock one member's paywall after a successful PayPal payment.
+* Goes through a security-definer RPC (see supabase/phase3_paywalls.sql)
+* instead of a direct table write, since anonymous visitors have no
+* UPDATE grant on the seasons table — the RPC can only flip that one
+* member's `enabled` flag to false, nothing else.
+*
+* @param {number} year - Season year
+* @param {string} memberId - The member whose paywall to lift
+* @returns {boolean} true if the call succeeded
+*/
+export async function unlockPaywallRpc(year, memberId) {
+try {
+ const { error } = await supabase.rpc('unlock_paywall', {
+ p_year: year,
+ p_member_id: memberId,
+ });
+ if (error) {
+ console.error('Failed to unlock paywall:', error.message);
+ return false;
+ }
+ return true;
+} catch (err) {
+ console.error('unlockPaywallRpc error:', err);
+ return false;
+}
+}
+
+/**
 * Fetch the full season from Supabase and assemble into the same
 * shape that build2025() returns — so Scoreboard.jsx needs zero changes.
 *
@@ -402,6 +456,7 @@ try {
  categories,
  detailedData,
  locks: season.locks || {},
+ paywalls: season.paywalls || {},
  status: season.status,
  };
 } catch (err) {
