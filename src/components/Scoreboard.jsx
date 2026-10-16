@@ -59,8 +59,23 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
 
  function handlePaywallPayment(owner, memberId) {
   track(EVENTS.PAYWALL_PAYMENT_COMPLETED, { member_id: memberId, member_name: owner });
-  if (onUnlockPaywall) onUnlockPaywall(memberId);
-  showToast("I can't believe you just did that");
+  if (!onUnlockPaywall) {
+   // Shouldn't happen — renderPaywallPanel only offers checkout when this
+   // prop exists (e.g. never in the read-only SeasonHistory view) — but
+   // stay honest if it ever does.
+   showToast("Payment received, but this view can't unlock it.");
+   return;
+  }
+  // The PayPal charge already happened (this fires from onApprove); the
+  // RPC still has to actually succeed before we tell the payer they're
+  // unlocked, or a failed write would silently re-lock them on reload.
+  Promise.resolve(onUnlockPaywall(memberId)).then(function (ok) {
+   if (ok) {
+    showToast("I can't believe you just did that");
+   } else {
+    showToast("Payment went through, but the unlock didn't sync — refresh, or ping the commissioner.");
+   }
+  });
  }
 
  // Shown in place of a paywalled member's real breakdown, both in the
@@ -83,14 +98,22 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
       );
      })}
     </div>
-    <div style={{ display: "flex", justifyContent: "center" }}>
-     <PayPalButton amount={PAYWALL_TOLL_AMOUNT}
-      description={"Fantasy Life paywall toll — " + owner}
-      onApprove={function () { handlePaywallPayment(owner, memberId); }} />
-    </div>
-    <div style={{ textAlign: "center", fontSize: 9, color: "#64748b", marginTop: 6 }}>
-     ${PAYWALL_TOLL_AMOUNT} {PAYWALL_TOLL_CURRENCY} to lift the paywall
-    </div>
+    {onUnlockPaywall ? (
+     <>
+      <div style={{ display: "flex", justifyContent: "center" }}>
+       <PayPalButton amount={PAYWALL_TOLL_AMOUNT}
+        description={"Fantasy Life paywall toll — " + owner}
+        onApprove={function () { handlePaywallPayment(owner, memberId); }} />
+      </div>
+      <div style={{ textAlign: "center", fontSize: 9, color: "#64748b", marginTop: 6 }}>
+       ${PAYWALL_TOLL_AMOUNT} {PAYWALL_TOLL_CURRENCY} to lift the paywall
+      </div>
+     </>
+    ) : (
+     <div style={{ textAlign: "center", fontSize: 10, color: theme.dim }}>
+      Checkout isn't available in this read-only view.
+     </div>
+    )}
    </div>
   );
  }

@@ -74,16 +74,28 @@ export default function App() {
     let isMounted = true;
  
     async function loadAuth() {
-      const { session, role } = await getCommissionerSession();
-      if (!isMounted) return;
-      setCommissionerSession(session);
-      setCommissionerRole(role);
-      setAuthReady(true);
-      if (session?.user?.email) setCommissionerEmail(session.user.email);
+      try {
+        const { session, role } = await getCommissionerSession();
+        if (!isMounted) return;
+        setCommissionerSession(session);
+        setCommissionerRole(role);
+        if (session?.user?.email) setCommissionerEmail(session.user.email);
+      } catch (e) {
+        // A stale/corrupted stored session can make getSession() throw
+        // outright rather than return { error }. Don't let that leave the
+        // commissioner login UI permanently hidden — fall back to signed-out
+        // so the user can retry.
+        console.error("loadAuth failed:", e);
+        if (!isMounted) return;
+        setCommissionerSession(null);
+        setCommissionerRole(null);
+      } finally {
+        if (isMounted) setAuthReady(true);
+      }
     }
- 
+
     loadAuth();
- 
+
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
       setCommissionerSession(session || null);
@@ -93,10 +105,17 @@ export default function App() {
         setAuthReady(true);
         return;
       }
-      const { role } = await getCommissionerSession();
-      if (!isMounted) return;
-      setCommissionerRole(role);
-      setAuthReady(true);
+      try {
+        const { role } = await getCommissionerSession();
+        if (!isMounted) return;
+        setCommissionerRole(role);
+      } catch (e) {
+        console.error("Auth state change role lookup failed:", e);
+        if (!isMounted) return;
+        setCommissionerRole(null);
+      } finally {
+        if (isMounted) setAuthReady(true);
+      }
     });
  
     return () => {
@@ -208,18 +227,27 @@ export default function App() {
   // security-definer RPC (see supabase/phase3_paywalls.sql) that can only
   // flip that one member's `enabled` flag — nothing else is writable by
   // an anonymous visitor.
+  //
+  // The RPC is awaited and checked before the UI (or localStorage) ever
+  // claims success: the PayPal charge already happened by the time this
+  // runs, but if the backend write fails (migration not applied yet, a
+  // transient network/RLS error), a reload must NOT silently re-lock
+  // someone who already paid without them being told. Returns true only
+  // once the unlock is actually persisted.
   const handlePaywallUnlock = useCallback(async (memberId) => {
-    if (!memberId) return;
+    if (!memberId || !activeSeason?.year) return false;
+    const ok = await unlockPaywallRpc(activeSeason.year, memberId);
+    if (!ok) return false;
     setActiveSeason((prev) => {
       if (!prev) return prev;
       const updated = JSON.parse(JSON.stringify(prev));
       if (!updated.paywalls) updated.paywalls = {};
       updated.paywalls[memberId] = Object.assign({}, updated.paywalls[memberId], { enabled: false });
       storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(updated)).catch(() => {});
-      if (updated.year) unlockPaywallRpc(updated.year, memberId).catch(() => {});
       return updated;
     });
-  }, []);
+    return true;
+  }, [activeSeason]);
  
   const handleCommissionerSignIn = useCallback(async () => {
     setAuthLoading(true);
