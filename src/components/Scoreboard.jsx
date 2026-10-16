@@ -2,8 +2,12 @@ import { useState, useMemo, useEffect } from "react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme } from "../constants/theme";
-import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock } from "../utils/helpers";
+import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
 import { track, EVENTS } from "../utils/analytics";
+import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
+import PayPalButton from "./PayPalButton";
+
+var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
  
 // ─── Small lock indicator that players see on the scoreboard ───
 function LockIndicator({ note }) {
@@ -26,11 +30,12 @@ function LockIndicator({ note }) {
  );
 }
  
-export default function Scoreboard({ seasonData, surface }) {
+export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  var surfaceName = surface || "scoreboard";
  var _s = useState(null), selCat = _s[0], setSelCat = _s[1];
  var _e = useState(null), expRow = _e[0], setExpRow = _e[1];
  var _m = useState(window.innerWidth < 640), isMobile = _m[0], setIsMobile = _m[1];
+ var _t = useState(null), toast = _t[0], setToast = _t[1];
  
  useEffect(function () {
   var onResize = function () { setIsMobile(window.innerWidth < 640); };
@@ -47,6 +52,72 @@ export default function Scoreboard({ seasonData, surface }) {
  var detail = seasonData.detailedData || {};
  var locks = seasonData.locks || {};
  
+ function showToast(msg) {
+  setToast(msg);
+  setTimeout(function () { setToast(null); }, 3500);
+ }
+
+ function handlePaywallPayment(owner, memberId) {
+  track(EVENTS.PAYWALL_PAYMENT_COMPLETED, { member_id: memberId, member_name: owner });
+  if (!onUnlockPaywall) {
+   // Shouldn't happen — renderPaywallPanel only offers checkout when this
+   // prop exists (e.g. never in the read-only SeasonHistory view) — but
+   // stay honest if it ever does.
+   showToast("Payment received, but this view can't unlock it.");
+   return;
+  }
+  // The PayPal charge already happened (this fires from onApprove); the
+  // RPC still has to actually succeed before we tell the payer they're
+  // unlocked, or a failed write would silently re-lock them on reload.
+  Promise.resolve(onUnlockPaywall(memberId)).then(function (ok) {
+   if (ok) {
+    showToast("I can't believe you just did that");
+   } else {
+    showToast("Payment went through, but the unlock didn't sync — refresh, or ping the commissioner.");
+   }
+  });
+ }
+
+ // Shown in place of a paywalled member's real breakdown, both in the
+ // Overall category grid and inside renderExpanded() for a single category.
+ function renderPaywallPanel(owner, memberId) {
+  var message = getPaywallMessage(seasonData, memberId) || "Paywalled by the commissioner.";
+  return (
+   <div style={{ padding: isMobile ? "10px 8px" : "12px 12px" }}>
+    <div style={{ textAlign: "center", marginBottom: 10 }}>
+     <div style={{ fontSize: 22, marginBottom: 4 }}>{"🔒"}</div>
+     <div style={{ fontSize: 12, color: "#fef9c3", fontWeight: 700 }}>{message}</div>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)", gap: 4, marginBottom: 14 }}>
+     {CATEGORY_ORDER.map(function (k) {
+      return (
+       <div key={k} style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", background: "rgba(51,65,85,0.3)" }}>
+        <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
+        <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700, color: "#e2e8f0" }}>{"██"}</div>
+       </div>
+      );
+     })}
+    </div>
+    {onUnlockPaywall ? (
+     <>
+      <div style={{ display: "flex", justifyContent: "center" }}>
+       <PayPalButton amount={PAYWALL_TOLL_AMOUNT}
+        description={"Fantasy Life paywall toll — " + owner}
+        onApprove={function () { handlePaywallPayment(owner, memberId); }} />
+      </div>
+      <div style={{ textAlign: "center", fontSize: 9, color: "#64748b", marginTop: 6 }}>
+       ${PAYWALL_TOLL_AMOUNT} {PAYWALL_TOLL_CURRENCY} to lift the paywall
+      </div>
+     </>
+    ) : (
+     <div style={{ textAlign: "center", fontSize: 10, color: theme.dim }}>
+      Checkout isn't available in this read-only view.
+     </div>
+    )}
+   </div>
+  );
+ }
+
  var overallStandings = useMemo(function () {
   return members.map(function (m) {
    var totalPts = 0;
@@ -86,6 +157,14 @@ export default function Scoreboard({ seasonData, surface }) {
  
  // === EXPANDED DETAIL RENDERER ===
  function renderExpanded(m, idx) {
+  var memberId = (members.find(function (x) { return x.name === m.owner; }) || {}).id;
+  if (isPaywalled(seasonData, memberId)) {
+   return (
+    <div style={expandedWrapperStyle(idx)}>
+     {renderPaywallPanel(m.owner, memberId)}
+    </div>
+   );
+  }
   var d = detailArr ? detailArr.find(function (x) { return x.owner === m.owner; }) : null;
   var wp = expandedWrapperStyle(idx);
   var hd = expandedHeaderStyle;
@@ -492,6 +571,7 @@ export default function Scoreboard({ seasonData, surface }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
      {overallStandings.map(function (m, idx) {
       var isExp = expRow === m.owner;
+      var memberPaywalled = isPaywalled(seasonData, m.id);
       return (
        <div key={m.owner}>
         <div onClick={function () {
@@ -507,36 +587,42 @@ export default function Scoreboard({ seasonData, surface }) {
          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 800, color: "#94a3b8" }}>{medalDisplay(idx)}</span>
          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
-         <span style={{ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" }}>{m.totalPts}</span>
+         <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
+          {memberPaywalled && <span style={{ fontSize: isMobile ? 11 : 13 }}>{"🔒"}</span>}
+          <span style={Object.assign({ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" },
+           memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.totalPts}</span>
+         </span>
         </div>
         {isExp && (
          <div style={{ padding: isMobile ? "8px 8px" : "10px 12px", borderRadius: "0 0 10px 10px",
           background: "#1e293b", border: "1px solid " + rowBorder(idx), borderTop: "1px solid #334155" }}>
-          <div style={{ display: "grid",
-           gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)",
-           gap: 4 }}>
-           {CATEGORY_ORDER.map(function (k) {
-            var pts = m.catScores[k] || 0;
-            var pickEntry = (cats[k] || []).find(function (x) { return x.owner === m.owner; });
-            var pickName = pickEntry ? pickEntry.pick : "";
-            return (
-             <div key={k}
-              onClick={function (e) {
-                e.stopPropagation();
-                track(EVENTS.OVERALL_CATEGORY_TILE_CLICKED, { category: k });
-                setSelCat(k); setExpRow(null);
-               }}
-              style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", cursor: "pointer",
-               background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(51,65,85,0.3)" }}>
-              <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
-              <div style={{ fontSize: isMobile ? 7 : 8, color: "#94a3b8", lineHeight: 1.2, marginTop: 1,
-               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pickName}</div>
-              <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700,
-               color: pts >= 15 ? "#22c55e" : pts <= 3 ? "#ef4444" : "#e2e8f0" }}>{pts}</div>
-             </div>
-            );
-           })}
-          </div>
+          {memberPaywalled ? renderPaywallPanel(m.owner, m.id) : (
+           <div style={{ display: "grid",
+            gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)",
+            gap: 4 }}>
+            {CATEGORY_ORDER.map(function (k) {
+             var pts = m.catScores[k] || 0;
+             var pickEntry = (cats[k] || []).find(function (x) { return x.owner === m.owner; });
+             var pickName = pickEntry ? pickEntry.pick : "";
+             return (
+              <div key={k}
+               onClick={function (e) {
+                 e.stopPropagation();
+                 track(EVENTS.OVERALL_CATEGORY_TILE_CLICKED, { category: k });
+                 setSelCat(k); setExpRow(null);
+                }}
+               style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", cursor: "pointer",
+                background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(51,65,85,0.3)" }}>
+               <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
+               <div style={{ fontSize: isMobile ? 7 : 8, color: "#94a3b8", lineHeight: 1.2, marginTop: 1,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pickName}</div>
+               <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700,
+                color: pts >= 15 ? "#22c55e" : pts <= 3 ? "#ef4444" : "#e2e8f0" }}>{pts}</div>
+              </div>
+             );
+            })}
+           </div>
+          )}
          </div>
         )}
        </div>
@@ -556,6 +642,7 @@ export default function Scoreboard({ seasonData, surface }) {
        var isExp = expRow === m.owner;
        var mid = (members.find(function (x) { return x.name === m.owner; }) || {}).id;
        var memberHasLocks = hasAnyLock(seasonData, selCat, m.owner);
+       var memberPaywalled = isPaywalled(seasonData, mid);
        return (
         <div key={m.owner}>
          <div onClick={function () {
@@ -576,14 +663,15 @@ export default function Scoreboard({ seasonData, surface }) {
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {m.owner}
             {memberHasLocks && <LockIndicator note="Commissioner has locked some values for this entry" />}
+            {memberPaywalled && <span style={{ marginLeft: 4, fontSize: 10 }}>{"🔒"}</span>}
            </div>
            <div style={{ fontSize: isMobile ? 10 : 11, color: theme.dim,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.pick}</div>
           </div>
           {isMobile ? (
            <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc" }}>{m.total}</div>
-            <div style={{ fontSize: 9, color: "#64748b" }}>
+            <div style={Object.assign({ fontSize: 17, fontWeight: 800, color: "#f8fafc" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.total}</div>
+            <div style={Object.assign({ fontSize: 9, color: "#64748b" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>
              {m.base}b {m.bonus > 0 ? "+" + m.bonus + "bn" : ""}
             </div>
            </div>
@@ -591,17 +679,17 @@ export default function Scoreboard({ seasonData, surface }) {
            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <div style={{ textAlign: "center" }}>
              <div style={{ fontSize: 9, color: "#64748b" }}>Base</div>
-             <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8" }}>{m.base}</div>
+             <div style={Object.assign({ fontSize: 13, fontWeight: 700, color: "#94a3b8" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.base}</div>
             </div>
             <div style={{ textAlign: "center" }}>
              <div style={{ fontSize: 9, color: "#64748b" }}>Bonus</div>
-             <div style={{ fontSize: 13, fontWeight: 700, color: m.bonus > 0 ? "#22c55e" : "#475569" }}>
+             <div style={Object.assign({ fontSize: 13, fontWeight: 700, color: m.bonus > 0 ? "#22c55e" : "#475569" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>
               {m.bonus > 0 ? "+" + m.bonus : "0"}
              </div>
             </div>
             <div style={{ textAlign: "center" }}>
              <div style={{ fontSize: 9, color: "#64748b" }}>Total</div>
-             <div style={{ fontSize: 17, fontWeight: 800, color: "#f8fafc" }}>{m.total}</div>
+             <div style={Object.assign({ fontSize: 17, fontWeight: 800, color: "#f8fafc" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.total}</div>
             </div>
            </div>
           )}
@@ -618,6 +706,17 @@ export default function Scoreboard({ seasonData, surface }) {
        {CATEGORY_BONUS_RULES[selCat]}
       </div>
      </div>
+    </div>
+   )}
+
+   {toast && (
+    <div style={{
+     position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
+     background: "#1e293b", border: "1px solid #eab308", borderRadius: 10,
+     padding: "10px 18px", fontSize: 13, fontWeight: 700, color: "#fef9c3",
+     boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 1000, whiteSpace: "nowrap",
+    }}>
+     {toast}
     </div>
    )}
   </div>

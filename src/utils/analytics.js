@@ -172,4 +172,7 @@ export const EVENTS = {
   DETAIL_ROW_DELETED: "detail_row_deleted",
   SETTINGS_CHANGES_SAVED: "settings_changes_saved",
   SETTINGS_CHANGES_RESET: "settings_changes_reset",
+
+  // Paywall (commissioner-set, PayPal-gated)
+  PAYWALL_PAYMENT_COMPLETED: "paywall_payment_completed",
 };
