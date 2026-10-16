@@ -1,6 +1,24 @@
 // Fantasy Life Hub — Shared helper functions
 
 /**
+* Race a promise against a timeout, resolving to `fallbackValue` if the
+* promise hasn't settled in time instead of waiting forever.
+*
+* Needed because the Supabase client can internally hang (not reject —
+* genuinely never settle) while it waits to resolve/refresh a session
+* before firing a request, a known class of issue in the SDK. Without
+* this, that hang blocks even unrelated public reads (season data), with
+* no error to catch — the UI just spins. Public scoreboard reads don't
+* depend on auth at all, so falling back on timeout is always safe here.
+*/
+export function withTimeout(promise, ms, fallbackValue) {
+ return Promise.race([
+  promise,
+  new Promise((resolve) => setTimeout(() => resolve(fallbackValue), ms)),
+ ]);
+}
+
+/**
 * Generate snake draft order.
 * Odd rounds reverse the member order.
 * @param {Array} members - Draft-ordered member array

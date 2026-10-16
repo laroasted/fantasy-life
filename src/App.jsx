@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
+import { withTimeout } from "./utils/helpers";
 import {
   supabase,
   storageGet,
@@ -73,7 +74,11 @@ export default function App() {
  
     async function loadAuth() {
       try {
-        const { session, role } = await getCommissionerSession();
+        // Same Supabase-hang risk as loadSeason() — a session check that
+        // never settles must not leave authReady stuck false forever.
+        const result = await withTimeout(getCommissionerSession(), 10000, null);
+        if (!result) throw new Error("getCommissionerSession timed out");
+        const { session, role } = result;
         if (!isMounted) return;
         setCommissionerSession(session);
         setCommissionerRole(role);
@@ -107,7 +112,9 @@ export default function App() {
         return;
       }
       try {
-        const { role } = await getCommissionerSession();
+        const result = await withTimeout(getCommissionerSession(), 10000, null);
+        if (!result) throw new Error("getCommissionerSession timed out");
+        const { role } = result;
         if (!isMounted) return;
         setCommissionerRole(role);
       } catch (e) {
@@ -147,7 +154,10 @@ export default function App() {
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
-    let active = await fetchSeasonFromSupabase();
+    // 10s timeout: a signed-in Supabase client can internally hang while
+    // resolving the session before firing this request (SDK quirk) — fall
+    // back exactly like an outright failure rather than spinning forever.
+    let active = await withTimeout(fetchSeasonFromSupabase(), 10000, null);
     let source = "supabase";
     if (!active) {
       console.warn("Supabase fetch failed, trying localStorage...");
@@ -177,14 +187,16 @@ export default function App() {
       await loadSeason();
       let archived = [];
       try {
-        const { data: archivedMeta } = await supabase
-          .from('seasons')
-          .select('year')
-          .eq('status', 'archived')
-          .order('year', { ascending: false });
+        // Same hang risk as loadSeason() above — same 10s safety net.
+        const archivedResult = await withTimeout(
+          supabase.from('seasons').select('year').eq('status', 'archived').order('year', { ascending: false }),
+          10000,
+          { data: null }
+        );
+        const archivedMeta = archivedResult.data;
         if (archivedMeta && archivedMeta.length > 0) {
           const fullSeasons = await Promise.all(
-            archivedMeta.map(s => fetchSeasonFromSupabase(s.year))
+            archivedMeta.map(s => withTimeout(fetchSeasonFromSupabase(s.year), 10000, null))
           );
           archived = fullSeasons.filter(Boolean);
         }
