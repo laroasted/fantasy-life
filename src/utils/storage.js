@@ -68,24 +68,24 @@ function isConfiguredCommissionerEmail(email) {
  return !!normalized && COMMISSIONER_EMAILS.includes(normalized);
 }
 
-export async function signInCommissioner(email) {
- const normalized = normalizeEmail(email);
- if (!normalized) {
- return { ok: false, error: 'Enter an email address to receive your magic link.' };
- }
- if (COMMISSIONER_EMAILS.length > 0 && !isConfiguredCommissionerEmail(normalized)) {
- return { ok: false, error: 'That email is not on the commissioner allow-list.' };
- }
-
- const { error } = await supabase.auth.signInWithOtp({
- email: normalized,
+/**
+* Start Google OAuth sign-in. Supabase handles the Google consent screen
+* and callback entirely — this just kicks off the redirect. There's no
+* allow-list pre-check here (unlike the old magic-link flow) because we
+* don't know which Google account the user will pick until they're back;
+* getCommissionerRole() still gates actual commissioner privileges after
+* sign-in, so an unauthorized Google account simply doesn't get the role.
+*/
+export async function signInWithGoogle() {
+ const { error } = await supabase.auth.signInWithOAuth({
+ provider: 'google',
  options: {
-  emailRedirectTo: window.location.origin,
+  redirectTo: window.location.origin,
  },
  });
 
  if (error) {
- return { ok: false, error: error.message || 'Unable to send sign-in link.' };
+ return { ok: false, error: error.message || 'Unable to start Google sign-in.' };
  }
 
  return { ok: true };
