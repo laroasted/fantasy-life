@@ -23,6 +23,7 @@ import SeasonSettings from "./components/SeasonSettings";
 import Calendar from "./components/Calendar";
 import DraftRecap from "./components/DraftRecap";
 import Trends from "./components/Trends";
+import PrivacyPolicy from "./components/PrivacyPolicy";
 import {
   track,
   EVENTS,
@@ -487,6 +488,19 @@ export default function App() {
             commissionerEmail={commissionerSession?.user?.email || ""}
           />
         )}
+        {activeTab === "privacy" && <PrivacyPolicy />}
+      </div>
+
+      {/* ── Footer ── */}
+      <div style={{ textAlign: "center", padding: "16px 8px 24px" }}>
+        <button
+          onClick={() => setActiveTab("privacy")}
+          style={{
+            background: "none", border: "none", color: theme.mut,
+            fontSize: 11, cursor: "pointer", textDecoration: "underline",
+          }}>
+          Privacy Policy
+        </button>
       </div>
     </div>
   );
