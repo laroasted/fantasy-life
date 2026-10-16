@@ -82,10 +82,15 @@ export default function App() {
         if (session?.user?.email) setCommissionerEmail(session.user.email);
       } catch (e) {
         // A stale/corrupted stored session can make getSession() throw
-        // outright rather than return { error }. Don't let that leave the
-        // commissioner login UI permanently hidden — fall back to signed-out
-        // so the user can retry.
-        console.error("loadAuth failed:", e);
+        // outright rather than return { error }. Resetting React state alone
+        // isn't enough here — the broken token is still sitting in
+        // localStorage and supabase-js will keep trying (and failing) to use
+        // it on every future load, so this looks like a permanent lockout
+        // even though the UI "recovers." Purge it locally (no network
+        // round-trip needed — it's already broken) so the next load starts
+        // clean and a fresh magic link actually sticks.
+        console.error("loadAuth failed, clearing local session:", e);
+        try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
         if (!isMounted) return;
         setCommissionerSession(null);
         setCommissionerRole(null);
@@ -110,7 +115,8 @@ export default function App() {
         if (!isMounted) return;
         setCommissionerRole(role);
       } catch (e) {
-        console.error("Auth state change role lookup failed:", e);
+        console.error("Auth state change role lookup failed, clearing local session:", e);
+        try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
         if (!isMounted) return;
         setCommissionerRole(null);
       } finally {
