@@ -26,8 +26,20 @@ export function initAnalytics() {
       autocapture: false, // manual, deliberate events only
       track_pageview: false, // single-page tab-switcher — "tab_viewed" covers navigation
       cross_subdomain_cookie: false,
-      ignore_dnt: false, // respect the browser's Do Not Track setting
+      ignore_dnt: false, // respect the browser's Do Not Track setting — also governs session replay opt-out
       persistence: "localStorage",
+
+      // Session Replay. Free plan allows 10k replays/month, so 100% sampling
+      // is nowhere near quota for a ~12-person app. Left at the SDK's own
+      // default privacy posture (record_mask_all_text / record_mask_all_inputs
+      // both default true) rather than loosened — several commissioner-only
+      // screens render the signed-in email as plain text (not inside an
+      // <input>, e.g. the draft finalize modal and the Settings gate), so
+      // unmasking text globally would expose it in replays. See the Privacy
+      // section of the tracking doc / AGENTS.md before changing this.
+      record_sessions_percent: 100,
+      record_heatmap_data: true, // click / rage-click / dead-click capture; exempt from the plan's data allowance
+      record_network: true, // request timing + status only — no headers/bodies unless explicitly allowlisted
     });
     ready = true;
   } catch (e) {

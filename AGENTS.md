@@ -166,12 +166,42 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `settings_changes_saved` | settings | `mode`, `changes_count` |
 | `settings_changes_reset` | settings | `mode` |
 
+## Session Replay
+
+Enabled in `analytics.js`'s `mixpanel.init()` call: `record_sessions_percent: 100`
+(the free plan allows 10k replays/month — nowhere near quota for a ~12-person
+app), plus `record_heatmap_data: true` (click/rage-click/dead-click capture,
+exempt from the plan's data allowance) and `record_network: true` (request
+timing/status only, no headers or bodies unless explicitly allowlisted via
+`record_network_options`).
+
+**Masking is intentionally left at the SDK's own defaults**
+(`record_mask_all_text` / `record_mask_all_inputs` both default `true`) —
+do not set either to `false` without reading this first. Two spots in the
+UI render the commissioner's signed-in email as plain text, not inside an
+`<input>` (so the "always-masked input types" safety net doesn't cover
+them): the draft finalize confirmation modal (`DraftTool.jsx`) and the
+Settings commissioner gate (`SeasonSettings.jsx`). Unmasking text globally
+would expose that email in replays. If replays turn out too opaque to be
+useful (everything on-screen redacted to `****`), the fix is selective
+unmasking via `record_unmask_text_selector` targeted at specific safe
+containers (Scoreboard, Trends, Calendar, Draft Recap — all public,
+no-login-required data), not a global `record_mask_all_text: false`.
+
+No code changes elsewhere were needed — Session Replay is purely an
+`init()`-time config, independent of the `track()`/`identify()` calls
+already in place. It works for both anonymous and self-identified
+(`viewer_member_id`) sessions; replays link to Mixpanel's event data via
+the `$mp_replay_id` property automatically.
+
 ## Governance
 
 - No consent gate is implemented. This is a private ~12-person friend
   league, not a public product with known EU/California users — if that
   ever changes, add `opt_out_tracking_by_default: true` to `init()` in
   `analytics.js` and gate `opt_in_tracking()` behind explicit consent
-  before shipping to a wider audience.
+  before shipping to a wider audience. Session Replay follows the same
+  opt-out setting automatically (see Session Replay above) — no separate
+  consent mechanism to wire up.
 - Populate Lexicon descriptions for each event/property in the Mixpanel
   UI as they're reviewed — not yet done as of this file's creation.
