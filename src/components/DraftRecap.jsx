@@ -153,23 +153,29 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
         } catch (e) { console.error("DraftRecap: failed to read cache:", e); }
         track(EVENTS.DATA_FALLBACK_USED, {
           surface: "recap",
-          fallback_level: cached ? "local" : (board ? "hardcoded" : "none"),
+          fallback_level: (cached && board) ? "local" : "none",
           reason: "supabase_fetch_failed",
         });
         if (!stillCurrent()) return;
-        if (!board) {
-          // No live data, no cache, and no hardcoded board for this specific
-          // year — genuinely nothing to show. This is a real, actionable
-          // failure ("couldn't load, try again"), not "no draft has been
-          // finalized yet" — those used to look identical, which was
-          // actively misleading on a season that definitely has a draft on
-          // record, we just couldn't reach it this time.
+        // A board with no cached picks/members to pair it with would render
+        // every cell as "no pick made" — indistinguishable from a season
+        // that genuinely has no picks yet, when the real problem is just
+        // that we couldn't reach this season's actual picks. That's worse
+        // than the no-board case below: at least that one is honest about
+        // having nothing to show. Only take the stale-cache path when
+        // there's an actual snapshot to show instead of live data.
+        if (!board || !cached) {
+          // No live data and nothing usable to fall back to — a real,
+          // actionable failure ("couldn't load, try again"), not "no draft
+          // has been finalized yet". Those used to look identical, which
+          // was actively misleading on a season that definitely has a
+          // draft on record, we just couldn't reach it this time.
           setError((pErr || mErr).message);
           setLoading(false);
           return;
         }
-        setPicks(cached?.picks || []);
-        setMembers(cached?.members || []);
+        setPicks(cached.picks || []);
+        setMembers(cached.members || []);
         setDraftBoard(board);
         setIsStale(true);
         setLoading(false);
