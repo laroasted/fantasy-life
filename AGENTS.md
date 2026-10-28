@@ -56,8 +56,8 @@ the long-form version; this file is the in-repo quick reference.
   property, never baked into the event name.
 - **Reused events over near-duplicates.** The same interaction pattern
   (category-pill filtering, row expansion) fires one shared event with a
-  `surface` property (`scoreboard` \| `trends` \| `settings` \| `recap` \|
-  `history`) rather than a separate event per component.
+  `surface` property (`scoreboard` \| `trends` \| `settings` \| `recap`)
+  rather than a separate event per component.
 - **No PII beyond what's already public in the UI.** Free text a user
   types (bonus notes, custom draft picks, search filters) is never sent as
   an event property. League member names ARE sent — they're public
@@ -100,10 +100,11 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | --- | --- | --- |
 | `tab_viewed` | app-wide | `tab_name`, `previous_tab`, `is_mobile` |
 | `category_filter_changed` | scoreboard, trends, settings, recap | `surface`, `category`, `previous_category` |
-| `member_row_expanded` | scoreboard, history | `surface`, `category`, `member_name` |
+| `member_row_expanded` | scoreboard | `surface`, `category`, `member_name` |
 | `data_fallback_used` | season, calendar | `surface`, `fallback_level`, `reason` |
 | `app_loaded` | app | `data_source`, `is_mobile`, `archived_season_count` |
 | `season_loaded` | app | `data_source`, `year`, `is_refresh` |
+| `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms` |
 | `overall_category_tile_clicked` | scoreboard | `category` |
 | `trends_view_toggled` | trends | `view` |
 | `trends_series_toggled` | trends | `member_name`, `is_hidden` |
@@ -114,7 +115,6 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `draft_recap_view_changed` | recap | `view` |
 | `draft_recap_member_selected` | recap | `member_name` |
 | `draft_recap_round_filtered` | recap | `round` |
-| `archived_season_expanded` | history | `season_year` |
 | `draft_member_added` | draft | `member_count_after` |
 | `draft_member_removed` | draft | `member_count_after` |
 | `draft_order_generated` | draft | `method`, `member_count` |

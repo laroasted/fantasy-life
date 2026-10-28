@@ -5,7 +5,6 @@ import {
   TrendingUp,
   Calendar as CalendarIcon,
   ClipboardList,
-  Landmark,
   Target,
   Settings as SettingsIcon,
 } from "lucide-react";
@@ -27,7 +26,6 @@ import {
   getConfiguredCommissionerEmails,
 } from "./utils/storage";
 import Scoreboard from "./components/Scoreboard";
-import SeasonHistory from "./components/SeasonHistory";
 import DraftTool from "./components/DraftTool";
 import SeasonSettings from "./components/SeasonSettings";
 import Calendar from "./components/Calendar";
@@ -50,7 +48,6 @@ const TABS = [
   { id: "trends",     label: "Trends",     Icon: TrendingUp },
   { id: "calendar",   label: "Calendar",   Icon: CalendarIcon },
   { id: "recap",      label: "Recap",      Icon: ClipboardList },
-  { id: "history",    label: "History",    Icon: Landmark },
   { id: "draft",      label: "Draft",      Icon: Target },
   { id: "settings",   label: "Settings",   Icon: SettingsIcon },
 ];
@@ -246,7 +243,33 @@ export default function App() {
     })();
   }, [loadSeason]);
  
-  const handleRefresh = useCallback(async () => { await loadSeason(true); }, [loadSeason]);
+  // The lightweight loadSeason(true) refetch below only re-reads whatever
+  // is already in Supabase — it doesn't recompute anything. Hitting
+  // /api/refresh-all first runs every data-updating cron job on demand
+  // (and snapshot-scores after them), so Refresh actually pulls fresh
+  // numbers instead of just re-displaying the same ones. Best-effort: if
+  // that call fails outright (network hiccup, a cold function timing out),
+  // still fall through to the plain refetch rather than leaving the button
+  // stuck or the page showing nothing new.
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    const startedAt = Date.now();
+    let jobsSucceeded = 0, jobsFailed = 0, success = false;
+    try {
+      const res = await fetch("/api/refresh-all", { method: "POST" });
+      const body = await res.json().catch(() => null);
+      const jobs = (body && body.jobs) || [];
+      jobsSucceeded = jobs.filter((j) => j.ok).length;
+      jobsFailed = jobs.length - jobsSucceeded;
+      success = !!(body && body.success);
+    } catch (e) {
+      console.warn("Full refresh (crons) failed, falling back to a plain data refetch:", e);
+    }
+    track(EVENTS.DATA_REFRESH_TRIGGERED, {
+      success, jobs_succeeded: jobsSucceeded, jobs_failed: jobsFailed, duration_ms: Date.now() - startedAt,
+    });
+    await loadSeason(true);
+  }, [loadSeason]);
  
   const handleFinalize = useCallback(async (newSeason) => {
     const newArchived = [activeSeason, ...archivedSeasons].filter(Boolean);
@@ -403,8 +426,7 @@ export default function App() {
     ? new Date(viewingSeasonData.draftDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
     : "date not set";
   var viewingYear = selectedYear !== null ? selectedYear : (activeSeason && activeSeason.year) || new Date().getFullYear();
-  var memberCount = (viewingSeasonData && viewingSeasonData.memberCount) || 12;
- 
+
   return (
     <div style={{ background: theme.bg, minHeight: "100vh", color: theme.txt,
       fontFamily: "Inter, system-ui, sans-serif" }}>
@@ -424,9 +446,6 @@ export default function App() {
               <h1 style={{
                 fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0, color: "#FAFAFA",
               }}>Fantasy Life</h1>
-              <p style={{ color: theme.dim, margin: 0, fontSize: isMobile ? 10 : 12 }}>
-                {memberCount} Members · 15 Categories
-              </p>
             </div>
             {/* Commissioner auth only matters on Draft/Settings — keeping it off the
                 header on every other tab gives the primary surfaces (Scoreboard
@@ -577,14 +596,8 @@ export default function App() {
         {activeTab === "scoreboard" && (
           <div>
             <div style={{ textAlign: "center", marginBottom: 20, maxWidth: 760, margin: "0 auto 20px" }}>
-              <h2 style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800, margin: 0, color: "#f8fafc" }}>
-                {viewingYear} Season
-              </h2>
-              <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: "4px 0 0" }}>
-                {draftDateStr} through {viewingYear + 1} Academy Awards · {memberCount} members
-              </p>
-              <p style={{ fontSize: isMobile ? 10 : 11, color: theme.mut, margin: "4px 0 0" }}>
-                Ranked by total points — base points from each pick's real-world result, plus bonus points, across 15 categories
+              <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: 0 }}>
+                {draftDateStr} through {viewingYear + 1} Academy Awards
               </p>
               {lastUpdated && isViewingActive && (
                 <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
@@ -611,7 +624,6 @@ export default function App() {
         {activeTab === "recap" && (
           <DraftRecap seasonYear={viewingYear} />
         )}
-        {activeTab === "history" && <SeasonHistory archivedSeasons={archivedSeasons} />}
         {activeTab === "draft" && (
           <DraftTool
             onFinalize={handleFinalize}

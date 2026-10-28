@@ -116,6 +116,7 @@ export const EVENTS = {
   // App lifecycle
   APP_LOADED: "app_loaded",
   SEASON_LOADED: "season_loaded",
+  DATA_REFRESH_TRIGGERED: "data_refresh_triggered",
 
   // Scoreboard
   OVERALL_CATEGORY_TILE_CLICKED: "overall_category_tile_clicked",
@@ -134,9 +135,6 @@ export const EVENTS = {
   DRAFT_RECAP_VIEW_CHANGED: "draft_recap_view_changed",
   DRAFT_RECAP_MEMBER_SELECTED: "draft_recap_member_selected",
   DRAFT_RECAP_ROUND_FILTERED: "draft_recap_round_filtered",
-
-  // Season History
-  ARCHIVED_SEASON_EXPANDED: "archived_season_expanded",
 
   // Draft Tool — setup
   DRAFT_MEMBER_ADDED: "draft_member_added",
