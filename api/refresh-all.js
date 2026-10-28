@@ -14,25 +14,19 @@
  *
  * No auth on this endpoint itself: regular visitors are expected to use
  * it, same as the cron jobs it wraps are expected to run on a schedule.
- * Each job is capped at PER_JOB_TIMEOUT_MS so one slow external API
- * (billboard scraping has retries/backoff) can't eat the whole request —
- * a timed-out job is reported as such rather than blocking the others'
- * results from coming back.
+ *
+ * Each job is awaited to GENUINE completion before snapshot-scores runs —
+ * an earlier version raced each job against a per-job timeout and moved on
+ * regardless, but that let a timed-out job's write (billboard scraping has
+ * retries/backoff and can run long) land after snapshot-scores had already
+ * read the picks table, recording a stale pre-update total as that day's
+ * trend point. Vercel's own function maxDuration (see vercel.json) is the
+ * only timeout that applies here now; if something genuinely hangs, the
+ * whole function is killed rather than silently snapshotting half-updated
+ * data.
  */
 
 const CRON_SECRET = process.env.CRON_SECRET;
-const PER_JOB_TIMEOUT_MS = 25000;
-
-function withTimeout(promise, ms, fallbackValue) {
-  var timer;
-  var timeout = new Promise(function (resolve) {
-    timer = setTimeout(function () { resolve(fallbackValue); }, ms);
-  });
-  return Promise.race([promise, timeout]).then(
-    function (v) { clearTimeout(timer); return v; },
-    function (e) { clearTimeout(timer); throw e; }
-  );
-}
 
 async function runJob(name, modulePath) {
   var startedAt = Date.now();
@@ -44,10 +38,7 @@ async function runJob(name, modulePath) {
       status: function (code) { captured.statusCode = code; return fakeRes; },
       json: function (body) { captured.body = body; return fakeRes; },
     };
-    var outcome = await withTimeout(Promise.resolve(jobHandler(fakeReq, fakeRes)), PER_JOB_TIMEOUT_MS, 'timeout');
-    if (outcome === 'timeout') {
-      return { name: name, ok: false, status: 'timeout', ms: Date.now() - startedAt };
-    }
+    await jobHandler(fakeReq, fakeRes);
     return { name: name, ok: captured.statusCode < 400, status: captured.statusCode, body: captured.body, ms: Date.now() - startedAt };
   } catch (e) {
     return { name: name, ok: false, status: 'error', error: e.message, ms: Date.now() - startedAt };
@@ -83,7 +74,7 @@ module.exports = async function handler(req, res) {
 
   return res.status(200).json({
     success: allOk,
-    message: allOk ? 'All jobs completed' : 'Some jobs failed or timed out — see jobs[] for details',
+    message: allOk ? 'All jobs completed' : 'Some jobs failed — see jobs[] for details',
     timestamp: new Date().toISOString(),
     jobs: jobs,
   });
