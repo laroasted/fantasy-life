@@ -44,18 +44,6 @@ export function generateSnakeOrder(members, totalRounds) {
 }
 
 /**
-* Medal/rank display for scoreboard rows.
-* @param {number} index - 0-based rank
-* @returns {string} Medal emoji or rank number
-*/
-export function medalDisplay(index) {
- if (index === 0) return "🥇";
- if (index === 1) return "🥈";
- if (index === 2) return "🥉";
- return `${index + 1}`;
-}
-
-/**
 * Background for scoreboard rows — flat, every rank the same surface.
 * Rank is signaled by rowBorder() instead, not by a separate fill color.
 * @returns {string} CSS background value
@@ -66,12 +54,15 @@ export function rowBackground() {
 
 /**
 * Border color for scoreboard rows.
-* First place gets the brand accent; everyone else gets the standard border.
-* @param {number} index - 0-based rank
+* First place (rank 1 — ties included) gets the brand accent; everyone
+* else gets the standard border.
+* @param {number} rank - 1-based competition rank (ties share a rank; see
+*  Scoreboard.jsx's withRanks()), NOT a raw array index — two members tied
+*  for first must both read as rank 1 here.
 * @returns {string} CSS border color
 */
-export function rowBorder(index) {
- return index === 0 ? theme.acc : theme.bdr;
+export function rowBorder(rank) {
+ return rank === 1 ? theme.acc : theme.bdr;
 }
 
 /**
@@ -98,14 +89,14 @@ export const expandedFooterStyle = {
 
 /**
 * Wrapper style for expanded detail panels.
-* @param {number} index - Row rank (for border color)
+* @param {number} rank - 1-based competition rank (see rowBorder())
 * @returns {object} Style object
 */
-export function expandedWrapperStyle(index) {
+export function expandedWrapperStyle(rank) {
  return {
   borderRadius: "0 0 10px 10px",
   background: theme.card,
-  border: `1px solid ${rowBorder(index)}`,
+  border: `1px solid ${rowBorder(rank)}`,
   borderTop: `1px solid ${theme.bdr}`,
   overflow: "hidden",
  };

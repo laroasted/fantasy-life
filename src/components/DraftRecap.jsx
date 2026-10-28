@@ -448,7 +448,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
       {/* ── View Tabs ── */}
       <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
         <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "draft" }); setView("draft"); }} style={pill(view === "draft")}>📜 Draft Order</button>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "member" }); setView("member"); }} style={pill(view === "member")}>🪪 Report Card</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "member" }); setView("member"); }} style={pill(view === "member")}>🪪 By Team</button>
         <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "category" }); setView("category"); }} style={pill(view === "category")}>📊 By Category</button>
         <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "value" }); setView("value"); }} style={pill(view === "value")}>💎 Value</button>
       </div>
@@ -635,19 +635,6 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
         <div>
           <div style={{ textAlign: "center", marginBottom: 16 }}>
             <div style={{ fontSize: 24, fontWeight: 800 }}>💎 Steals & Busts</div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8,
-              padding: "3px 10px", borderRadius: 20, background: theme.accSoft, color: theme.acc,
-              fontSize: 10, fontWeight: 700 }}>
-              <AlertTriangle size={11} />
-              Mixes scoring scales across categories — a fun approximation, not a precise stat
-            </div>
-            <div style={{ fontSize: 12, color: theme.dim, marginTop: 8, maxWidth: 480, margin: "8px auto 0" }}>
-              Ranks each of the {valueBoard.length} scored picks two ways — by draft
-              order and by points — and compares the two ranks. A big positive value
-              means a pick massively outscored the others drafted around the same
-              time; a big negative value means it underperformed. Only scored picks
-              count on both sides, so this shifts as more of the season gets scored.
-            </div>
           </div>
 
           {valueBoard.length === 0 ? (
