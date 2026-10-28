@@ -163,7 +163,7 @@ export default function Calendar({ seasonYear }) {
   const activeRef = useRef(null);
   const [didScroll, setDidScroll] = useState(false);
  
-  const yr = seasonYear || 2026;
+  const yr = seasonYear || new Date().getFullYear();
  
   // ── Fetch from Supabase, fall back to hardcoded ──
   useEffect(() => {

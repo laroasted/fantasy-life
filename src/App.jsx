@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   Trophy,
   BarChart3,
@@ -320,7 +320,50 @@ export default function App() {
     if (!result.ok) setAuthError(result.error || "Unable to sign out.");
     setAuthLoading(false);
   }, []);
- 
+
+  // ── Season/year picker ──
+  // Scoreboard, Trends, Calendar, and Recap can all show any season on
+  // record, not just whichever one is currently active — Settings stays
+  // tied to the active season always (editing history is a separate,
+  // riskier feature nobody asked for yet).
+  const [selectedYear, setSelectedYear] = useState(null);
+
+  // Defaults to the active season on first load; a shared "?year=2025"
+  // link overrides that default so a specific season view is linkable.
+  useEffect(() => {
+    if (selectedYear !== null || !activeSeason) return;
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = parseInt(params.get("year"), 10);
+    setSelectedYear(!isNaN(fromUrl) ? fromUrl : activeSeason.year);
+  }, [activeSeason, selectedYear]);
+
+  useEffect(() => {
+    if (selectedYear === null || !activeSeason) return;
+    const params = new URLSearchParams(window.location.search);
+    if (selectedYear === activeSeason.year) params.delete("year");
+    else params.set("year", String(selectedYear));
+    const search = params.toString();
+    const newUrl = window.location.pathname + (search ? "?" + search : "") + window.location.hash;
+    window.history.replaceState(null, "", newUrl);
+  }, [selectedYear, activeSeason]);
+
+  const availableSeasons = useMemo(() => {
+    if (!activeSeason) return [];
+    const list = [{ year: activeSeason.year, isActive: true }];
+    archivedSeasons.forEach((s) => { if (s && s.year) list.push({ year: s.year, isActive: false }); });
+    return list.sort((a, b) => b.year - a.year);
+  }, [activeSeason, archivedSeasons]);
+
+  const isViewingActive = !activeSeason || selectedYear === null || selectedYear === activeSeason.year;
+
+  // The full season object for whatever year is selected — used by
+  // Scoreboard and Trends, which both need more than just the year number.
+  const viewingSeasonData = useMemo(() => {
+    if (!activeSeason) return null;
+    if (isViewingActive) return activeSeason;
+    return archivedSeasons.find((s) => s && s.year === selectedYear) || activeSeason;
+  }, [activeSeason, archivedSeasons, selectedYear, isViewingActive]);
+
   if (!loaded) {
     return (
       <div style={{ background: theme.bg, minHeight: "100vh", display: "flex", flexDirection: "column",
@@ -336,11 +379,11 @@ export default function App() {
     );
   }
  
-  var draftDateStr = activeSeason && activeSeason.draftDate
-    ? new Date(activeSeason.draftDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-    : "March 15, 2026";
-  var year = (activeSeason && activeSeason.year) || 2026;
-  var memberCount = (activeSeason && activeSeason.memberCount) || 12;
+  var draftDateStr = viewingSeasonData && viewingSeasonData.draftDate
+    ? new Date(viewingSeasonData.draftDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+    : "date not set";
+  var viewingYear = selectedYear !== null ? selectedYear : (activeSeason && activeSeason.year) || new Date().getFullYear();
+  var memberCount = (viewingSeasonData && viewingSeasonData.memberCount) || 12;
  
   return (
     <div style={{ background: theme.bg, minHeight: "100vh", color: theme.txt,
@@ -491,19 +534,39 @@ export default function App() {
 
       {/* ── Tab Content ── */}
       <div style={{ padding: isMobile ? "12px 8px" : "20px 16px" }}>
+        {["scoreboard", "trends", "calendar", "recap"].includes(activeTab) && availableSeasons.length > 1 && (
+          <div style={{ maxWidth: 760, margin: "0 auto 14px", display: "flex", alignItems: "center",
+            justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+            <select value={viewingYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+              style={{ background: theme.card, border: "1px solid " + theme.bdr, borderRadius: 8,
+                padding: "6px 10px", color: theme.txt, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              {availableSeasons.map((s) => (
+                <option key={s.year} value={s.year}>{s.year}{s.isActive ? " (current)" : ""}</option>
+              ))}
+            </select>
+            {!isViewingActive && (
+              <button onClick={() => setSelectedYear(activeSeason.year)}
+                style={{ background: "none", border: "none", color: theme.acc, cursor: "pointer",
+                  fontSize: 11, fontWeight: 700, textDecoration: "underline", padding: 0 }}>
+                Back to current season
+              </button>
+            )}
+          </div>
+        )}
         {activeTab === "scoreboard" && (
           <div>
             <div style={{ textAlign: "center", marginBottom: 20, maxWidth: 760, margin: "0 auto 20px" }}>
               <h2 style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800, margin: 0, color: "#f8fafc" }}>
-                {year} Season
+                {viewingYear} Season
               </h2>
               <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: "4px 0 0" }}>
-                {draftDateStr} through {year + 1} Academy Awards · {memberCount} members
+                {draftDateStr} through {viewingYear + 1} Academy Awards · {memberCount} members
               </p>
               <p style={{ fontSize: isMobile ? 10 : 11, color: theme.mut, margin: "4px 0 0" }}>
                 Ranked by total points — base points from each pick's real-world result, plus bonus points, across 15 categories
               </p>
-              {lastUpdated && (
+              {lastUpdated && isViewingActive && (
                 <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
                   <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
@@ -513,20 +576,20 @@ export default function App() {
                 </p>
               )}
             </div>
-            <Scoreboard seasonData={activeSeason} onUnlockPaywall={handlePaywallUnlock} />
+            <Scoreboard seasonData={viewingSeasonData} onUnlockPaywall={isViewingActive ? handlePaywallUnlock : undefined} />
             <div style={{ maxWidth: 760, margin: "20px auto 0" }}>
               <AdUnit slot="9806940854" />
             </div>
           </div>
         )}
         {activeTab === "trends" && (
-          <Trends seasonData={activeSeason} />
+          <Trends seasonData={viewingSeasonData} />
         )}
         {activeTab === "calendar" && (
-          <Calendar seasonYear={year} />
+          <Calendar seasonYear={viewingYear} />
         )}
         {activeTab === "recap" && (
-          <DraftRecap seasonYear={year} />
+          <DraftRecap seasonYear={viewingYear} />
         )}
         {activeTab === "history" && <SeasonHistory archivedSeasons={archivedSeasons} />}
         {activeTab === "draft" && (

@@ -3,20 +3,29 @@
 // Three sub-views: Draft Order, Member Report Card, Category Breakdown.
 //
 // Draft board data is read from the `draft_board` JSONB column on the
-// `seasons` table. The 2026 board is also hardcoded as a fallback.
-// Future seasons auto-populate when DraftTool saves on finalize.
- 
+// `seasons` table. DraftTool.jsx's finalize flow writes that column itself
+// for whatever year the commissioner types in — nothing here needs a yearly
+// code change for a new season to work.
+
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { ClipboardList, AlertTriangle } from "lucide-react";
 import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
- 
+
 // ═══════════════════════════════════════════════════════════════════
-// HARDCODED FALLBACK — only used if seasons.draft_board is null
+// HARDCODED FALLBACK — only used if seasons.draft_board is null AND the
+// load() fetch itself failed with nothing cached locally either (see
+// load() below). This is NOT meant to be extended every year — nobody
+// can predict a future draft's actual order in advance, so there is
+// nothing to "add" here for 2027+. The real fallback path for any other
+// year is Supabase (already year-keyed everywhere) falling back to the
+// per-year localStorage cache load() maintains. Only touch this object
+// to pre-seed a specific year's board for a known reason, not as routine
+// yearly maintenance.
 // ═══════════════════════════════════════════════════════════════════
- 
+
 const FALLBACK_BOARDS = {
   2026: {
     memberOrder: ["jordan","jack","larosa","marsh","alan","dhruv","danny","mike","auzy","adam","evan","scott"],
@@ -92,7 +101,7 @@ const ROUND_COLORS = [
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════
  
-export default function DraftRecap({ seasonYear = 2026 }) {
+export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   const [view, setView] = useState("draft");
   const [selMember, setSelMember] = useState(null);
   const [selCat, setSelCat] = useState("NFL");
