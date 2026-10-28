@@ -1,4 +1,5 @@
 // Fantasy Life Hub — Shared helper functions
+import { theme } from "../constants/theme";
 
 /**
 * Race a promise against a timeout, resolving to `fallbackValue` if the
@@ -55,25 +56,22 @@ export function medalDisplay(index) {
 }
 
 /**
-* Background gradient for scoreboard rows.
-* First place gets a special blue gradient.
-* @param {number} index - 0-based rank
+* Background for scoreboard rows — flat, every rank the same surface.
+* Rank is signaled by rowBorder() instead, not by a separate fill color.
 * @returns {string} CSS background value
 */
-export function rowBackground(index) {
- return index === 0
-  ? "linear-gradient(135deg, #1e3a5f, #1e293b)"
-  : "#1e293b";
+export function rowBackground() {
+ return theme.card;
 }
 
 /**
 * Border color for scoreboard rows.
-* First place gets blue accent.
+* First place gets the brand accent; everyone else gets the standard border.
 * @param {number} index - 0-based rank
 * @returns {string} CSS border color
 */
 export function rowBorder(index) {
- return index === 0 ? "#3b82f6" : "#334155";
+ return index === 0 ? theme.acc : theme.bdr;
 }
 
 /**
@@ -81,10 +79,10 @@ export function rowBorder(index) {
 */
 export const expandedHeaderStyle = {
  padding: "8px 12px",
- borderBottom: "1px solid #334155",
- background: "rgba(51,65,85,0.15)",
+ borderBottom: `1px solid ${theme.bdr}`,
+ background: "rgba(255,255,255,0.03)",
  fontSize: 11,
- color: "#94a3b8",
+ color: theme.dim,
 };
 
 /**
@@ -92,8 +90,8 @@ export const expandedHeaderStyle = {
 */
 export const expandedFooterStyle = {
  padding: "8px 12px",
- borderTop: "1px solid #334155",
- background: "rgba(51,65,85,0.2)",
+ borderTop: `1px solid ${theme.bdr}`,
+ background: "rgba(255,255,255,0.045)",
  fontSize: 11,
  color: "#cbd5e1",
 };
@@ -106,9 +104,9 @@ export const expandedFooterStyle = {
 export function expandedWrapperStyle(index) {
  return {
   borderRadius: "0 0 10px 10px",
-  background: "#1e293b",
+  background: theme.card,
   border: `1px solid ${rowBorder(index)}`,
-  borderTop: "1px solid #334155",
+  borderTop: `1px solid ${theme.bdr}`,
   overflow: "hidden",
  };
 }

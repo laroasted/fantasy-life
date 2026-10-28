@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { Lock } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme } from "../constants/theme";
@@ -15,11 +16,11 @@ function LockIndicator({ note }) {
  return (
   <span style={{ position: "relative", display: "inline-flex", alignItems: "center", marginLeft: 4 }}
    onMouseEnter={function () { setHover(true); }} onMouseLeave={function () { setHover(false); }}>
-   <span style={{ fontSize: 10, cursor: "help" }}>{"\uD83D\uDD12"}</span>
+   <Lock size={10} color={theme.yel} style={{ cursor: "help" }} />
    {hover && (
     <span style={{
      position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
-     background: "#1e293b", border: "1px solid #eab308", borderRadius: 6,
+     background: theme.card, border: "1px solid #eab308", borderRadius: 6,
      padding: "6px 10px", fontSize: 10, color: "#fef9c3", whiteSpace: "nowrap",
      zIndex: 999, pointerEvents: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
     }}>
@@ -85,13 +86,13 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
   return (
    <div style={{ padding: isMobile ? "10px 8px" : "12px 12px" }}>
     <div style={{ textAlign: "center", marginBottom: 10 }}>
-     <div style={{ fontSize: 22, marginBottom: 4 }}>{"🔒"}</div>
+     <div style={{ marginBottom: 4, display: "flex", justifyContent: "center" }}><Lock size={22} color={theme.yel} /></div>
      <div style={{ fontSize: 12, color: "#fef9c3", fontWeight: 700 }}>{message}</div>
     </div>
     <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)", gap: 4, marginBottom: 14 }}>
      {CATEGORY_ORDER.map(function (k) {
       return (
-       <div key={k} style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", background: "rgba(51,65,85,0.3)" }}>
+       <div key={k} style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", background: "rgba(255,255,255,0.06)" }}>
         <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
         <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700, color: "#e2e8f0" }}>{"██"}</div>
        </div>
@@ -182,8 +183,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  
   if (!d) {
    return (
-    <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: "#1e293b",
-     border: "1px solid " + rowBorder(idx), borderTop: "1px solid #334155", fontSize: 12, color: "#cbd5e1" }}>
+    <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: theme.card,
+     border: "1px solid " + rowBorder(idx), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
      Base: {m.base} + Bonus: {m.bonus} = <b style={{ color: "#f8fafc" }}>{m.total} pts</b>
      {bonusNoteDisplay(d)}
     </div>
@@ -207,7 +208,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr 50px 40px" : "1fr 80px 70px 40px",
           gap: 4, alignItems: "center", padding: "4px 0",
-          borderBottom: ri === d.rounds.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
+          borderBottom: ri === d.rounds.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11,
          }}>
           <div>
            <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{r.round}</span>
@@ -218,7 +219,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           {!isMobile && <span style={{ color: "#94a3b8", fontSize: 10 }}>{r.opponent}</span>}
           <div style={{ textAlign: "center" }}>
            <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700,
-            background: r.result === "Won" ? "rgba(34,197,94,0.2)" : r.result === "Lost" ? "rgba(239,68,68,0.15)" : "rgba(51,65,85,0.3)",
+            background: r.result === "Won" ? "rgba(34,197,94,0.2)" : r.result === "Lost" ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
             color: r.result === "Won" ? "#22c55e" : r.result === "Lost" ? "#ef4444" : "#64748b" }}>
             {r.result === "\u2014" ? "\u2014" : r.result + (isMobile ? "" : " " + r.series)}
            </span>
@@ -245,7 +246,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      <div style={{
       display: "grid",
       gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
-      gap: 6, padding: "6px 12px", background: "#0f172a", fontSize: 10, fontWeight: 700, color: "#64748b",
+      gap: 6, padding: "6px 12px", background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b",
      }}>
       <span>Film</span>
       {!isMobile && <span style={{ textAlign: "right" }}>Box Office</span>}
@@ -259,7 +260,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
          display: "grid",
          gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
          gap: 6, alignItems: "center", padding: "5px 0",
-         borderBottom: fi === d.films.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
+         borderBottom: fi === d.films.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11,
         }}>
          <div>
           <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{f.title}</span>
@@ -295,8 +296,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      {/* Totals row for films */}
      <div style={{ display: "grid",
       gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
-      gap: 6, padding: "6px 12px", background: "rgba(59,130,246,0.08)",
-      borderTop: "1px solid #334155", fontSize: 11, fontWeight: 700 }}>
+      gap: 6, padding: "6px 12px", background: "rgba(242,184,74,0.08)",
+      borderTop: `1px solid ${theme.bdr}`, fontSize: 11, fontWeight: 700 }}>
       <span style={{ color: "#94a3b8" }}>Total ({d.films.length} film{d.films.length !== 1 ? "s" : ""})</span>
       {!isMobile && <div style={{ textAlign: "right", color: "#94a3b8" }}>${d.films.reduce(function(s,f){return s+f.bo;},0).toFixed(1)}M</div>}
       {isMobile ? (
@@ -327,7 +328,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      {d.songs.length > 0 ? (
       <div>
        <div style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
-        padding: "6px 12px", background: "#0f172a", fontSize: 10, fontWeight: 700, color: "#64748b" }}>
+        padding: "6px 12px", background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b" }}>
         <span>Song</span>
         <span style={{ textAlign: "right" }}>Weeks</span>
         <span style={{ textAlign: "right" }}>#1 Wks</span>
@@ -336,7 +337,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
         {d.songs.map(function (sg, si) {
          return (
           <div key={si} style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
-           padding: "4px 0", borderBottom: si === d.songs.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11 }}>
+           padding: "4px 0", borderBottom: si === d.songs.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11 }}>
            <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sg.title}</span>
            <div style={{ textAlign: "right", color: "#94a3b8" }}>{sg.weeks}</div>
            <div style={{ textAlign: "right", color: sg.numOneWeeks > 0 ? "#22c55e" : "#475569", fontWeight: 700 }}>
@@ -348,8 +349,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
        </div>
        {/* Totals row for songs */}
        <div style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
-        padding: "6px 12px", background: "rgba(59,130,246,0.08)",
-        borderTop: "1px solid #334155", fontSize: 11, fontWeight: 700 }}>
+        padding: "6px 12px", background: "rgba(242,184,74,0.08)",
+        borderTop: `1px solid ${theme.bdr}`, fontSize: 11, fontWeight: 700 }}>
         <span style={{ color: "#94a3b8" }}>Total ({d.songs.length} song{d.songs.length !== 1 ? "s" : ""})</span>
         <div style={{ textAlign: "right", color: "#f8fafc", fontWeight: 800 }}>
          {d.songs.reduce(function(s,sg){return s+(Number(sg.weeks)||0);},0)}
@@ -365,7 +366,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      {d.grammys.length > 0 && (
       <div>
        <div style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: 6,
-        padding: "6px 12px", background: "#0f172a", fontSize: 10, fontWeight: 700, color: "#64748b" }}>
+        padding: "6px 12px", background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b" }}>
         <span>Grammy Category</span>
         <span style={{ textAlign: "center" }}>Result</span>
         <span style={{ textAlign: "right" }}>Pts</span>
@@ -375,7 +376,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
          return (
           <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: 6,
            alignItems: "center", padding: "5px 0",
-           borderBottom: gi === d.grammys.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11 }}>
+           borderBottom: gi === d.grammys.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11 }}>
            <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.category}</span>
            <span style={{ textAlign: "center", fontSize: 10,
             color: g.result === "win" ? "#22c55e" : "#eab308" }}>
@@ -416,7 +417,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr 60px 40px" : "1fr 90px 50px",
           gap: 4, alignItems: "center", padding: "5px 0",
-          borderBottom: mi === d.majors.length - 1 ? "none" : "1px solid #1e293b", fontSize: 11,
+          borderBottom: mi === d.majors.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11,
          }}>
           <div>
            <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{mj.event}</span>
@@ -439,8 +440,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
       <div style={{
        display: "grid",
        gridTemplateColumns: isMobile ? "1fr 60px 40px" : "1fr 90px 50px",
-       gap: 4, padding: "6px 12px", background: "rgba(59,130,246,0.08)",
-       borderTop: "1px solid #334155", fontSize: 11, fontWeight: 700,
+       gap: 4, padding: "6px 12px", background: "rgba(242,184,74,0.08)",
+       borderTop: `1px solid ${theme.bdr}`, fontSize: 11, fontWeight: 700,
       }}>
        <span style={{ color: "#94a3b8" }}>Total ({d.majors.length} event{d.majors.length !== 1 ? "s" : ""})</span>
        <div />
@@ -498,12 +499,10 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
         {(d.pctChange >= 0 ? "+" : "") + d.pctChange.toFixed(2)}%
        </span>
       </div>
-      <div style={{ height: 6, borderRadius: 3, background: "#0f172a", overflow: "hidden" }}>
+      <div style={{ height: 6, borderRadius: 3, background: theme.bg, overflow: "hidden" }}>
        <div style={{ height: "100%", borderRadius: 3,
         width: Math.min(100, Math.abs(d.pctChange || 0) + 5) + "%",
-        background: d.pctChange >= 0
-         ? "linear-gradient(90deg, #22c55e, #16a34a)"
-         : "linear-gradient(90deg, #ef4444, #dc2626)" }} />
+        background: d.pctChange >= 0 ? theme.grn : theme.red }} />
       </div>
       {d.note && <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>{d.note}</div>}
      </div>
@@ -520,8 +519,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  
   // Fallback
   return (
-   <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: "#1e293b",
-    border: "1px solid " + rowBorder(idx), borderTop: "1px solid #334155", fontSize: 12, color: "#cbd5e1" }}>
+   <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: theme.card,
+    border: "1px solid " + rowBorder(idx), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
     Base: {m.base} + Bonus: {m.bonus} = {m.total} pts
     {bonusNoteDisplay(d)}
    </div>
@@ -545,21 +544,22 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
        setSelCat(null); setExpRow(null);
       }}
      style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-      border: "1px solid " + (!selCat ? "#3b82f6" : "#334155"),
-      background: !selCat ? "#3b82f6" : "#1e293b",
-      color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+      border: "1px solid " + (!selCat ? theme.acc : theme.bdr),
+      background: !selCat ? theme.acc : theme.card,
+      color: !selCat ? "#1A1200" : theme.txt, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
      Overall
     </button>
     {CATEGORY_ORDER.map(function (k) {
+     var isSel = selCat === k;
      return (
       <button key={k} onClick={function () {
          track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: k, previous_category: selCat || "overall" });
          setSelCat(k); setExpRow(null);
         }}
        style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-        border: "1px solid " + (selCat === k ? "#3b82f6" : "#334155"),
-        background: selCat === k ? "#3b82f6" : "#1e293b",
-        color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+        border: "1px solid " + (isSel ? theme.acc : theme.bdr),
+        background: isSel ? theme.acc : theme.card,
+        color: isSel ? "#1A1200" : theme.txt, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
        {CATEGORY_LABELS[k]}
       </button>
      );
@@ -588,14 +588,14 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
          <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
-          {memberPaywalled && <span style={{ fontSize: isMobile ? 11 : 13 }}>{"🔒"}</span>}
+          {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
           <span style={Object.assign({ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" },
            memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.totalPts}</span>
          </span>
         </div>
         {isExp && (
          <div style={{ padding: isMobile ? "8px 8px" : "10px 12px", borderRadius: "0 0 10px 10px",
-          background: "#1e293b", border: "1px solid " + rowBorder(idx), borderTop: "1px solid #334155" }}>
+          background: theme.card, border: "1px solid " + rowBorder(idx), borderTop: `1px solid ${theme.bdr}` }}>
           {memberPaywalled ? renderPaywallPanel(m.owner, m.id) : (
            <div style={{ display: "grid",
             gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)",
@@ -612,7 +612,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
                  setSelCat(k); setExpRow(null);
                 }}
                style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", cursor: "pointer",
-                background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(51,65,85,0.3)" }}>
+                background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(255,255,255,0.06)" }}>
                <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
                <div style={{ fontSize: isMobile ? 7 : 8, color: "#94a3b8", lineHeight: 1.2, marginTop: 1,
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pickName}</div>
@@ -663,7 +663,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {m.owner}
             {memberHasLocks && <LockIndicator note="Commissioner has locked some values for this entry" />}
-            {memberPaywalled && <span style={{ marginLeft: 4, fontSize: 10 }}>{"🔒"}</span>}
+            {memberPaywalled && <Lock size={10} color={theme.yel} style={{ marginLeft: 4 }} />}
            </div>
            <div style={{ fontSize: isMobile ? 10 : 11, color: theme.dim,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.pick}</div>
@@ -700,7 +700,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
       })}
      </div>
      <div style={{ marginTop: 12, padding: 12, borderRadius: 10,
-      background: "rgba(51,65,85,0.3)", border: "1px solid #334155" }}>
+      background: "rgba(255,255,255,0.06)", border: `1px solid ${theme.bdr}` }}>
       <div style={{ fontSize: 11, color: "#94a3b8" }}>
        <b style={{ color: "#f1f5f9" }}>Bonus Rules: </b>
        {CATEGORY_BONUS_RULES[selCat]}
@@ -712,7 +712,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
    {toast && (
     <div style={{
      position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
-     background: "#1e293b", border: "1px solid #eab308", borderRadius: 10,
+     background: theme.card, border: "1px solid #eab308", borderRadius: 10,
      padding: "10px 18px", fontSize: 13, fontWeight: 700, color: "#fef9c3",
      boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 1000, whiteSpace: "nowrap",
     }}>

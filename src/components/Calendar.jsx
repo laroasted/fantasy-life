@@ -256,8 +256,10 @@ export default function Calendar({ seasonYear }) {
             </button>
           );
         })}
-        <span style={{ fontSize:9, color:s.dim, alignSelf:"center", marginLeft:4 }}>
-          {source === "supabase" ? "🟢 Live" : "🟡 Cached"}
+        <span style={{ fontSize:9, color:s.dim, alignSelf:"center", marginLeft:4, display:"flex", alignItems:"center", gap:4 }}>
+          <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%",
+            background: source === "supabase" ? "#22c55e" : "#eab308" }} />
+          {source === "supabase" ? "Live" : "Cached"}
         </span>
       </div>
  

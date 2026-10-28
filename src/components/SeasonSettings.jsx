@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Lock } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
@@ -1040,7 +1041,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
            <span style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[m.id] || theme.txt }}>
             {m.name}
            </span>
-           {isLive && <span style={{ fontSize: 9, color: "#eab308" }}>{"🔒"} currently live</span>}
+           {isLive && <span style={{ fontSize: 9, color: "#eab308", display: "inline-flex", alignItems: "center", gap: 3 }}><Lock size={9} /> currently live</span>}
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11, color: theme.dim }}>
            <input type="checkbox" checked={enabled}

@@ -1,4 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  Trophy,
+  BarChart3,
+  TrendingUp,
+  Calendar as CalendarIcon,
+  ClipboardList,
+  Landmark,
+  Target,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
 import { withTimeout } from "./utils/helpers";
@@ -35,13 +45,13 @@ import {
 } from "./utils/analytics";
 
 const TABS = [
-  { id: "scoreboard", label: "📊 Scoreboard", short: "📊" },
-  { id: "trends",     label: "📈 Trends",     short: "📈" },
-  { id: "calendar",   label: "📅 Calendar",   short: "📅" },
-  { id: "recap",      label: "📋 Recap",      short: "📋" },
-  { id: "history",    label: "🏛️ History",    short: "🏛️" },
-  { id: "draft",      label: "🎯 Draft",      short: "🎯" },
-  { id: "settings",   label: "⚙️ Settings",   short: "⚙️" },
+  { id: "scoreboard", label: "Scoreboard", Icon: BarChart3 },
+  { id: "trends",     label: "Trends",     Icon: TrendingUp },
+  { id: "calendar",   label: "Calendar",   Icon: CalendarIcon },
+  { id: "recap",      label: "Recap",      Icon: ClipboardList },
+  { id: "history",    label: "History",    Icon: Landmark },
+  { id: "draft",      label: "Draft",      Icon: Target },
+  { id: "settings",   label: "Settings",   Icon: SettingsIcon },
 ];
  
 export default function App() {
@@ -292,10 +302,10 @@ export default function App() {
     return (
       <div style={{ background: theme.bg, minHeight: "100vh", display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", color: theme.dim, fontFamily: "system-ui", gap: 12 }}>
-        <div style={{ fontSize: 32 }}>🏆</div>
+        <Trophy size={32} color={theme.acc} />
         <div style={{ fontSize: 16, fontWeight: 600 }}>Loading scores...</div>
-        <div style={{ width: 120, height: 3, borderRadius: 2, background: "#1e293b", overflow: "hidden" }}>
-          <div style={{ width: "40%", height: "100%", borderRadius: 2, background: "#3b82f6",
+        <div style={{ width: 120, height: 3, borderRadius: 2, background: theme.card, overflow: "hidden" }}>
+          <div style={{ width: "40%", height: "100%", borderRadius: 2, background: theme.acc,
             animation: "pulse 1.5s ease-in-out infinite" }} />
         </div>
         <style>{`@keyframes pulse { 0%,100% { opacity: 0.4; transform: translateX(-20px); } 50% { opacity: 1; transform: translateX(80px); } }`}</style>
@@ -314,7 +324,7 @@ export default function App() {
       fontFamily: "Inter, system-ui, sans-serif" }}>
       {/* ── Header + Tabs ── */}
       <div style={{
-        background: "linear-gradient(135deg, #1e293b, #0f172a)",
+        background: theme.card,
         borderBottom: "1px solid " + theme.bdr,
         padding: isMobile ? "12px 12px 0" : "16px 20px 0",
         position: "sticky", top: 0, zIndex: 100,
@@ -323,12 +333,10 @@ export default function App() {
           {/* Title row */}
           <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12,
             marginBottom: isMobile ? 10 : 16 }}>
-            <span style={{ fontSize: isMobile ? 24 : 32 }}>🏆</span>
+            <Trophy size={isMobile ? 22 : 28} color={theme.acc} style={{ flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{
-                fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0,
-                background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
-                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0, color: "#FAFAFA",
               }}>Fantasy Life</h1>
               <p style={{ color: theme.dim, margin: 0, fontSize: isMobile ? 10 : 12 }}>
                 {memberCount} Members · 15 Categories
@@ -374,11 +382,11 @@ export default function App() {
                       onClick={() => { setAuthError(""); handleGoogleSignIn(); }}
                       disabled={authLoading}
                       style={{
-                        background: "linear-gradient(135deg, #2563eb, #7c3aed)",
-                        border: "none",
+                        background: "none",
+                        border: "1px solid " + theme.bdr,
                         borderRadius: 8,
                         padding: isMobile ? "5px 8px" : "6px 10px",
-                        color: "#fff",
+                        color: theme.txt,
                         fontSize: 11,
                         fontWeight: 700,
                         cursor: authLoading ? "default" : "pointer",
@@ -420,6 +428,7 @@ export default function App() {
             msOverflowStyle: "none", scrollbarWidth: "none",
           }}>
             {TABS.map(function (t) {
+              var isActive = activeTab === t.id;
               return (
                 <button key={t.id} onClick={function () {
                     track(EVENTS.TAB_VIEWED, { tab_name: t.id, previous_tab: activeTab, is_mobile: isMobile });
@@ -427,15 +436,17 @@ export default function App() {
                   }}
                   style={{
                     flex: isMobile ? "0 0 auto" : "unset",
+                    display: "flex", alignItems: "center", gap: 6,
                     padding: isMobile ? "8px 10px" : "10px 20px",
                     background: "none", border: "none",
-                    borderBottom: activeTab === t.id ? "2px solid " + theme.acc : "2px solid transparent",
-                    color: activeTab === t.id ? "#f8fafc" : theme.dim,
+                    borderBottom: isActive ? "2px solid " + theme.acc : "2px solid transparent",
+                    color: isActive ? theme.acc : theme.dim,
                     fontSize: isMobile ? 11 : 13,
-                    fontWeight: activeTab === t.id ? 700 : 500,
+                    fontWeight: isActive ? 700 : 500,
                     cursor: "pointer", whiteSpace: "nowrap",
                   }}>
-                  {isMobile ? t.short + " " + t.id.charAt(0).toUpperCase() + t.id.slice(1) : t.label}
+                  <t.Icon size={isMobile ? 14 : 15} />
+                  <span>{t.label}</span>
                 </button>
               );
             })}
@@ -455,8 +466,11 @@ export default function App() {
                 {draftDateStr} through {year + 1} Academy Awards · {memberCount} members
               </p>
               {lastUpdated && (
-                <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6 }}>
-                  {dataSource === "supabase" ? "🟢 Live" : dataSource === "local" ? "🟡 Cached" : "🔴 Offline"}
+                <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                    background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red }} />
+                  {dataSource === "supabase" ? "Live" : dataSource === "local" ? "Cached" : "Offline"}
                   {" "}· Updated {lastUpdated.toLocaleTimeString()}
                 </p>
               )}
