@@ -24,9 +24,48 @@
  * only timeout that applies here now; if something genuinely hangs, the
  * whole function is killed rather than silently snapshotting half-updated
  * data.
+ *
+ * Open to anyone, with a cooldown instead of an auth gate: a repeat-click
+ * or a bot hammering this endpoint would otherwise re-trigger every
+ * external API call and Supabase write on every request. claimRefreshSlot()
+ * does a single atomic UPDATE ... WHERE last_full_refresh_at is old enough
+ * (or null), so only the request that actually flips the timestamp — not
+ * every request that merely reads it as stale — proceeds to run the jobs;
+ * everyone else gets told a refresh ran recently and skips straight to
+ * re-reading whatever's already there.
  */
 
+const { createClient } = require('@supabase/supabase-js');
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const CRON_SECRET = process.env.CRON_SECRET;
+const COOLDOWN_MS = 2 * 60 * 1000;
+
+// Fails OPEN (lets the refresh proceed) on any cooldown-check problem —
+// missing key, network error, whatever — rather than ever letting a
+// Supabase hiccup silently and permanently disable the Refresh button.
+async function claimRefreshSlot() {
+  if (!SUPABASE_SERVICE_KEY) return { claimed: true };
+  try {
+    var supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    var thresholdIso = new Date(Date.now() - COOLDOWN_MS).toISOString();
+    var { data, error } = await supabase
+      .from('seasons')
+      .update({ last_full_refresh_at: new Date().toISOString() })
+      .eq('status', 'active')
+      .or('last_full_refresh_at.is.null,last_full_refresh_at.lt.' + thresholdIso)
+      .select('year');
+    if (error) {
+      console.error('refresh-all: cooldown check failed, proceeding without it:', error.message);
+      return { claimed: true };
+    }
+    return { claimed: !!(data && data.length > 0) };
+  } catch (e) {
+    console.error('refresh-all: cooldown check threw, proceeding without it:', e.message);
+    return { claimed: true };
+  }
+}
 
 async function runJob(name, modulePath) {
   var startedAt = Date.now();
@@ -58,6 +97,17 @@ const DATA_JOBS = [
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed, use POST' });
 
+  var slot = await claimRefreshSlot();
+  if (!slot.claimed) {
+    return res.status(200).json({
+      success: true,
+      skipped: true,
+      message: 'A full refresh already ran recently — skipped to avoid hammering external APIs.',
+      timestamp: new Date().toISOString(),
+      jobs: [],
+    });
+  }
+
   // These seven are independent of each other and are the bulk of the
   // external-API wait time, so they run concurrently. snapshot-scores is
   // run separately, after they've all settled: it records the picks
@@ -74,6 +124,7 @@ module.exports = async function handler(req, res) {
 
   return res.status(200).json({
     success: allOk,
+    skipped: false,
     message: allOk ? 'All jobs completed' : 'Some jobs failed — see jobs[] for details',
     timestamp: new Date().toISOString(),
     jobs: jobs,

@@ -104,7 +104,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `data_fallback_used` | season, calendar | `surface`, `fallback_level`, `reason` |
 | `app_loaded` | app | `data_source`, `is_mobile`, `archived_season_count` |
 | `season_loaded` | app | `data_source`, `year`, `is_refresh` |
-| `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms` |
+| `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms`, `is_skipped` |
 | `overall_category_tile_clicked` | scoreboard | `category` |
 | `trends_view_toggled` | trends | `view` |
 | `trends_series_toggled` | trends | `member_name`, `is_hidden` |

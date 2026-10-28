@@ -254,7 +254,7 @@ export default function App() {
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     const startedAt = Date.now();
-    let jobsSucceeded = 0, jobsFailed = 0, success = false;
+    let jobsSucceeded = 0, jobsFailed = 0, success = false, isSkipped = false;
     try {
       const res = await fetch("/api/refresh-all", { method: "POST" });
       const body = await res.json().catch(() => null);
@@ -262,11 +262,13 @@ export default function App() {
       jobsSucceeded = jobs.filter((j) => j.ok).length;
       jobsFailed = jobs.length - jobsSucceeded;
       success = !!(body && body.success);
+      isSkipped = !!(body && body.skipped);
     } catch (e) {
       console.warn("Full refresh (crons) failed, falling back to a plain data refetch:", e);
     }
     track(EVENTS.DATA_REFRESH_TRIGGERED, {
       success, jobs_succeeded: jobsSucceeded, jobs_failed: jobsFailed, duration_ms: Date.now() - startedAt,
+      is_skipped: isSkipped,
     });
     await loadSeason(true);
   }, [loadSeason]);
