@@ -1,9 +1,11 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { supabase } from "../utils/storage";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { TrendingUp, AlertTriangle } from "lucide-react";
+import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
+import ScrollFadeEdges from "./ScrollFadeEdges";
 
 // ══════════════════════════════════════════════════════
 //  TRENDS — standings-over-time chart, backed by the
@@ -29,12 +31,15 @@ export default function Trends({ seasonData }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isStale, setIsStale] = useState(false);
   const [viewCat, setViewCat] = useState("ALL");
   const [hidden, setHidden] = useState(() => new Set());
   const [hoverIdx, setHoverIdx] = useState(null);
   const [showTable, setShowTable] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
   const svgWrapRef = useRef(null);
+  const pillsRef = useRef(null);
+  const requestIdRef = useRef(0);
 
   const seasonYear = seasonData?.year;
   const members = useMemo(() => seasonData?.members || [], [seasonData]);
@@ -45,51 +50,85 @@ export default function Trends({ seasonData }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      if (!seasonYear) { setLoading(false); return; }
-      setLoading(true);
-      setError(null);
-      // PostgREST caps unpaginated responses at 1000 rows. At 11 members x 15
-      // categories = 165 rows/day, a season blows past that in under a week,
-      // so this paginates the same way api/cron/update-billboard.js does.
-      const pageSize = 1000;
-      let page = 0;
-      let allRows = [];
-      let keepFetching = true;
-      let fetchError = null;
-      while (keepFetching) {
-        const { data, error: err } = await supabase
-          .from("score_history")
-          .select("snapshot_date, member_id, category, total")
-          .eq("season_year", seasonYear)
-          .order("snapshot_date")
-          // snapshot_date alone isn't unique (~165 rows share each date), so
-          // ties can land in a different order across separate paginated
-          // requests without a unique tiebreaker — silently duplicating or
-          // dropping rows at page boundaries. `id` is the table's identity PK.
-          .order("id")
-          .range(page * pageSize, (page + 1) * pageSize - 1);
-        if (err) { fetchError = err; break; }
-        const batch = data || [];
-        allRows = allRows.concat(batch);
-        page++;
-        if (batch.length < pageSize) keepFetching = false;
-      }
-      if (cancelled) return;
-      if (fetchError) {
-        setError(fetchError.message);
+  // A request abandoned by a year switch (or a stale manual retry) must
+  // skip its own setState calls when it finally resolves. This used to be
+  // threaded through as an isCancelled callback passed into load() by its
+  // caller — but that broke the moment a retry button did `onClick={load}`
+  // directly: React passes the click event as load's first argument, so
+  // isCancelled became the event object, and calling it as a function threw,
+  // leaving the UI stuck on its loading state. A shared ref sidesteps that
+  // entirely: load() takes no arguments, so it's safe to pass as a handler
+  // directly, and every call (effect-triggered or a manual retry) stamps
+  // its own id — only the most recent one commits.
+  const load = useCallback(async () => {
+    const myRequestId = ++requestIdRef.current;
+    const stillCurrent = () => requestIdRef.current === myRequestId;
+    if (!seasonYear) { setLoading(false); return; }
+    setLoading(true);
+    setError(null);
+    const cacheKey = `${STORAGE_KEYS.TRENDS_HISTORY_PREFIX}-${seasonYear}`;
+    // PostgREST caps unpaginated responses at 1000 rows. At 11 members x 15
+    // categories = 165 rows/day, a season blows past that in under a week,
+    // so this paginates the same way api/cron/update-billboard.js does.
+    const pageSize = 1000;
+    let page = 0;
+    let allRows = [];
+    let keepFetching = true;
+    let fetchError = null;
+    while (keepFetching) {
+      const { data, error: err } = await supabase
+        .from("score_history")
+        .select("snapshot_date, member_id, category, total")
+        .eq("season_year", seasonYear)
+        .order("snapshot_date")
+        // snapshot_date alone isn't unique (~165 rows share each date), so
+        // ties can land in a different order across separate paginated
+        // requests without a unique tiebreaker — silently duplicating or
+        // dropping rows at page boundaries. `id` is the table's identity PK.
+        .order("id")
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+      if (err) { fetchError = err; break; }
+      const batch = data || [];
+      allRows = allRows.concat(batch);
+      page++;
+      if (batch.length < pageSize) keepFetching = false;
+    }
+    if (fetchError) {
+      // Same resilience App.jsx's loadSeason() and Calendar.jsx already have
+      // for Supabase hiccups — Trends used to just throw a raw error here.
+      console.warn("Trends: Supabase fetch failed, trying cached snapshot...", fetchError.message);
+      let cached = null;
+      try {
+        const r = await storageGet(cacheKey);
+        if (r && r.value) cached = JSON.parse(r.value);
+      } catch (e) { console.error("Trends: failed to read cached snapshot:", e); }
+      track(EVENTS.DATA_FALLBACK_USED, {
+        surface: "trends",
+        fallback_level: cached && cached.length > 0 ? "local" : "none",
+        reason: "supabase_fetch_failed",
+      });
+      if (!stillCurrent()) return;
+      if (cached && cached.length > 0) {
+        setRows(cached);
+        setIsStale(true);
         setLoading(false);
-        track(EVENTS.TRENDS_LOAD_FAILED, { error_message: fetchError.message });
         return;
       }
-      setRows(allRows);
+      setError(fetchError.message);
       setLoading(false);
+      track(EVENTS.TRENDS_LOAD_FAILED, { error_message: fetchError.message });
+      return;
     }
-    load();
-    return () => { cancelled = true; };
+    if (!stillCurrent()) return;
+    setRows(allRows);
+    setIsStale(false);
+    storageSet(cacheKey, JSON.stringify(allRows)).catch(() => {});
+    setLoading(false);
   }, [seasonYear]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const memberMeta = useMemo(() => {
     const m = {};
@@ -199,7 +238,7 @@ export default function Trends({ seasonData }) {
   if (loading) {
     return (
       <div style={{ maxWidth: 800, margin: "0 auto", textAlign: "center", padding: 60, color: s.dim }}>
-        <div style={{ fontSize: 24, marginBottom: 8 }}>📈</div>
+        <TrendingUp size={24} style={{ marginBottom: 8 }} />
         <div style={{ fontSize: 14, fontWeight: 600 }}>Loading trends...</div>
       </div>
     );
@@ -207,9 +246,17 @@ export default function Trends({ seasonData }) {
 
   if (error) {
     return (
-      <div style={{ maxWidth: 800, margin: "0 auto", textAlign: "center", padding: 60, color: s.red }}>
-        <div style={{ fontSize: 24, marginBottom: 8 }}>⚠️</div>
-        <div style={{ fontSize: 14 }}>Failed to load trends: {error}</div>
+      <div style={{ maxWidth: 800, margin: "0 auto", ...cardStyle, textAlign: "center", padding: 40 }}>
+        <AlertTriangle size={28} color={s.red} style={{ marginBottom: 10 }} />
+        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Couldn't load trend history</h3>
+        <p style={{ color: s.dim, fontSize: 12, maxWidth: 360, margin: "0 auto 14px" }}>
+          No cached snapshot to fall back to either — this usually clears up on its own.
+        </p>
+        <button onClick={() => { track(EVENTS.TRENDS_LOAD_FAILED, { error_message: error }); load(); }}
+          style={{ background: "none", border: "1px solid " + s.bdr, borderRadius: 8,
+            padding: "7px 16px", color: s.txt, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Try again
+        </button>
       </div>
     );
   }
@@ -217,7 +264,7 @@ export default function Trends({ seasonData }) {
   if (n < 2) {
     return (
       <div style={{ maxWidth: 800, margin: "0 auto", ...cardStyle, textAlign: "center", padding: 40 }}>
-        <div style={{ fontSize: 40, marginBottom: 10 }}>📈</div>
+        <TrendingUp size={32} color={s.dim} style={{ marginBottom: 10 }} />
         <h3 style={{ margin: "0 0 8px", fontSize: 17 }}>Not enough history yet</h3>
         <p style={{ color: s.dim, fontSize: 13, maxWidth: 420, margin: "0 auto" }}>
           Trends build from a daily snapshot of every score. This tab needs at least
@@ -238,7 +285,8 @@ export default function Trends({ seasonData }) {
   return (
     <div style={{ maxWidth: 800, margin: "0 auto" }}>
       {/* Category pills */}
-      <div style={{
+      <ScrollFadeEdges scrollRef={pillsRef} fadeColor={s.bg}>
+      <div ref={pillsRef} style={{
         display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
         gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
         overflowX: isMobile ? "auto" : "visible", WebkitOverflowScrolling: "touch",
@@ -249,9 +297,9 @@ export default function Trends({ seasonData }) {
             setViewCat("ALL");
           }}
           style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-            border: "1px solid " + (viewCat === "ALL" ? "#3b82f6" : "#334155"),
-            background: viewCat === "ALL" ? "#3b82f6" : "#1e293b",
-            color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+            border: "1px solid " + (viewCat === "ALL" ? s.acc : s.bdr),
+            background: viewCat === "ALL" ? s.acc : s.card,
+            color: viewCat === "ALL" ? "#1A1200" : s.txt, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
           Overall
         </button>
         {CATEGORY_ORDER.map((k) => (
@@ -260,13 +308,28 @@ export default function Trends({ seasonData }) {
               setViewCat(k);
             }}
             style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-              border: "1px solid " + (viewCat === k ? "#3b82f6" : "#334155"),
-              background: viewCat === k ? "#3b82f6" : "#1e293b",
-              color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+              border: "1px solid " + (viewCat === k ? s.acc : s.bdr),
+              background: viewCat === k ? s.acc : s.card,
+              color: viewCat === k ? "#1A1200" : s.txt, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
             {CATEGORY_LABELS[k]}
           </button>
         ))}
       </div>
+      </ScrollFadeEdges>
+
+      {isStale && (
+        <div style={{ ...cardStyle, marginBottom: 12, padding: "8px 12px", display: "flex",
+          alignItems: "center", gap: 8, border: "1px solid " + s.yel }}>
+          <AlertTriangle size={13} color={s.yel} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 11, color: s.dim }}>
+            Showing a cached snapshot — couldn't reach the live data just now.
+          </span>
+          <button onClick={load} style={{ marginLeft: "auto", background: "none", border: "none",
+            color: s.acc, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+            Retry
+          </button>
+        </div>
+      )}
 
       <div style={cardStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>

@@ -3,19 +3,29 @@
 // Three sub-views: Draft Order, Member Report Card, Category Breakdown.
 //
 // Draft board data is read from the `draft_board` JSONB column on the
-// `seasons` table. The 2026 board is also hardcoded as a fallback.
-// Future seasons auto-populate when DraftTool saves on finalize.
- 
-import { useState, useEffect, useMemo, useCallback } from "react";
-import { supabase } from "../utils/storage";
+// `seasons` table. DraftTool.jsx's finalize flow writes that column itself
+// for whatever year the commissioner types in — nothing here needs a yearly
+// code change for a new season to work.
+
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { ClipboardList, AlertTriangle } from "lucide-react";
+import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
- 
+
 // ═══════════════════════════════════════════════════════════════════
-// HARDCODED FALLBACK — only used if seasons.draft_board is null
+// HARDCODED FALLBACK — only used if seasons.draft_board is null AND the
+// load() fetch itself failed with nothing cached locally either (see
+// load() below). This is NOT meant to be extended every year — nobody
+// can predict a future draft's actual order in advance, so there is
+// nothing to "add" here for 2027+. The real fallback path for any other
+// year is Supabase (already year-keyed everywhere) falling back to the
+// per-year localStorage cache load() maintains. Only touch this object
+// to pre-seed a specific year's board for a known reason, not as routine
+// yearly maintenance.
 // ═══════════════════════════════════════════════════════════════════
- 
+
 const FALLBACK_BOARDS = {
   2026: {
     memberOrder: ["jordan","jack","larosa","marsh","alan","dhruv","danny","mike","auzy","adam","evan","scott"],
@@ -91,7 +101,7 @@ const ROUND_COLORS = [
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════
  
-export default function DraftRecap({ seasonYear = 2026 }) {
+export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   const [view, setView] = useState("draft");
   const [selMember, setSelMember] = useState(null);
   const [selCat, setSelCat] = useState("NFL");
@@ -101,41 +111,111 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   const [draftBoard, setDraftBoard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
- 
+  const [isStale, setIsStale] = useState(false);
+  const requestIdRef = useRef(0);
+
   // ── Fetch draft board, picks, and members from Supabase ──
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const [
-          { data: seasonData, error: sErr },
-          { data: pickData, error: pErr },
-          { data: memberData, error: mErr },
-        ] = await Promise.all([
-          supabase.from("seasons").select("draft_board").eq("year", seasonYear).single(),
-          supabase.from("picks").select("member_id, category, pick, total").eq("season_year", seasonYear),
-          supabase.from("members").select("id, name, color"),
-        ]);
-        if (pErr) throw new Error(pErr.message);
-        if (mErr) throw new Error(mErr.message);
-        if (!cancelled) {
-          setPicks(pickData || []);
-          setMembers(memberData || []);
-          // Use Supabase draft_board if available, else fall back to hardcoded
-          const board = seasonData?.draft_board || FALLBACK_BOARDS[seasonYear] || null;
-          setDraftBoard(board);
+  // Falls back to a cached {picks, members} snapshot (and, failing that,
+  // FALLBACK_BOARDS for the draft structure itself) on a Supabase error,
+  // the same way App.jsx's loadSeason() and Calendar.jsx already do — this
+  // used to just throw and leave the whole tab blank on any hiccup, with
+  // FALLBACK_BOARDS sitting there unused for exactly this purpose.
+  // load() takes no arguments and tracks its own request id so a manual
+  // retry button can call it directly (onClick={load}) without React's
+  // SyntheticEvent landing in a cancellation param — see the matching
+  // comment in Trends.jsx's load() for why the previous isCancelled-callback
+  // version broke on exactly that call pattern.
+  const load = useCallback(async () => {
+    const myRequestId = ++requestIdRef.current;
+    const stillCurrent = () => requestIdRef.current === myRequestId;
+    setLoading(true);
+    setError(null);
+    const cacheKey = `${STORAGE_KEYS.DRAFT_RECAP_PREFIX}-${seasonYear}`;
+    try {
+      const [
+        { data: seasonData, error: sErr },
+        { data: pickData, error: pErr },
+        { data: memberData, error: mErr },
+      ] = await Promise.all([
+        supabase.from("seasons").select("draft_board").eq("year", seasonYear).single(),
+        supabase.from("picks").select("member_id, category, pick, total").eq("season_year", seasonYear),
+        supabase.from("members").select("id, name, color"),
+      ]);
+      if (sErr) console.warn("DraftRecap: couldn't load draft_board, using hardcoded fallback if available:", sErr.message);
+      const board = seasonData?.draft_board || FALLBACK_BOARDS[seasonYear] || null;
+
+      if (pErr || mErr) {
+        console.warn("DraftRecap: Supabase fetch failed, trying cached picks/members...", (pErr || mErr).message);
+        let cached = null;
+        try {
+          const r = await storageGet(cacheKey);
+          if (r && r.value) cached = JSON.parse(r.value);
+        } catch (e) { console.error("DraftRecap: failed to read cache:", e); }
+        track(EVENTS.DATA_FALLBACK_USED, {
+          surface: "recap",
+          fallback_level: (cached && board) ? "local" : "none",
+          reason: "supabase_fetch_failed",
+        });
+        if (!stillCurrent()) return;
+        // A board with no cached picks/members to pair it with would render
+        // every cell as "no pick made" — indistinguishable from a season
+        // that genuinely has no picks yet, when the real problem is just
+        // that we couldn't reach this season's actual picks. That's worse
+        // than the no-board case below: at least that one is honest about
+        // having nothing to show. Only take the stale-cache path when
+        // there's an actual snapshot to show instead of live data.
+        if (!board || !cached) {
+          // No live data and nothing usable to fall back to — a real,
+          // actionable failure ("couldn't load, try again"), not "no draft
+          // has been finalized yet". Those used to look identical, which
+          // was actively misleading on a season that definitely has a
+          // draft on record, we just couldn't reach it this time.
+          setError((pErr || mErr).message);
+          setLoading(false);
+          return;
         }
-      } catch (e) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
+        setPicks(cached.picks || []);
+        setMembers(cached.members || []);
+        setDraftBoard(board);
+        setIsStale(true);
+        setLoading(false);
+        return;
       }
+
+      if (!stillCurrent()) return;
+      setPicks(pickData || []);
+      setMembers(memberData || []);
+      setDraftBoard(board);
+      setIsStale(false);
+      storageSet(cacheKey, JSON.stringify({ picks: pickData || [], members: memberData || [] })).catch(() => {});
+      setLoading(false);
+    } catch (e) {
+      // Only reaches here for something outside the normal {data,error}
+      // Supabase contract (e.g. no network at all) — try the cache once
+      // more before giving up entirely.
+      let cached = null;
+      try {
+        const r = await storageGet(cacheKey);
+        if (r && r.value) cached = JSON.parse(r.value);
+      } catch (e2) {}
+      if (!stillCurrent()) return;
+      const fallbackBoard = FALLBACK_BOARDS[seasonYear] || null;
+      if (cached && fallbackBoard) {
+        setPicks(cached.picks || []);
+        setMembers(cached.members || []);
+        setDraftBoard(fallbackBoard);
+        setIsStale(true);
+        setLoading(false);
+        return;
+      }
+      setError(e.message);
+      setLoading(false);
     }
-    load();
-    return () => { cancelled = true; };
   }, [seasonYear]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
  
   // ── Derived data ──
   const memberNameMap = useMemo(() => {
@@ -169,9 +249,11 @@ export default function DraftRecap({ seasonYear = 2026 }) {
     return buildRoundLookup(draftBoard);
   }, [draftBoard]);
  
-  // Default selected member
+  // Default selected member — also corrects selMember when a year/board
+  // switch leaves it pointing at a member who isn't in the new board
+  // (rosters aren't guaranteed identical across seasons).
   useEffect(() => {
-    if (draftBoard && !selMember) {
+    if (draftBoard && (!selMember || !draftBoard.memberOrder.includes(selMember))) {
       setSelMember(draftBoard.memberOrder[0]);
     }
   }, [draftBoard, selMember]);
@@ -302,25 +384,29 @@ export default function DraftRecap({ seasonYear = 2026 }) {
   if (loading) {
     return (
       <div style={{ textAlign: "center", padding: 60, color: theme.dim }}>
-        <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
+        <ClipboardList size={28} style={{ marginBottom: 8 }} />
         <div style={{ fontSize: 14 }}>Loading draft data...</div>
       </div>
     );
   }
- 
+
   if (error) {
     return (
-      <div style={{ textAlign: "center", padding: 60, color: theme.red }}>
-        <div style={{ fontSize: 28, marginBottom: 8 }}>⚠️</div>
-        <div style={{ fontSize: 14 }}>Failed to load: {error}</div>
+      <div style={{ textAlign: "center", padding: 60, ...cardStyle, maxWidth: 420, margin: "0 auto" }}>
+        <AlertTriangle size={28} color={theme.red} style={{ marginBottom: 10 }} />
+        <div style={{ fontSize: 14, marginBottom: 14 }}>Couldn't load draft data for {seasonYear}.</div>
+        <button onClick={load} style={{ background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
+          padding: "7px 16px", color: theme.txt, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Try again
+        </button>
       </div>
     );
   }
- 
+
   if (!draftBoard) {
     return (
       <div style={{ textAlign: "center", padding: 60, color: theme.dim }}>
-        <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
+        <ClipboardList size={28} style={{ marginBottom: 8 }} />
         <div style={{ fontSize: 14 }}>No draft board data available for {seasonYear}.</div>
         <div style={{ fontSize: 12, marginTop: 4, color: theme.mut }}>
           Draft board data is saved automatically when a draft is finalized.
@@ -344,7 +430,21 @@ export default function DraftRecap({ seasonYear = 2026 }) {
           {numMembers} members · {numRounds} rounds · {totalPicks} picks · snake format
         </p>
       </div>
- 
+
+      {isStale && (
+        <div style={{ ...cardStyle, marginBottom: 16, padding: "8px 12px", display: "flex",
+          alignItems: "center", gap: 8, border: "1px solid " + theme.yel }}>
+          <AlertTriangle size={13} color={theme.yel} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 11, color: theme.dim }}>
+            Showing cached data — couldn't reach the live picks/members just now.
+          </span>
+          <button onClick={load} style={{ marginLeft: "auto", background: "none", border: "none",
+            color: theme.acc, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* ── View Tabs ── */}
       <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
         <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "draft" }); setView("draft"); }} style={pill(view === "draft")}>📜 Draft Order</button>
@@ -535,14 +635,18 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         <div>
           <div style={{ textAlign: "center", marginBottom: 16 }}>
             <div style={{ fontSize: 24, fontWeight: 800 }}>💎 Steals & Busts</div>
-            <div style={{ fontSize: 12, color: theme.dim, marginTop: 2, maxWidth: 520, margin: "4px auto 0" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 8,
+              padding: "3px 10px", borderRadius: 20, background: theme.accSoft, color: theme.acc,
+              fontSize: 10, fontWeight: 700 }}>
+              <AlertTriangle size={11} />
+              Mixes scoring scales across categories — a fun approximation, not a precise stat
+            </div>
+            <div style={{ fontSize: 12, color: theme.dim, marginTop: 8, maxWidth: 480, margin: "8px auto 0" }}>
               Ranks each of the {valueBoard.length} scored picks two ways — by draft
               order and by points — and compares the two ranks. A big positive value
               means a pick massively outscored the others drafted around the same
               time; a big negative value means it underperformed. Only scored picks
               count on both sides, so this shifts as more of the season gets scored.
-              It also mixes categories with different scoring ranges, so treat it as
-              a fun approximation, not gospel.
             </div>
           </div>
 

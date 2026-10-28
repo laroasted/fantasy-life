@@ -1,4 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import {
+  Trophy,
+  BarChart3,
+  TrendingUp,
+  Calendar as CalendarIcon,
+  ClipboardList,
+  Landmark,
+  Target,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
 import { withTimeout } from "./utils/helpers";
@@ -25,6 +35,7 @@ import DraftRecap from "./components/DraftRecap";
 import Trends from "./components/Trends";
 import PrivacyPolicy from "./components/PrivacyPolicy";
 import AdUnit from "./components/AdUnit";
+import ScrollFadeEdges from "./components/ScrollFadeEdges";
 import {
   track,
   EVENTS,
@@ -35,17 +46,26 @@ import {
 } from "./utils/analytics";
 
 const TABS = [
-  { id: "scoreboard", label: "📊 Scoreboard", short: "📊" },
-  { id: "trends",     label: "📈 Trends",     short: "📈" },
-  { id: "calendar",   label: "📅 Calendar",   short: "📅" },
-  { id: "recap",      label: "📋 Recap",      short: "📋" },
-  { id: "history",    label: "🏛️ History",    short: "🏛️" },
-  { id: "draft",      label: "🎯 Draft",      short: "🎯" },
-  { id: "settings",   label: "⚙️ Settings",   short: "⚙️" },
+  { id: "scoreboard", label: "Scoreboard", Icon: BarChart3 },
+  { id: "trends",     label: "Trends",     Icon: TrendingUp },
+  { id: "calendar",   label: "Calendar",   Icon: CalendarIcon },
+  { id: "recap",      label: "Recap",      Icon: ClipboardList },
+  { id: "history",    label: "History",    Icon: Landmark },
+  { id: "draft",      label: "Draft",      Icon: Target },
+  { id: "settings",   label: "Settings",   Icon: SettingsIcon },
 ];
- 
+const TAB_IDS = TABS.map(function (t) { return t.id; }).concat(["privacy"]);
+
+// Lets a link like "?tab=draft" land directly on that tab instead of
+// always opening to Scoreboard, so a tab is actually shareable.
+function tabFromUrl() {
+  var params = new URLSearchParams(window.location.search);
+  var fromUrl = params.get("tab");
+  return TAB_IDS.includes(fromUrl) ? fromUrl : "scoreboard";
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState("scoreboard");
+  const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [activeSeason, setActiveSeason] = useState(null);
   const [archivedSeasons, setArchivedSeasons] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -70,7 +90,20 @@ export default function App() {
   }, []);
 
   useEffect(() => { setDeviceTypeSuperProperty(isMobile); }, [isMobile]);
- 
+
+  // Keep the URL in sync with the active tab so a tab is a link someone can
+  // actually send to the group chat, not just an in-session click target.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (activeTab === "scoreboard") params.delete("tab");
+    else params.set("tab", activeTab);
+    const search = params.toString();
+    const newUrl = window.location.pathname + (search ? "?" + search : "") + window.location.hash;
+    window.history.replaceState(null, "", newUrl);
+  }, [activeTab]);
+
+  const tabBarRef = useRef(null);
+
   useEffect(() => {
     let isMounted = true;
  
@@ -219,6 +252,11 @@ export default function App() {
     const newArchived = [activeSeason, ...archivedSeasons].filter(Boolean);
     setArchivedSeasons(newArchived);
     setActiveSeason(newSeason);
+    // Without this, selectedYear keeps pointing at the season that just
+    // got archived — isViewingActive would read false and the commissioner
+    // would land back on the season they just finalized out of, not the
+    // new one.
+    setSelectedYear(newSeason.year);
     try { await storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(newSeason)); } catch (e) {}
     try { await storageSet(STORAGE_KEYS.ARCHIVED_SEASONS, JSON.stringify(newArchived)); } catch (e) {}
     setActiveTab("scoreboard");
@@ -287,15 +325,73 @@ export default function App() {
     if (!result.ok) setAuthError(result.error || "Unable to sign out.");
     setAuthLoading(false);
   }, []);
- 
+
+  // ── Season/year picker ──
+  // Scoreboard, Trends, Calendar, and Recap can all show any season on
+  // record, not just whichever one is currently active — Settings stays
+  // tied to the active season always (editing history is a separate,
+  // riskier feature nobody asked for yet).
+  const [selectedYear, setSelectedYear] = useState(null);
+
+  // Defaults to the active season on first load; a shared "?year=2025"
+  // link overrides that default so a specific season view is linkable.
+  useEffect(() => {
+    if (selectedYear !== null || !activeSeason) return;
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = parseInt(params.get("year"), 10);
+    setSelectedYear(!isNaN(fromUrl) ? fromUrl : activeSeason.year);
+  }, [activeSeason, selectedYear]);
+
+  useEffect(() => {
+    if (selectedYear === null || !activeSeason) return;
+    const params = new URLSearchParams(window.location.search);
+    if (selectedYear === activeSeason.year) params.delete("year");
+    else params.set("year", String(selectedYear));
+    const search = params.toString();
+    const newUrl = window.location.pathname + (search ? "?" + search : "") + window.location.hash;
+    window.history.replaceState(null, "", newUrl);
+  }, [selectedYear, activeSeason]);
+
+  const availableSeasons = useMemo(() => {
+    if (!activeSeason) return [];
+    const list = [{ year: activeSeason.year, isActive: true }];
+    archivedSeasons.forEach((s) => { if (s && s.year) list.push({ year: s.year, isActive: false }); });
+    return list.sort((a, b) => b.year - a.year);
+  }, [activeSeason, archivedSeasons]);
+
+  // Correct a selected year that isn't a real season — a stale/typo'd
+  // "?year=" link, most likely — back to the active season. This can't run
+  // in the same effect that reads the URL, or gate on availableSeasons
+  // merely being non-empty: it gets an entry for the active season the
+  // instant activeSeason loads, while archivedSeasons is fetched in a
+  // separate, later step of the mount effect. Gating on `loaded` instead —
+  // which only flips true once both fetches have settled — is what
+  // actually waits long enough for a legitimate archived-year deep link
+  // not to be misjudged as invalid and reset before archivedSeasons has
+  // had a chance to arrive.
+  useEffect(() => {
+    if (!loaded || selectedYear === null || !activeSeason) return;
+    if (!availableSeasons.some((s) => s.year === selectedYear)) setSelectedYear(activeSeason.year);
+  }, [loaded, availableSeasons, selectedYear, activeSeason]);
+
+  const isViewingActive = !activeSeason || selectedYear === null || selectedYear === activeSeason.year;
+
+  // The full season object for whatever year is selected — used by
+  // Scoreboard and Trends, which both need more than just the year number.
+  const viewingSeasonData = useMemo(() => {
+    if (!activeSeason) return null;
+    if (isViewingActive) return activeSeason;
+    return archivedSeasons.find((s) => s && s.year === selectedYear) || activeSeason;
+  }, [activeSeason, archivedSeasons, selectedYear, isViewingActive]);
+
   if (!loaded) {
     return (
       <div style={{ background: theme.bg, minHeight: "100vh", display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", color: theme.dim, fontFamily: "system-ui", gap: 12 }}>
-        <div style={{ fontSize: 32 }}>🏆</div>
+        <Trophy size={32} color={theme.acc} />
         <div style={{ fontSize: 16, fontWeight: 600 }}>Loading scores...</div>
-        <div style={{ width: 120, height: 3, borderRadius: 2, background: "#1e293b", overflow: "hidden" }}>
-          <div style={{ width: "40%", height: "100%", borderRadius: 2, background: "#3b82f6",
+        <div style={{ width: 120, height: 3, borderRadius: 2, background: theme.card, overflow: "hidden" }}>
+          <div style={{ width: "40%", height: "100%", borderRadius: 2, background: theme.acc,
             animation: "pulse 1.5s ease-in-out infinite" }} />
         </div>
         <style>{`@keyframes pulse { 0%,100% { opacity: 0.4; transform: translateX(-20px); } 50% { opacity: 1; transform: translateX(80px); } }`}</style>
@@ -303,18 +399,18 @@ export default function App() {
     );
   }
  
-  var draftDateStr = activeSeason && activeSeason.draftDate
-    ? new Date(activeSeason.draftDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-    : "March 15, 2026";
-  var year = (activeSeason && activeSeason.year) || 2026;
-  var memberCount = (activeSeason && activeSeason.memberCount) || 12;
+  var draftDateStr = viewingSeasonData && viewingSeasonData.draftDate
+    ? new Date(viewingSeasonData.draftDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+    : "date not set";
+  var viewingYear = selectedYear !== null ? selectedYear : (activeSeason && activeSeason.year) || new Date().getFullYear();
+  var memberCount = (viewingSeasonData && viewingSeasonData.memberCount) || 12;
  
   return (
     <div style={{ background: theme.bg, minHeight: "100vh", color: theme.txt,
       fontFamily: "Inter, system-ui, sans-serif" }}>
       {/* ── Header + Tabs ── */}
       <div style={{
-        background: "linear-gradient(135deg, #1e293b, #0f172a)",
+        background: theme.card,
         borderBottom: "1px solid " + theme.bdr,
         padding: isMobile ? "12px 12px 0" : "16px 20px 0",
         position: "sticky", top: 0, zIndex: 100,
@@ -323,18 +419,19 @@ export default function App() {
           {/* Title row */}
           <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12,
             marginBottom: isMobile ? 10 : 16 }}>
-            <span style={{ fontSize: isMobile ? 24 : 32 }}>🏆</span>
+            <Trophy size={isMobile ? 22 : 28} color={theme.acc} style={{ flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{
-                fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0,
-                background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
-                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0, color: "#FAFAFA",
               }}>Fantasy Life</h1>
               <p style={{ color: theme.dim, margin: 0, fontSize: isMobile ? 10 : 12 }}>
                 {memberCount} Members · 15 Categories
               </p>
             </div>
-            {authReady && (
+            {/* Commissioner auth only matters on Draft/Settings — keeping it off the
+                header on every other tab gives the primary surfaces (Scoreboard
+                especially) back the width this was eating on mobile. */}
+            {authReady && (activeTab === "draft" || activeTab === "settings") && (
               <div style={{
                 display: "flex",
                 flexDirection: "column",
@@ -374,11 +471,11 @@ export default function App() {
                       onClick={() => { setAuthError(""); handleGoogleSignIn(); }}
                       disabled={authLoading}
                       style={{
-                        background: "linear-gradient(135deg, #2563eb, #7c3aed)",
-                        border: "none",
+                        background: "none",
+                        border: "1px solid " + theme.bdr,
                         borderRadius: 8,
                         padding: isMobile ? "5px 8px" : "6px 10px",
-                        color: "#fff",
+                        color: theme.txt,
                         fontSize: 11,
                         fontWeight: 700,
                         cursor: authLoading ? "default" : "pointer",
@@ -394,6 +491,13 @@ export default function App() {
                   </div>
                 )}
               </div>
+            )}
+            {/* Elsewhere, a signed-in commissioner gets a quiet reminder instead of
+                losing all trace that they're signed in. */}
+            {authReady && !(activeTab === "draft" || activeTab === "settings") && isCommissioner && (
+              <span style={{ fontSize: 11, color: "#86efac", fontWeight: 700, flexShrink: 0 }}>
+                Commissioner
+              </span>
             )}
             <button onClick={handleRefresh} disabled={refreshing}
               style={{
@@ -413,13 +517,15 @@ export default function App() {
           </div>
  
           {/* Tab bar */}
-          <div style={{
+          <ScrollFadeEdges scrollRef={tabBarRef} fadeColor={theme.card}>
+          <div ref={tabBarRef} style={{
             display: "flex", gap: 0,
             overflowX: isMobile ? "auto" : "visible",
             WebkitOverflowScrolling: "touch",
             msOverflowStyle: "none", scrollbarWidth: "none",
           }}>
             {TABS.map(function (t) {
+              var isActive = activeTab === t.id;
               return (
                 <button key={t.id} onClick={function () {
                     track(EVENTS.TAB_VIEWED, { tab_name: t.id, previous_tab: activeTab, is_mobile: isMobile });
@@ -427,54 +533,83 @@ export default function App() {
                   }}
                   style={{
                     flex: isMobile ? "0 0 auto" : "unset",
+                    display: "flex", alignItems: "center", gap: 6,
                     padding: isMobile ? "8px 10px" : "10px 20px",
                     background: "none", border: "none",
-                    borderBottom: activeTab === t.id ? "2px solid " + theme.acc : "2px solid transparent",
-                    color: activeTab === t.id ? "#f8fafc" : theme.dim,
+                    borderBottom: isActive ? "2px solid " + theme.acc : "2px solid transparent",
+                    color: isActive ? theme.acc : theme.dim,
                     fontSize: isMobile ? 11 : 13,
-                    fontWeight: activeTab === t.id ? 700 : 500,
+                    fontWeight: isActive ? 700 : 500,
                     cursor: "pointer", whiteSpace: "nowrap",
                   }}>
-                  {isMobile ? t.short + " " + t.id.charAt(0).toUpperCase() + t.id.slice(1) : t.label}
+                  <t.Icon size={isMobile ? 14 : 15} />
+                  <span>{t.label}</span>
                 </button>
               );
             })}
           </div>
+          </ScrollFadeEdges>
         </div>
       </div>
- 
+
       {/* ── Tab Content ── */}
       <div style={{ padding: isMobile ? "12px 8px" : "20px 16px" }}>
+        {["scoreboard", "trends", "calendar", "recap"].includes(activeTab) && availableSeasons.length > 1 && (
+          <div style={{ maxWidth: 760, margin: "0 auto 14px", display: "flex", alignItems: "center",
+            justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+            <select value={viewingYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+              style={{ background: theme.card, border: "1px solid " + theme.bdr, borderRadius: 8,
+                padding: "6px 10px", color: theme.txt, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              {availableSeasons.map((s) => (
+                <option key={s.year} value={s.year}>{s.year}{s.isActive ? " (current)" : ""}</option>
+              ))}
+            </select>
+            {!isViewingActive && (
+              <button onClick={() => setSelectedYear(activeSeason.year)}
+                style={{ background: "none", border: "none", color: theme.acc, cursor: "pointer",
+                  fontSize: 11, fontWeight: 700, textDecoration: "underline", padding: 0 }}>
+                Back to current season
+              </button>
+            )}
+          </div>
+        )}
         {activeTab === "scoreboard" && (
           <div>
             <div style={{ textAlign: "center", marginBottom: 20, maxWidth: 760, margin: "0 auto 20px" }}>
               <h2 style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800, margin: 0, color: "#f8fafc" }}>
-                {year} Season
+                {viewingYear} Season
               </h2>
               <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: "4px 0 0" }}>
-                {draftDateStr} through {year + 1} Academy Awards · {memberCount} members
+                {draftDateStr} through {viewingYear + 1} Academy Awards · {memberCount} members
               </p>
-              {lastUpdated && (
-                <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6 }}>
-                  {dataSource === "supabase" ? "🟢 Live" : dataSource === "local" ? "🟡 Cached" : "🔴 Offline"}
+              <p style={{ fontSize: isMobile ? 10 : 11, color: theme.mut, margin: "4px 0 0" }}>
+                Ranked by total points — base points from each pick's real-world result, plus bonus points, across 15 categories
+              </p>
+              {lastUpdated && isViewingActive && (
+                <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                  <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                    background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red }} />
+                  {dataSource === "supabase" ? "Live" : dataSource === "local" ? "Cached" : "Offline"}
                   {" "}· Updated {lastUpdated.toLocaleTimeString()}
                 </p>
               )}
             </div>
-            <Scoreboard seasonData={activeSeason} onUnlockPaywall={handlePaywallUnlock} />
+            <Scoreboard seasonData={viewingSeasonData} onUnlockPaywall={isViewingActive ? handlePaywallUnlock : undefined} />
             <div style={{ maxWidth: 760, margin: "20px auto 0" }}>
               <AdUnit slot="9806940854" />
             </div>
           </div>
         )}
         {activeTab === "trends" && (
-          <Trends seasonData={activeSeason} />
+          <Trends seasonData={viewingSeasonData} />
         )}
         {activeTab === "calendar" && (
-          <Calendar seasonYear={year} />
+          <Calendar seasonYear={viewingYear} />
         )}
         {activeTab === "recap" && (
-          <DraftRecap seasonYear={year} />
+          <DraftRecap seasonYear={viewingYear} />
         )}
         {activeTab === "history" && <SeasonHistory archivedSeasons={archivedSeasons} />}
         {activeTab === "draft" && (
