@@ -7,7 +7,7 @@
 // for whatever year the commissioner types in — nothing here needs a yearly
 // code change for a new season to work.
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ClipboardList, AlertTriangle } from "lucide-react";
 import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
@@ -112,6 +112,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isStale, setIsStale] = useState(false);
+  const requestIdRef = useRef(0);
 
   // ── Fetch draft board, picks, and members from Supabase ──
   // Falls back to a cached {picks, members} snapshot (and, failing that,
@@ -119,12 +120,14 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   // the same way App.jsx's loadSeason() and Calendar.jsx already do — this
   // used to just throw and leave the whole tab blank on any hiccup, with
   // FALLBACK_BOARDS sitting there unused for exactly this purpose.
-  // isCancelled lets a request abandoned by a year switch skip its own
-  // setState calls when it finally resolves — see the matching comment in
-  // Trends.jsx's load() for why the effect's own cancelled flag, checked
-  // only after `await load()` returns, isn't enough on its own.
-  const load = useCallback(async (isCancelled) => {
-    const stillCurrent = () => !(isCancelled && isCancelled());
+  // load() takes no arguments and tracks its own request id so a manual
+  // retry button can call it directly (onClick={load}) without React's
+  // SyntheticEvent landing in a cancellation param — see the matching
+  // comment in Trends.jsx's load() for why the previous isCancelled-callback
+  // version broke on exactly that call pattern.
+  const load = useCallback(async () => {
+    const myRequestId = ++requestIdRef.current;
+    const stillCurrent = () => requestIdRef.current === myRequestId;
     setLoading(true);
     setError(null);
     const cacheKey = `${STORAGE_KEYS.DRAFT_RECAP_PREFIX}-${seasonYear}`;
@@ -205,9 +208,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   }, [seasonYear]);
 
   useEffect(() => {
-    let cancelled = false;
-    load(() => cancelled);
-    return () => { cancelled = true; };
+    load();
   }, [load]);
  
   // ── Derived data ──
@@ -242,9 +243,11 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
     return buildRoundLookup(draftBoard);
   }, [draftBoard]);
  
-  // Default selected member
+  // Default selected member — also corrects selMember when a year/board
+  // switch leaves it pointing at a member who isn't in the new board
+  // (rosters aren't guaranteed identical across seasons).
   useEffect(() => {
-    if (draftBoard && !selMember) {
+    if (draftBoard && (!selMember || !draftBoard.memberOrder.includes(selMember))) {
       setSelMember(draftBoard.memberOrder[0]);
     }
   }, [draftBoard, selMember]);

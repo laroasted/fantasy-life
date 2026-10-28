@@ -39,6 +39,7 @@ export default function Trends({ seasonData }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
   const svgWrapRef = useRef(null);
   const pillsRef = useRef(null);
+  const requestIdRef = useRef(0);
 
   const seasonYear = seasonData?.year;
   const members = useMemo(() => seasonData?.members || [], [seasonData]);
@@ -49,15 +50,19 @@ export default function Trends({ seasonData }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // isCancelled lets a request abandoned by a year switch skip its own
-  // setState calls when it finally resolves. The wrapping effect's own
-  // `cancelled` flag used to be checked only after `await load()` returned
-  // — by then load() had already committed state internally, so whichever
-  // of two in-flight requests (old year vs. newly selected year) happened
-  // to resolve LAST would win and silently overwrite the correct season's
-  // data with a stale one's.
-  const load = useCallback(async (isCancelled) => {
-    const stillCurrent = () => !(isCancelled && isCancelled());
+  // A request abandoned by a year switch (or a stale manual retry) must
+  // skip its own setState calls when it finally resolves. This used to be
+  // threaded through as an isCancelled callback passed into load() by its
+  // caller — but that broke the moment a retry button did `onClick={load}`
+  // directly: React passes the click event as load's first argument, so
+  // isCancelled became the event object, and calling it as a function threw,
+  // leaving the UI stuck on its loading state. A shared ref sidesteps that
+  // entirely: load() takes no arguments, so it's safe to pass as a handler
+  // directly, and every call (effect-triggered or a manual retry) stamps
+  // its own id — only the most recent one commits.
+  const load = useCallback(async () => {
+    const myRequestId = ++requestIdRef.current;
+    const stillCurrent = () => requestIdRef.current === myRequestId;
     if (!seasonYear) { setLoading(false); return; }
     setLoading(true);
     setError(null);
@@ -122,9 +127,7 @@ export default function Trends({ seasonData }) {
   }, [seasonYear]);
 
   useEffect(() => {
-    let cancelled = false;
-    load(() => cancelled);
-    return () => { cancelled = true; };
+    load();
   }, [load]);
 
   const memberMeta = useMemo(() => {

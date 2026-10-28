@@ -361,14 +361,18 @@ export default function App() {
 
   // Correct a selected year that isn't a real season — a stale/typo'd
   // "?year=" link, most likely — back to the active season. This can't run
-  // in the same effect that reads the URL: archivedSeasons hasn't loaded
-  // yet at that point (it's fetched after the active season, separately),
-  // so a legitimate archived year would look invalid too early. Running
-  // this once availableSeasons itself is populated sidesteps that.
+  // in the same effect that reads the URL, or gate on availableSeasons
+  // merely being non-empty: it gets an entry for the active season the
+  // instant activeSeason loads, while archivedSeasons is fetched in a
+  // separate, later step of the mount effect. Gating on `loaded` instead —
+  // which only flips true once both fetches have settled — is what
+  // actually waits long enough for a legitimate archived-year deep link
+  // not to be misjudged as invalid and reset before archivedSeasons has
+  // had a chance to arrive.
   useEffect(() => {
-    if (selectedYear === null || availableSeasons.length === 0 || !activeSeason) return;
+    if (!loaded || selectedYear === null || !activeSeason) return;
     if (!availableSeasons.some((s) => s.year === selectedYear)) setSelectedYear(activeSeason.year);
-  }, [availableSeasons, selectedYear, activeSeason]);
+  }, [loaded, availableSeasons, selectedYear, activeSeason]);
 
   const isViewingActive = !activeSeason || selectedYear === null || selectedYear === activeSeason.year;
 
