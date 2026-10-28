@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import { Lock } from "lucide-react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { Lock, ArrowUpRight } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme } from "../constants/theme";
@@ -7,6 +7,7 @@ import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedH
 import { track, EVENTS } from "../utils/analytics";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
 import PayPalButton from "./PayPalButton";
+import ScrollFadeEdges from "./ScrollFadeEdges";
 
 var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
  
@@ -33,17 +34,35 @@ function LockIndicator({ note }) {
  
 export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  var surfaceName = surface || "scoreboard";
- var _s = useState(null), selCat = _s[0], setSelCat = _s[1];
+ // Only the primary Scoreboard tab syncs its selected category to the URL —
+ // SeasonHistory renders one of these per archived season (surface="history"),
+ // and if those also wrote the same "cat" param they'd stomp each other.
+ var _s = useState(function () {
+  if (surfaceName !== "scoreboard") return null;
+  var params = new URLSearchParams(window.location.search);
+  var fromUrl = params.get("cat");
+  return fromUrl && CATEGORY_ORDER.includes(fromUrl) ? fromUrl : null;
+ }), selCat = _s[0], setSelCat = _s[1];
  var _e = useState(null), expRow = _e[0], setExpRow = _e[1];
  var _m = useState(window.innerWidth < 640), isMobile = _m[0], setIsMobile = _m[1];
  var _t = useState(null), toast = _t[0], setToast = _t[1];
- 
+ var pillsRef = useRef(null);
+
  useEffect(function () {
   var onResize = function () { setIsMobile(window.innerWidth < 640); };
   window.addEventListener("resize", onResize);
   return function () { window.removeEventListener("resize", onResize); };
  }, []);
- 
+
+ useEffect(function () {
+  if (surfaceName !== "scoreboard") return;
+  var params = new URLSearchParams(window.location.search);
+  if (selCat) params.set("cat", selCat); else params.delete("cat");
+  var search = params.toString();
+  var newUrl = window.location.pathname + (search ? "?" + search : "") + window.location.hash;
+  window.history.replaceState(null, "", newUrl);
+ }, [selCat, surfaceName]);
+
  if (!seasonData) {
   return <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>No active season.</div>;
  }
@@ -531,7 +550,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  return (
   <div style={{ maxWidth: 760, margin: "0 auto" }}>
    {/* Category pills */}
-   <div style={{
+   <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
+   <div ref={pillsRef} style={{
     display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
     gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
     overflowX: isMobile ? "auto" : "visible",
@@ -565,7 +585,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      );
     })}
    </div>
- 
+   </ScrollFadeEdges>
+
    {/* OVERALL VIEW */}
    {!selCat && (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -659,11 +680,24 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           }}>
           <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 800, color: "#94a3b8" }}>{medalDisplay(idx)}</span>
           <div style={{ minWidth: 0 }}>
-           <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: MEMBER_COLORS[mid] || "#f1f5f9",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {m.owner}
+           <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+            <span style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: MEMBER_COLORS[mid] || "#f1f5f9",
+             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+             {m.owner}
+            </span>
             {memberHasLocks && <LockIndicator note="Commissioner has locked some values for this entry" />}
-            {memberPaywalled && <Lock size={10} color={theme.yel} style={{ marginLeft: 4 }} />}
+            {memberPaywalled && <Lock size={10} color={theme.yel} style={{ marginLeft: 4, flexShrink: 0 }} />}
+            <button
+             onClick={function (e) {
+               e.stopPropagation();
+               track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: "overall", previous_category: selCat || "overall" });
+               setSelCat(null); setExpRow(m.owner);
+              }}
+             title={"See " + m.owner + " in every category"}
+             style={{ background: "none", border: "none", padding: 0, display: "inline-flex",
+              alignItems: "center", color: theme.dim, cursor: "pointer", flexShrink: 0 }}>
+             <ArrowUpRight size={12} />
+            </button>
            </div>
            <div style={{ fontSize: isMobile ? 10 : 11, color: theme.dim,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.pick}</div>

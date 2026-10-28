@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Lock } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
+import { storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
+import ScrollFadeEdges from "./ScrollFadeEdges";
 
 // ─── Which type of category is this? ───
 var FILM_CATS = ["Actor", "Actress"];
@@ -71,12 +73,35 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  var _k = useState(null), confirmDelete = _k[0], setConfirmDelete = _k[1];
  var _l = useState({}), paywallEdits = _l[0], setPaywallEdits = _l[1];
  var _m = useState(false), savedPaywall = _m[0], setSavedPaywall = _m[1];
+ var pillsRef = useRef(null);
 
  useEffect(function () {
   var onResize = function () { setIsMobile(window.innerWidth < 640); };
   window.addEventListener("resize", onResize);
   return function () { window.removeEventListener("resize", onResize); };
  }, []);
+
+ // Change log used to be useState([]) only — gone on refresh, which is a
+ // real risk for the one tool whose job is manually correcting scores.
+ // Persist it per season so "what did I just change" survives a reload.
+ var seasonYearForLog = seasonData && seasonData.year;
+ useEffect(function () {
+  if (!seasonYearForLog) return;
+  var cancelled = false;
+  storageGet(STORAGE_KEYS.SETTINGS_CHANGELOG_PREFIX + "-" + seasonYearForLog).then(function (r) {
+   if (cancelled || !r || !r.value) return;
+   try {
+    var cached = JSON.parse(r.value);
+    if (Array.isArray(cached) && cached.length > 0) setChangelog(cached);
+   } catch (e) { console.error("SeasonSettings: failed to parse cached changelog:", e); }
+  }).catch(function (e) { console.error("SeasonSettings: failed to load cached changelog:", e); });
+  return function () { cancelled = true; };
+ }, [seasonYearForLog]);
+
+ useEffect(function () {
+  if (!seasonYearForLog) return;
+  storageSet(STORAGE_KEYS.SETTINGS_CHANGELOG_PREFIX + "-" + seasonYearForLog, JSON.stringify(changelog)).catch(function () {});
+ }, [changelog, seasonYearForLog]);
 
  if (!seasonData) {
   return <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>No active season to edit.</div>;
@@ -436,7 +461,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
     <div style={{ fontSize: 48, marginBottom: 12 }}>{"\uD83D\uDD10"}</div>
     <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>Commissioner Access Required</h3>
     <p style={{ color: theme.dim, fontSize: 13, marginBottom: 16 }}>
-     Sign in from the header with your commissioner email magic link to unlock scoring controls, locks, and corrections.
+     Sign in with Google from the header (Draft or Settings tab) using your commissioner account to unlock scoring controls, locks, and corrections.
      </p>
     <div style={{ ...inputStyle, marginBottom: 8, textAlign: "left", opacity: 0.7 }}>
      {commissionerEmail ? commissionerEmail : "No commissioner session detected"}
@@ -682,27 +707,38 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ─── Mode tabs ─── */}
    <div style={{ display: "flex", gap: isMobile ? 3 : 8, marginBottom: 16 }}>
     {[
-     { id: "scores", label: isMobile ? "Scores" : "Scores & Bonus" },
-     { id: "details", label: isMobile ? "Details" : "Detail Lines" },
-     { id: "swaps", label: isMobile ? "Swaps" : "Swap Picks" },
-     { id: "locks", label: isMobile ? "Locks" : "Locks (" + Object.keys(locks).length + ")" },
-     { id: "paywall", label: isMobile ? "Paywall" : "💰 Paywall" },
-     { id: "log", label: isMobile ? "Log" : "Log" + (changelog.length ? " (" + changelog.length + ")" : "") },
+     { id: "scores", label: isMobile ? "Scores" : "Scores & Bonus", pending: Object.keys(edits).length + Object.keys(bonusNotes).length },
+     { id: "details", label: isMobile ? "Details" : "Detail Lines", pending: Object.keys(detailEdits).length },
+     { id: "swaps", label: isMobile ? "Swaps" : "Swap Picks", pending: Object.keys(swaps).length },
+     { id: "locks", label: isMobile ? "Locks" : "Locks (" + Object.keys(locks).length + ")", pending: 0 },
+     { id: "paywall", label: isMobile ? "Paywall" : "💰 Paywall", pending: Object.keys(paywallEdits).length },
+     { id: "log", label: isMobile ? "Log" : "Log" + (changelog.length ? " (" + changelog.length + ")" : ""), pending: 0 },
     ].map(function (tab) {
      return (
       <button key={tab.id} onClick={function () { track(EVENTS.SETTINGS_MODE_CHANGED, { mode: tab.id }); setMode(tab.id); }}
-       style={{ ...buttonStyle(mode === tab.id ? theme.acc : theme.srf), flex: 1,
+       title={tab.pending > 0 ? tab.pending + " unsaved change" + (tab.pending === 1 ? "" : "s") : undefined}
+       style={{ ...buttonStyle(mode === tab.id ? theme.acc : theme.srf), flex: 1, position: "relative",
         border: mode === tab.id ? "none" : "1px solid " + theme.bdr,
         fontSize: isMobile ? 11 : 12, padding: isMobile ? "8px 4px" : "10px 12px" }}>
        {tab.label}
+       {tab.pending > 0 && (
+        <span style={{ position: "absolute", top: -4, right: -4, width: 9, height: 9, borderRadius: "50%",
+         background: mode === tab.id ? "#fff" : theme.acc, border: "1.5px solid " + theme.card }} />
+       )}
       </button>
      );
     })}
    </div>
+   {(Object.keys(edits).length + Object.keys(bonusNotes).length + Object.keys(detailEdits).length + Object.keys(swaps).length + Object.keys(paywallEdits).length) > 0 && (
+    <div style={{ fontSize: 11, color: theme.dim, marginTop: -10, marginBottom: 16, textAlign: "center" }}>
+     You have unsaved changes — leaving Settings without hitting Save loses them.
+    </div>
+   )}
 
    {/* ─── Category pills ─── */}
    {mode !== "log" && mode !== "paywall" && (
-    <div style={{
+    <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
+    <div ref={pillsRef} style={{
      display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
      gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
      overflowX: isMobile ? "auto" : "visible",
@@ -711,20 +747,21 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
     }}>
      {CATEGORY_ORDER.map(function (k) {
       var lockCount = Object.keys(locks).filter(function (l) { return l.startsWith(k + "|"); }).length;
+      var isSel = editCat === k;
       return (
        <button key={k} onClick={function () {
           track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "settings", category: k, previous_category: editCat });
           setEditCat(k); setExpandedMember(null);
          }}
         style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-         border: "1px solid " + (editCat === k ? "#3b82f6" : "#334155"),
-         background: editCat === k ? "#3b82f6" : "#1e293b",
-         color: "#f1f5f9", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+         border: "1px solid " + (isSel ? theme.acc : theme.bdr),
+         background: isSel ? theme.acc : theme.card,
+         color: isSel ? "#1A1200" : theme.txt, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
          position: "relative" }}>
         {CATEGORY_LABELS[k]}
         {lockCount > 0 && mode === "locks" && (
-         <span style={{ position: "absolute", top: -4, right: -4, background: "#eab308",
-          color: "#0f172a", borderRadius: 10, padding: "0 4px", fontSize: 8, fontWeight: 800 }}>
+         <span style={{ position: "absolute", top: -4, right: -4, background: theme.yel,
+          color: "#1A1200", borderRadius: 10, padding: "0 4px", fontSize: 8, fontWeight: 800 }}>
           {lockCount}
          </span>
         )}
@@ -732,6 +769,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
       );
      })}
     </div>
+    </ScrollFadeEdges>
    )}
 
    {/* ═══ SCORES & BONUS MODE ═══ */}

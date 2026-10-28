@@ -35,6 +35,7 @@ import DraftRecap from "./components/DraftRecap";
 import Trends from "./components/Trends";
 import PrivacyPolicy from "./components/PrivacyPolicy";
 import AdUnit from "./components/AdUnit";
+import ScrollFadeEdges from "./components/ScrollFadeEdges";
 import {
   track,
   EVENTS,
@@ -53,9 +54,18 @@ const TABS = [
   { id: "draft",      label: "Draft",      Icon: Target },
   { id: "settings",   label: "Settings",   Icon: SettingsIcon },
 ];
- 
+const TAB_IDS = TABS.map(function (t) { return t.id; }).concat(["privacy"]);
+
+// Lets a link like "?tab=draft" land directly on that tab instead of
+// always opening to Scoreboard, so a tab is actually shareable.
+function tabFromUrl() {
+  var params = new URLSearchParams(window.location.search);
+  var fromUrl = params.get("tab");
+  return TAB_IDS.includes(fromUrl) ? fromUrl : "scoreboard";
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState("scoreboard");
+  const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [activeSeason, setActiveSeason] = useState(null);
   const [archivedSeasons, setArchivedSeasons] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -80,7 +90,20 @@ export default function App() {
   }, []);
 
   useEffect(() => { setDeviceTypeSuperProperty(isMobile); }, [isMobile]);
- 
+
+  // Keep the URL in sync with the active tab so a tab is a link someone can
+  // actually send to the group chat, not just an in-session click target.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (activeTab === "scoreboard") params.delete("tab");
+    else params.set("tab", activeTab);
+    const search = params.toString();
+    const newUrl = window.location.pathname + (search ? "?" + search : "") + window.location.hash;
+    window.history.replaceState(null, "", newUrl);
+  }, [activeTab]);
+
+  const tabBarRef = useRef(null);
+
   useEffect(() => {
     let isMounted = true;
  
@@ -342,7 +365,10 @@ export default function App() {
                 {memberCount} Members · 15 Categories
               </p>
             </div>
-            {authReady && (
+            {/* Commissioner auth only matters on Draft/Settings — keeping it off the
+                header on every other tab gives the primary surfaces (Scoreboard
+                especially) back the width this was eating on mobile. */}
+            {authReady && (activeTab === "draft" || activeTab === "settings") && (
               <div style={{
                 display: "flex",
                 flexDirection: "column",
@@ -403,6 +429,13 @@ export default function App() {
                 )}
               </div>
             )}
+            {/* Elsewhere, a signed-in commissioner gets a quiet reminder instead of
+                losing all trace that they're signed in. */}
+            {authReady && !(activeTab === "draft" || activeTab === "settings") && isCommissioner && (
+              <span style={{ fontSize: 11, color: "#86efac", fontWeight: 700, flexShrink: 0 }}>
+                Commissioner
+              </span>
+            )}
             <button onClick={handleRefresh} disabled={refreshing}
               style={{
                 background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
@@ -421,7 +454,8 @@ export default function App() {
           </div>
  
           {/* Tab bar */}
-          <div style={{
+          <ScrollFadeEdges scrollRef={tabBarRef} fadeColor={theme.card}>
+          <div ref={tabBarRef} style={{
             display: "flex", gap: 0,
             overflowX: isMobile ? "auto" : "visible",
             WebkitOverflowScrolling: "touch",
@@ -451,9 +485,10 @@ export default function App() {
               );
             })}
           </div>
+          </ScrollFadeEdges>
         </div>
       </div>
- 
+
       {/* ── Tab Content ── */}
       <div style={{ padding: isMobile ? "12px 8px" : "20px 16px" }}>
         {activeTab === "scoreboard" && (
@@ -464,6 +499,9 @@ export default function App() {
               </h2>
               <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: "4px 0 0" }}>
                 {draftDateStr} through {year + 1} Academy Awards · {memberCount} members
+              </p>
+              <p style={{ fontSize: isMobile ? 10 : 11, color: theme.mut, margin: "4px 0 0" }}>
+                Ranked by total points — base points from each pick's real-world result, plus bonus points, across 15 categories
               </p>
               {lastUpdated && (
                 <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,

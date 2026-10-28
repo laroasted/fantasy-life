@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { Clock, CalendarDays } from "lucide-react";
 import { supabase } from "../utils/storage";
 import { theme } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
@@ -233,7 +234,7 @@ export default function Calendar({ seasonYear }) {
   if (loading) {
     return (
       <div style={{ maxWidth:760, margin:"0 auto", textAlign:"center", padding:60, color:s.dim }}>
-        <div style={{ fontSize:24, marginBottom:8 }}>📅</div>
+        <CalendarDays size={24} style={{ marginBottom:8 }} />
         <div style={{ fontSize:14, fontWeight:600 }}>Loading calendar...</div>
       </div>
     );
@@ -289,7 +290,15 @@ export default function Calendar({ seasonYear }) {
               const isExp = expId === eid;
  
               return (
-                <div key={eid} ref={isFirst ? activeRef : null}
+                <div key={eid}>
+                {isFirst && (
+                  <div style={{ display:"flex", alignItems:"center", gap:8, margin:"14px 0 6px" }}>
+                    <div style={{ flex:1, height:1, background:s.acc, opacity:0.4 }} />
+                    <span style={{ fontSize:10, fontWeight:800, letterSpacing:1.5, color:s.acc }}>UP NEXT</span>
+                    <div style={{ flex:1, height:1, background:s.acc, opacity:0.4 }} />
+                  </div>
+                )}
+                <div ref={isFirst ? activeRef : null}
                   onClick={() => {
                     if (!isExp) {
                       track(EVENTS.CALENDAR_EVENT_EXPANDED, {
@@ -373,12 +382,27 @@ export default function Calendar({ seasonYear }) {
                     </div>}
                   </div>
                 </div>
+                </div>
               );
             })}
           </div>
         );
       })}
  
+      {firstActiveIdx !== -1 && (
+        <button
+          onClick={() => activeRef.current?.scrollIntoView({ behavior:"smooth", block:"center" })}
+          style={{
+            position:"fixed", bottom:20, right:20, zIndex:50,
+            display:"flex", alignItems:"center", gap:6,
+            background:s.card, border:"1px solid " + s.acc, borderRadius:999,
+            padding:"8px 14px", color:s.acc, fontSize:12, fontWeight:700,
+            cursor:"pointer", boxShadow:"0 8px 20px rgba(0,0,0,0.4)",
+          }}>
+          <Clock size={13} /> This Week
+        </button>
+      )}
+
       <style>{`@keyframes calPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}`}</style>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { AlertTriangle } from "lucide-react";
 import { DRAFT_MEMBERS, MEMBER_COLORS, NEW_MEMBER_COLORS } from "../constants/members";
 import { DRAFT_CATEGORIES, CATEGORY_ORDER, CATEGORY_KEY_TO_ID } from "../constants/categories";
 import { PICK_OPTIONS } from "../constants/pickOptions";
@@ -48,7 +49,22 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
  
   const timerRef = useRef(null);
- 
+
+  // Anyone can run through setup and a full mock draft — only finalize is
+  // gated — but until now nothing told a non-commissioner visitor that
+  // none of it would be saved until the very last click.
+  const nonCommissionerBanner = !isCommissioner && (
+    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.yel,
+      display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <AlertTriangle size={16} color={theme.yel} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
+        <b style={{ color: theme.yel }}>You're not signed in as commissioner.</b> You can run
+        through this whole draft, but none of it will be saved — sign in with Google from the
+        header to make it official.
+      </div>
+    </div>
+  );
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
@@ -347,7 +363,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           <h2 style={{ margin: "0 0 8px", fontSize: isMobile ? 18 : 22 }}>New Season Draft</h2>
           <p style={{ color: theme.dim, fontSize: 13 }}>Set up members, enter guesses, and determine draft order.</p>
         </div>
- 
+
+        {nonCommissionerBanner}
+
         {/* Member Management */}
         <div style={{ ...cardStyle, marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -404,7 +422,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           </div>
         </div>
  
-        {/* Guesses */}
+        {/* Guesses — hidden while Manage is open so the member list isn't
+            shown twice in a row the user has to scroll past */}
+        {!showMemberMgmt && (
         <div style={{ ...cardStyle, marginBottom: 16 }}>
           <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Member Guesses</h3>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
@@ -418,6 +438,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             ))}
           </div>
         </div>
+        )}
  
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           <button onClick={calculateOrder} style={{ ...buttonStyle(), width: "100%" }}>Calculate Draft Order</button>
@@ -704,7 +725,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           </button>
         )}
       </div>
- 
+
+      {nonCommissionerBanner}
+
       {panelToggle}
  
       {isMobile ? (
