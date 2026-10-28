@@ -252,6 +252,11 @@ export default function App() {
     const newArchived = [activeSeason, ...archivedSeasons].filter(Boolean);
     setArchivedSeasons(newArchived);
     setActiveSeason(newSeason);
+    // Without this, selectedYear keeps pointing at the season that just
+    // got archived — isViewingActive would read false and the commissioner
+    // would land back on the season they just finalized out of, not the
+    // new one.
+    setSelectedYear(newSeason.year);
     try { await storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(newSeason)); } catch (e) {}
     try { await storageSet(STORAGE_KEYS.ARCHIVED_SEASONS, JSON.stringify(newArchived)); } catch (e) {}
     setActiveTab("scoreboard");
@@ -353,6 +358,17 @@ export default function App() {
     archivedSeasons.forEach((s) => { if (s && s.year) list.push({ year: s.year, isActive: false }); });
     return list.sort((a, b) => b.year - a.year);
   }, [activeSeason, archivedSeasons]);
+
+  // Correct a selected year that isn't a real season — a stale/typo'd
+  // "?year=" link, most likely — back to the active season. This can't run
+  // in the same effect that reads the URL: archivedSeasons hasn't loaded
+  // yet at that point (it's fetched after the active season, separately),
+  // so a legitimate archived year would look invalid too early. Running
+  // this once availableSeasons itself is populated sidesteps that.
+  useEffect(() => {
+    if (selectedYear === null || availableSeasons.length === 0 || !activeSeason) return;
+    if (!availableSeasons.some((s) => s.year === selectedYear)) setSelectedYear(activeSeason.year);
+  }, [availableSeasons, selectedYear, activeSeason]);
 
   const isViewingActive = !activeSeason || selectedYear === null || selectedYear === activeSeason.year;
 

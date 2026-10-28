@@ -12,10 +12,19 @@ export default function ScrollFadeEdges({ scrollRef, children, fadeColor }) {
 
   function check() {
     var el = scrollRef.current;
-    if (!el) { setOverflow({ left: false, right: false }); return; }
-    setOverflow({
-      left: el.scrollLeft > 4,
-      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4,
+    var next = el
+      ? { left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 }
+      : { left: false, right: false };
+    // Bail out with the SAME object reference when nothing changed. A new
+    // {left,right} literal every call is never Object.is-equal to the
+    // previous one even when both fields match, so without this check
+    // React never bails out of re-rendering — the effect below has no
+    // dependency array (it has to re-check after the DOM it measures
+    // changes), so a setState that always "changes" on every render here
+    // reruns the effect, which calls setOverflow again, forever.
+    setOverflow(function (prev) {
+      if (prev.left === next.left && prev.right === next.right) return prev;
+      return next;
     });
   }
 

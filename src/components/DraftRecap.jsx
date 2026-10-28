@@ -119,7 +119,12 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   // the same way App.jsx's loadSeason() and Calendar.jsx already do — this
   // used to just throw and leave the whole tab blank on any hiccup, with
   // FALLBACK_BOARDS sitting there unused for exactly this purpose.
-  const load = useCallback(async () => {
+  // isCancelled lets a request abandoned by a year switch skip its own
+  // setState calls when it finally resolves — see the matching comment in
+  // Trends.jsx's load() for why the effect's own cancelled flag, checked
+  // only after `await load()` returns, isn't enough on its own.
+  const load = useCallback(async (isCancelled) => {
+    const stillCurrent = () => !(isCancelled && isCancelled());
     setLoading(true);
     setError(null);
     const cacheKey = `${STORAGE_KEYS.DRAFT_RECAP_PREFIX}-${seasonYear}`;
@@ -148,6 +153,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
           fallback_level: cached ? "local" : (board ? "hardcoded" : "none"),
           reason: "supabase_fetch_failed",
         });
+        if (!stillCurrent()) return;
         if (!board) {
           // No live data, no cache, and no hardcoded board for this specific
           // year — genuinely nothing to show. This is a real, actionable
@@ -167,6 +173,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
         return;
       }
 
+      if (!stillCurrent()) return;
       setPicks(pickData || []);
       setMembers(memberData || []);
       setDraftBoard(board);
@@ -182,6 +189,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
         const r = await storageGet(cacheKey);
         if (r && r.value) cached = JSON.parse(r.value);
       } catch (e2) {}
+      if (!stillCurrent()) return;
       const fallbackBoard = FALLBACK_BOARDS[seasonYear] || null;
       if (cached && fallbackBoard) {
         setPicks(cached.picks || []);
@@ -198,7 +206,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => { await load(); if (cancelled) return; })();
+    load(() => cancelled);
     return () => { cancelled = true; };
   }, [load]);
  

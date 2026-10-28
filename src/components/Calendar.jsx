@@ -23,6 +23,12 @@ const CAT = {
 };
  
 // ── Fallback events (used if Supabase fetch fails) ──
+// This content is specifically the 2026 fantasy season's calendar — only
+// ever safe to substitute in when viewing that exact season. Showing it
+// under a different year's selection would silently mislabel 2026 dates
+// and results as if they belonged to whatever year the user actually
+// picked.
+const FALLBACK_EVENTS_YEAR = 2026;
 const FALLBACK_EVENTS = [
   { date:"2026-03-15", title:"Fantasy Life 2026 Draft", subtitle:"Annual draft day", category:"General", type:"draft" },
   { date:"2026-03-15", title:"98th Academy Awards (Oscars)", subtitle:"Dolby Theatre, Hollywood — Actor/Actress bonus pts", category:"Film", type:"awards_show", bonus:true, result:"Best Actor: Michael B. Jordan · Best Actress: Jessie Buckley" },
@@ -183,17 +189,27 @@ export default function Calendar({ seasonYear }) {
         } else {
           if (!cancelled) {
             console.warn("Calendar: Supabase returned no data or error, using fallback.", error);
-            setEvents(FALLBACK_EVENTS);
-            setSource("fallback");
-            track(EVENTS.DATA_FALLBACK_USED, { surface: "calendar", fallback_level: "hardcoded", reason: error ? error.message : "empty_response" });
+            const canUseFallback = yr === FALLBACK_EVENTS_YEAR;
+            setEvents(canUseFallback ? FALLBACK_EVENTS : []);
+            setSource(canUseFallback ? "fallback" : "none");
+            track(EVENTS.DATA_FALLBACK_USED, {
+              surface: "calendar",
+              fallback_level: canUseFallback ? "hardcoded" : "none",
+              reason: error ? error.message : "empty_response",
+            });
           }
         }
       } catch (e) {
         if (!cancelled) {
           console.error("Calendar: fetch failed, using fallback.", e);
-          setEvents(FALLBACK_EVENTS);
-          setSource("fallback");
-          track(EVENTS.DATA_FALLBACK_USED, { surface: "calendar", fallback_level: "hardcoded", reason: e.message || "fetch_threw" });
+          const canUseFallback = yr === FALLBACK_EVENTS_YEAR;
+          setEvents(canUseFallback ? FALLBACK_EVENTS : []);
+          setSource(canUseFallback ? "fallback" : "none");
+          track(EVENTS.DATA_FALLBACK_USED, {
+            surface: "calendar",
+            fallback_level: canUseFallback ? "hardcoded" : "none",
+            reason: e.message || "fetch_threw",
+          });
         }
       }
       if (!cancelled) setLoading(false);
@@ -257,13 +273,22 @@ export default function Calendar({ seasonYear }) {
             </button>
           );
         })}
-        <span style={{ fontSize:9, color:s.dim, alignSelf:"center", marginLeft:4, display:"flex", alignItems:"center", gap:4 }}>
-          <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%",
-            background: source === "supabase" ? "#22c55e" : "#eab308" }} />
-          {source === "supabase" ? "Live" : "Cached"}
-        </span>
+        {source !== "none" && (
+          <span style={{ fontSize:9, color:s.dim, alignSelf:"center", marginLeft:4, display:"flex", alignItems:"center", gap:4 }}>
+            <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%",
+              background: source === "supabase" ? "#22c55e" : "#eab308" }} />
+            {source === "supabase" ? "Live" : "Cached"}
+          </span>
+        )}
       </div>
- 
+
+      {events.length === 0 && (
+        <div style={{ textAlign:"center", padding:60, color:s.dim }}>
+          <CalendarDays size={24} style={{ marginBottom:8 }} />
+          <div style={{ fontSize:14, fontWeight:600 }}>No calendar data available for {yr}.</div>
+        </div>
+      )}
+
       {/* Event list grouped by month */}
       {[...grouped.entries()].map(([month, evts]) => {
         const allDone = evts.every(e => status(e.date) === "past");

@@ -49,7 +49,15 @@ export default function Trends({ seasonData }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const load = useCallback(async () => {
+  // isCancelled lets a request abandoned by a year switch skip its own
+  // setState calls when it finally resolves. The wrapping effect's own
+  // `cancelled` flag used to be checked only after `await load()` returned
+  // — by then load() had already committed state internally, so whichever
+  // of two in-flight requests (old year vs. newly selected year) happened
+  // to resolve LAST would win and silently overwrite the correct season's
+  // data with a stale one's.
+  const load = useCallback(async (isCancelled) => {
+    const stillCurrent = () => !(isCancelled && isCancelled());
     if (!seasonYear) { setLoading(false); return; }
     setLoading(true);
     setError(null);
@@ -94,6 +102,7 @@ export default function Trends({ seasonData }) {
         fallback_level: cached && cached.length > 0 ? "local" : "none",
         reason: "supabase_fetch_failed",
       });
+      if (!stillCurrent()) return;
       if (cached && cached.length > 0) {
         setRows(cached);
         setIsStale(true);
@@ -105,6 +114,7 @@ export default function Trends({ seasonData }) {
       track(EVENTS.TRENDS_LOAD_FAILED, { error_message: fetchError.message });
       return;
     }
+    if (!stillCurrent()) return;
     setRows(allRows);
     setIsStale(false);
     storageSet(cacheKey, JSON.stringify(allRows)).catch(() => {});
@@ -113,7 +123,7 @@ export default function Trends({ seasonData }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => { await load(); if (cancelled) return; })();
+    load(() => cancelled);
     return () => { cancelled = true; };
   }, [load]);
 
