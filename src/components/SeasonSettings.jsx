@@ -74,6 +74,11 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  var _l = useState({}), paywallEdits = _l[0], setPaywallEdits = _l[1];
  var _m = useState(false), savedPaywall = _m[0], setSavedPaywall = _m[1];
  var pillsRef = useRef(null);
+ // Guards the persist effect below against writing a PREVIOUS season's
+ // still-in-memory changelog under a NEW season's storage key. Holds the
+ // year whose cache load has actually settled; the persist effect only
+ // runs once this matches the year currently being edited.
+ var loadedChangelogYearRef = useRef(null);
 
  useEffect(function () {
   var onResize = function () { setIsMobile(window.innerWidth < 640); };
@@ -88,18 +93,34 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  useEffect(function () {
   if (!seasonYearForLog) return;
   var cancelled = false;
+  // Reset immediately so a season switch (e.g. the active season changing
+  // out from under a still-mounted Settings tab after a finalize
+  // elsewhere) never leaves the PREVIOUS year's entries on screen — or,
+  // worse, has the persist effect below write them under the NEW year's
+  // key — while this year's own cache load is still in flight.
+  loadedChangelogYearRef.current = null;
+  setChangelog([]);
   storageGet(STORAGE_KEYS.SETTINGS_CHANGELOG_PREFIX + "-" + seasonYearForLog).then(function (r) {
-   if (cancelled || !r || !r.value) return;
+   if (cancelled) return;
    try {
-    var cached = JSON.parse(r.value);
+    var cached = (r && r.value) ? JSON.parse(r.value) : null;
     if (Array.isArray(cached) && cached.length > 0) setChangelog(cached);
    } catch (e) { console.error("SeasonSettings: failed to parse cached changelog:", e); }
-  }).catch(function (e) { console.error("SeasonSettings: failed to load cached changelog:", e); });
+   loadedChangelogYearRef.current = seasonYearForLog;
+  }).catch(function (e) {
+   console.error("SeasonSettings: failed to load cached changelog:", e);
+   if (!cancelled) loadedChangelogYearRef.current = seasonYearForLog;
+  });
   return function () { cancelled = true; };
  }, [seasonYearForLog]);
 
  useEffect(function () {
   if (!seasonYearForLog) return;
+  // Don't persist until this year's own cache load has settled — otherwise
+  // this can fire, on the same render pass a season switch lands, with the
+  // previous year's changelog still sitting in state and write it under
+  // the new year's key.
+  if (loadedChangelogYearRef.current !== seasonYearForLog) return;
   storageSet(STORAGE_KEYS.SETTINGS_CHANGELOG_PREFIX + "-" + seasonYearForLog, JSON.stringify(changelog)).catch(function () {});
  }, [changelog, seasonYearForLog]);
 
