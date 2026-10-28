@@ -3,14 +3,62 @@ import { Lock, ArrowUpRight } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme } from "../constants/theme";
-import { medalDisplay, rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
+import { rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
 import { track, EVENTS } from "../utils/analytics";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
 import PayPalButton from "./PayPalButton";
 import ScrollFadeEdges from "./ScrollFadeEdges";
 
 var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
- 
+
+// ─── Competition-style ranking: tied scores share a rank, and the next
+// distinct score skips ahead by the number tied (1, 2, 2, 4 — not 1, 2, 2,
+// 3). `sortedArr` must already be sorted by scoreOf() descending.
+function withRanks(sortedArr, scoreOf) {
+ var out = [];
+ var rank = 0, lastScore = null;
+ for (var i = 0; i < sortedArr.length; i++) {
+  var score = scoreOf(sortedArr[i]);
+  if (lastScore === null || score !== lastScore) { rank = i + 1; lastScore = score; }
+  out.push(Object.assign({}, sortedArr[i], { rank: rank }));
+ }
+ return out;
+}
+
+// Only 1st place gets the circled-badge treatment (it's the one rank that
+// needs to pop at a glance); 2nd and 3rd just get a plain colored number —
+// still a clear cue, without three competing circles on screen.
+var RANK_TEXT_COLORS = {
+ 1: theme.acc,     // gold — same amber as the brand accent / 1st-place row border
+ 2: "#CBD5E1",     // silver
+ 3: "#D97706",     // bronze
+};
+
+// ─── Rank badge — replaces the old medal emoji, which rendered small and
+// hard to read on some platforms. Shows the actual rank NUMBER always (so
+// two members tied for 2nd both clearly read "2", not a mismatched medal).
+function RankBadge({ rank, size }) {
+ var dim = size <= 13 ? 22 : 25;
+ if (rank === 1) {
+  return (
+   <span style={{
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+    width: dim, height: dim, borderRadius: "50%", flexShrink: 0,
+    background: theme.acc + "26", border: `1.5px solid ${theme.acc}`,
+    color: theme.acc, fontSize: size <= 13 ? 11 : 12, fontWeight: 800,
+   }}>{rank}</span>
+  );
+ }
+ return (
+  <span style={{
+   display: "inline-flex", alignItems: "center", justifyContent: "center",
+   width: dim, flexShrink: 0,
+   color: RANK_TEXT_COLORS[rank] || "#94a3b8",
+   fontSize: size, fontWeight: 800,
+  }}>{rank}</span>
+ );
+}
+
 // ─── Small lock indicator that players see on the scoreboard ───
 function LockIndicator({ note }) {
  var _h = useState(false), hover = _h[0], setHover = _h[1];
@@ -35,8 +83,8 @@ function LockIndicator({ note }) {
 export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  var surfaceName = surface || "scoreboard";
  // Only the primary Scoreboard tab syncs its selected category to the URL —
- // SeasonHistory renders one of these per archived season (surface="history"),
- // and if those also wrote the same "cat" param they'd stomp each other.
+ // a non-"scoreboard" surface value means this instance isn't the primary
+ // one, and syncing its own "cat" param too would stomp the real one's.
  var _s = useState(function () {
   if (surfaceName !== "scoreboard") return null;
   var params = new URLSearchParams(window.location.search);
@@ -139,7 +187,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  }
 
  var overallStandings = useMemo(function () {
-  return members.map(function (m) {
+  var sorted = members.map(function (m) {
    var totalPts = 0;
    var catScores = {};
    CATEGORY_ORDER.forEach(function (k) {
@@ -148,9 +196,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
    });
    return { owner: m.name, id: m.id, totalPts: totalPts, catScores: catScores };
   }).sort(function (a, b) { return b.totalPts - a.totalPts; });
+  return withRanks(sorted, function (m) { return m.totalPts; });
  }, [members, cats]);
- 
- var catMembers = selCat ? [].concat(cats[selCat] || []).sort(function (a, b) { return b.total - a.total; }) : null;
+
+ var catMembers = selCat
+  ? withRanks([].concat(cats[selCat] || []).sort(function (a, b) { return b.total - a.total; }), function (m) { return m.total; })
+  : null;
  var detailArr = selCat ? detail[selCat] : null;
  
  var isSport = SPORT_CATEGORIES.includes(selCat);
@@ -176,17 +227,17 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  }
  
  // === EXPANDED DETAIL RENDERER ===
- function renderExpanded(m, idx) {
+ function renderExpanded(m, rank) {
   var memberId = (members.find(function (x) { return x.name === m.owner; }) || {}).id;
   if (isPaywalled(seasonData, memberId)) {
    return (
-    <div style={expandedWrapperStyle(idx)}>
+    <div style={expandedWrapperStyle(rank)}>
      {renderPaywallPanel(m.owner, memberId)}
     </div>
    );
   }
   var d = detailArr ? detailArr.find(function (x) { return x.owner === m.owner; }) : null;
-  var wp = expandedWrapperStyle(idx);
+  var wp = expandedWrapperStyle(rank);
   var hd = expandedHeaderStyle;
   var ft = expandedFooterStyle;
   var totalLine = (
@@ -203,7 +254,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
   if (!d) {
    return (
     <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: theme.card,
-     border: "1px solid " + rowBorder(idx), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
+     border: "1px solid " + rowBorder(rank), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
      Base: {m.base} + Bonus: {m.bonus} = <b style={{ color: "#f8fafc" }}>{m.total} pts</b>
      {bonusNoteDisplay(d)}
     </div>
@@ -539,7 +590,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
   // Fallback
   return (
    <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: theme.card,
-    border: "1px solid " + rowBorder(idx), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
+    border: "1px solid " + rowBorder(rank), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
     Base: {m.base} + Bonus: {m.bonus} = {m.total} pts
     {bonusNoteDisplay(d)}
    </div>
@@ -590,7 +641,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
    {/* OVERALL VIEW */}
    {!selCat && (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-     {overallStandings.map(function (m, idx) {
+     {overallStandings.map(function (m) {
       var isExp = expRow === m.owner;
       var memberPaywalled = isPaywalled(seasonData, m.id);
       return (
@@ -603,9 +654,9 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           gridTemplateColumns: isMobile ? "28px 1fr 50px" : "32px 1fr 60px",
           alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px",
           borderRadius: isExp ? "10px 10px 0 0" : 10,
-          background: rowBackground(idx), border: "1px solid " + rowBorder(idx),
+          background: rowBackground(m.rank), border: "1px solid " + rowBorder(m.rank),
           borderBottom: isExp ? "none" : undefined, cursor: "pointer" }}>
-         <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 800, color: "#94a3b8" }}>{medalDisplay(idx)}</span>
+         <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
          <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
@@ -616,7 +667,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
         </div>
         {isExp && (
          <div style={{ padding: isMobile ? "8px 8px" : "10px 12px", borderRadius: "0 0 10px 10px",
-          background: theme.card, border: "1px solid " + rowBorder(idx), borderTop: `1px solid ${theme.bdr}` }}>
+          background: theme.card, border: "1px solid " + rowBorder(m.rank), borderTop: `1px solid ${theme.bdr}` }}>
           {memberPaywalled ? renderPaywallPanel(m.owner, m.id) : (
            <div style={{ display: "grid",
             gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)",
@@ -659,7 +710,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
       <h2 style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: "#f8fafc", margin: 0 }}>{CATEGORY_LABELS[selCat]}</h2>
      </div>
      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      {catMembers.map(function (m, idx) {
+      {catMembers.map(function (m) {
        var isExp = expRow === m.owner;
        var mid = (members.find(function (x) { return x.name === m.owner; }) || {}).id;
        var memberHasLocks = hasAnyLock(seasonData, selCat, m.owner);
@@ -675,10 +726,10 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
            gridTemplateColumns: isMobile ? "28px 1fr auto" : "32px 1fr auto",
            alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px", gap: 8,
            borderRadius: isExp ? "10px 10px 0 0" : 10,
-           background: rowBackground(idx), border: "1px solid " + rowBorder(idx),
+           background: rowBackground(m.rank), border: "1px solid " + rowBorder(m.rank),
            borderBottom: isExp ? "none" : undefined, cursor: "pointer",
           }}>
-          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 800, color: "#94a3b8" }}>{medalDisplay(idx)}</span>
+          <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
           <div style={{ minWidth: 0 }}>
            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
             <span style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: MEMBER_COLORS[mid] || "#f1f5f9",
@@ -728,7 +779,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
            </div>
           )}
          </div>
-         {isExp && renderExpanded(m, idx)}
+         {isExp && renderExpanded(m, m.rank)}
         </div>
        );
       })}
