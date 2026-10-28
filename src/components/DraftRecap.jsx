@@ -139,6 +139,17 @@ export default function DraftRecap({ seasonYear = 2026 }) {
           fallback_level: cached ? "local" : (board ? "hardcoded" : "none"),
           reason: "supabase_fetch_failed",
         });
+        if (!board) {
+          // No live data, no cache, and no hardcoded board for this specific
+          // year — genuinely nothing to show. This is a real, actionable
+          // failure ("couldn't load, try again"), not "no draft has been
+          // finalized yet" — those used to look identical, which was
+          // actively misleading on a season that definitely has a draft on
+          // record, we just couldn't reach it this time.
+          setError((pErr || mErr).message);
+          setLoading(false);
+          return;
+        }
         setPicks(cached?.picks || []);
         setMembers(cached?.members || []);
         setDraftBoard(board);
@@ -162,10 +173,11 @@ export default function DraftRecap({ seasonYear = 2026 }) {
         const r = await storageGet(cacheKey);
         if (r && r.value) cached = JSON.parse(r.value);
       } catch (e2) {}
-      if (cached) {
+      const fallbackBoard = FALLBACK_BOARDS[seasonYear] || null;
+      if (cached && fallbackBoard) {
         setPicks(cached.picks || []);
         setMembers(cached.members || []);
-        setDraftBoard(FALLBACK_BOARDS[seasonYear] || null);
+        setDraftBoard(fallbackBoard);
         setIsStale(true);
         setLoading(false);
         return;
