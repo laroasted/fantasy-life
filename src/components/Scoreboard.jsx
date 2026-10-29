@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { Lock, ArrowUpRight } from "lucide-react";
+import { Lock, ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
-import { theme } from "../constants/theme";
+import { theme, cardStyle } from "../constants/theme";
 import { rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
 import { track, EVENTS } from "../utils/analytics";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
@@ -87,11 +87,16 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  }), selCat = _s[0], setSelCat = _s[1];
  var _e = useState(null), expRow = _e[0], setExpRow = _e[1];
  var _m = useState(window.innerWidth < 640), isMobile = _m[0], setIsMobile = _m[1];
+ // MOCK ONLY — "wide" breakpoint for the page-level sidebar layout preview.
+ var _w = useState(window.innerWidth >= 1024), isWide = _w[0], setIsWide = _w[1];
  var _t = useState(null), toast = _t[0], setToast = _t[1];
  var pillsRef = useRef(null);
 
  useEffect(function () {
-  var onResize = function () { setIsMobile(window.innerWidth < 640); };
+  var onResize = function () {
+   setIsMobile(window.innerWidth < 640);
+   setIsWide(window.innerWidth >= 1024);
+  };
   window.addEventListener("resize", onResize);
   return function () { window.removeEventListener("resize", onResize); };
  }, []);
@@ -197,6 +202,19 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
   ? withRanks([].concat(cats[selCat] || []).sort(function (a, b) { return b.total - a.total; }), function (m) { return m.total; })
   : null;
  var detailArr = selCat ? detail[selCat] : null;
+
+ // MOCK ONLY — category leaders sidebar preview. Real data (each
+ // category's #1 finisher, ties included), just not wired to a
+ // click-through yet.
+ var categoryLeaders = useMemo(function () {
+  return CATEGORY_ORDER.map(function (k) {
+   var entries = cats[k] || [];
+   if (entries.length === 0) return { key: k, owners: [], total: 0 };
+   var maxTotal = entries.reduce(function (m, x) { return Math.max(m, x.total); }, -Infinity);
+   var owners = entries.filter(function (x) { return x.total === maxTotal; }).map(function (x) { return x.owner; });
+   return { key: k, owners: owners, total: maxTotal };
+  });
+ }, [cats]);
  
  var isSport = SPORT_CATEGORIES.includes(selCat);
  var isFilm = selCat === "Actor" || selCat === "Actress";
@@ -593,7 +611,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  
  // === MAIN RENDER ===
  return (
-  <div style={{ maxWidth: 760, margin: "0 auto" }}>
+  <div style={{ maxWidth: isWide ? 1080 : 760, margin: "0 auto" }}>
+   {/* MOCK ONLY — page-level two-column layout preview. Below 1024px this
+       collapses back to exactly what's shipped today (single column,
+       sidebar hidden). Not wired up anywhere else yet. */}
+   <div style={{ display: isWide ? "flex" : "block", gap: isWide ? 28 : 0, alignItems: "flex-start" }}>
+   <div style={{ flex: 1, minWidth: 0 }}>
    {/* Category pills */}
    <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
    <div ref={pillsRef} style={{
@@ -636,20 +659,61 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
            if (!isExp) track(EVENTS.MEMBER_ROW_EXPANDED, { surface: surfaceName, category: "overall", member_name: m.owner });
            setExpRow(isExp ? null : m.owner);
           }}
-         style={{ display: "grid",
-          gridTemplateColumns: isMobile ? "28px 1fr 50px" : "32px 1fr 60px",
-          alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px",
+         style={{
           borderRadius: isExp ? "10px 10px 0 0" : 10,
           background: rowBackground(m.rank), border: "1px solid " + rowBorder(m.rank),
-          borderBottom: isExp ? "none" : undefined, cursor: "pointer" }}>
-         <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
-         <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
-         <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
-          {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
-          <span style={Object.assign({ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" },
-           memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.totalPts}</span>
-         </span>
+          borderBottom: isExp ? "none" : undefined, cursor: "pointer",
+          padding: isMobile ? "8px 10px" : "10px 12px" }}>
+         <div style={{ display: "grid",
+          gridTemplateColumns: isMobile ? "28px 1fr 50px 16px" : "32px 1fr 60px 20px",
+          alignItems: "center", gap: 4 }}>
+          <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
+          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
+           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
+          <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
+           {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
+           <span style={Object.assign({ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" },
+            memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.totalPts}</span>
+          </span>
+          {isExp ? <ChevronDown size={14} color={theme.dim} /> : <ChevronRight size={14} color={theme.dim} />}
+         </div>
+         {/* MOCK ONLY — inline category-strength strip + standout caption,
+             desktop-width preview. Uses real per-row catScores already
+             computed above. Remove this comment once it's real. */}
+         {!isMobile && !memberPaywalled && (function () {
+          var ticks = CATEGORY_ORDER.map(function (k) {
+           var hasEntry = Object.prototype.hasOwnProperty.call(m.catScores, k);
+           var pts = m.catScores[k] || 0;
+           var status = !hasEntry ? "none" : pts >= 15 ? "high" : pts <= 3 ? "low" : "mid";
+           return { key: k, pts: pts, hasEntry: hasEntry, status: status };
+          });
+          var standouts = ticks.filter(function (t) { return t.status === "high" || t.status === "low"; });
+          return (
+           <div>
+            <div style={{ display: "flex", gap: 2, marginTop: 7, paddingLeft: 36 }}>
+             {ticks.map(function (t) {
+              var color = t.status === "none" ? "rgba(255,255,255,0.06)"
+               : t.status === "high" ? theme.grn : t.status === "low" ? theme.red : "rgba(255,255,255,0.18)";
+              return (
+               <div key={t.key} title={t.key + ": " + (t.hasEntry ? t.pts + " pts" : "no pick")}
+                style={{ flex: 1, height: 5, borderRadius: 3, background: color }} />
+              );
+             })}
+            </div>
+            {standouts.length > 0 && (
+             <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", marginTop: 5, paddingLeft: 36, fontSize: 10 }}>
+              {standouts.map(function (t) {
+               return (
+                <span key={t.key} style={{ color: t.status === "high" ? theme.grn : theme.red, fontWeight: 600 }}>
+                 {t.key} {t.pts}
+                </span>
+               );
+              })}
+             </div>
+            )}
+           </div>
+          );
+         })()}
         </div>
         {isExp && (
          <div style={{ padding: isMobile ? "8px 8px" : "10px 12px", borderRadius: "0 0 10px 10px",
@@ -779,6 +843,63 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      </div>
     </div>
    )}
+
+   </div>
+
+   {/* MOCK ONLY — sidebar. Category Leaders uses real data already passed
+       into this component (seasonData.categories). An "Upcoming" card was
+       dropped from the first version of this mock — it only had hardcoded
+       sample events, which would mislead real viewers once shipped; wiring
+       it to real calendar_events is a follow-up, not this PR. */}
+   {isWide && (
+    <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+     <div style={{ ...cardStyle, padding: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, marginBottom: 10,
+       textTransform: "uppercase", letterSpacing: 1 }}>Category Leaders</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+       {categoryLeaders.map(function (cl) {
+        var isTied = cl.owners.length > 1;
+        var singleId = (!isTied && cl.owners[0])
+         ? (members.find(function (x) { return x.name === cl.owners[0]; }) || {}).id : null;
+        var nameText = cl.owners.length === 0 ? "—"
+         : isTied ? cl.owners.join(" & ")
+         : cl.owners[0];
+        // Any tied leader being paywalled blurs the shared score — showing
+        // one tied member's real number would let you back into the
+        // paywalled member's number by elimination.
+        var leaderPaywalled = cl.owners.some(function (name) {
+         var id = (members.find(function (x) { return x.name === name; }) || {}).id;
+         return isPaywalled(seasonData, id);
+        });
+        return (
+         <div key={cl.key} onClick={function () {
+            track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: cl.key, previous_category: selCat || "overall" });
+            setSelCat(cl.key); setExpRow(null);
+           }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+           gap: 6, cursor: "pointer", padding: "2px 0" }}>
+          <span style={{ fontSize: 11, color: theme.dim, flexShrink: 0, width: 92,
+           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{CATEGORY_LABELS[cl.key]}</span>
+          <span title={isTied ? "Tied: " + cl.owners.join(", ") : undefined}
+           style={{ fontSize: 12, fontWeight: 700, flex: 1, textAlign: "right",
+           color: singleId ? (MEMBER_COLORS[singleId] || theme.txt) : (cl.owners.length === 0 ? theme.dim : theme.txt),
+           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex",
+           alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
+           {leaderPaywalled && <Lock size={10} color={theme.yel} style={{ flexShrink: 0 }} />}
+           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameText}</span>
+          </span>
+          <span style={Object.assign({ fontSize: 12, fontWeight: 800, color: theme.txt, width: 28, textAlign: "right", flexShrink: 0 },
+           leaderPaywalled ? PAYWALL_BLUR_STYLE : {})}>
+           {cl.owners.length > 0 ? cl.total : ""}
+          </span>
+         </div>
+        );
+       })}
+      </div>
+     </div>
+    </div>
+   )}
+   </div>
 
    {toast && (
     <div style={{
