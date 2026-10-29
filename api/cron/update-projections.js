@@ -67,6 +67,22 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 // ═══════════════════════════════════════════════════════════════════════
 
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+
+/**
+ * NFL/NBA/MLB/NHL/MLS picks are stored with a leading abbreviation prefix
+ * — "KC Chiefs", "LAL Lakers", "TB Lightning" (see update-sports.js's own
+ * stripPickPrefix(), same regex, same reason: ESPN's team names don't
+ * carry it). A betting market's question text says "Kansas City Chiefs",
+ * which does NOT contain "kc chiefs" as a substring — so passing the raw
+ * pick string into the odds-market match was a real bug, not just a
+ * reachability question: it could never have matched regardless of
+ * whether Kalshi/Polymarket actually carry these markets. Caught by
+ * re-reading this file against update-sports.js's own documented data
+ * format, not from a live response.
+ */
+function stripPickPrefix(pickName) {
+  return (pickName || '').trim().replace(/^[A-Z]{2,4}\s+/, '');
+}
 function round2(x) { return x === null || x === undefined ? null : Math.round(x * 100) / 100; }
 
 // Box-Muller — one standard-normal draw per call.
@@ -344,7 +360,7 @@ async function buildWinPctModel(picks, league, seasonYear, locks, ownerNameById,
     return {
       id: pick.id,
       ownerName,
-      pickName: pick.pick, // the TEAM, not the member — this is what an odds market's outcome text matches against
+      pickName: stripPickPrefix(pick.pick), // the TEAM, not the member — this is what an odds market's outcome text matches against
       currentMetric: currentWinPct,
       actualBase: Number(pick.base) || 0, actualBonus: Number(pick.bonus) || 0,
       deltaSampler,
@@ -400,7 +416,7 @@ function buildPointsRateModel(picks, league, ownerNameById) {
     }
 
     return {
-      id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentPoints,
+      id: pick.id, ownerName, pickName: stripPickPrefix(pick.pick), currentMetric: currentPoints,
       deltaSampler, bonusSampler: () => 0,
       sourceNote,
     };
@@ -505,7 +521,14 @@ function buildCollegeRankingModel(picks, league, ownerNameById) {
 
 /** Actor/Actress — TMDB upcoming-release discovery. Explicitly low
  * confidence: there is no real forecast API for unreleased box office. */
-async function fetchUpcomingFilms(personName, fyEnd) {
+async function fetchFilmBudget(tmdbId) {
+  try {
+    const data = await fetchJsonWithTimeout(`${TMDB_BASE}/movie/${tmdbId}?api_key=${TMDB_API_KEY}`, 8000);
+    return data && typeof data.budget === 'number' ? data.budget : 0;
+  } catch (e) { return 0; }
+}
+
+async function fetchUpcomingFilms(personName, fyEnd, pastDeadline) {
   if (!TMDB_API_KEY) return [];
   try {
     const searchUrl = `${TMDB_BASE}/search/person?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(personName)}`;
@@ -516,18 +539,38 @@ async function fetchUpcomingFilms(personName, fyEnd) {
     const creditsUrl = `${TMDB_BASE}/person/${person.id}/movie_credits?api_key=${TMDB_API_KEY}`;
     const credits = await fetchJsonWithTimeout(creditsUrl, 8000);
     const today = new Date().toISOString().slice(0, 10);
-    return (credits && credits.cast || []).filter((f) => f.release_date && f.release_date > today && f.release_date <= fyEnd);
+    const upcoming = (credits && credits.cast || []).filter((f) => f.release_date && f.release_date > today && f.release_date <= fyEnd);
+
+    // Fetch each upcoming film's disclosed TMDB budget (0 if a studio
+    // hasn't registered one yet) to anchor the box-office guess on real
+    // data instead of one flat number for every film. Capped at 5 titles
+    // and gated on the shared time budget so one actor with a long
+    // upcoming slate can't eat the whole run.
+    const withBudget = [];
+    for (const f of upcoming.slice(0, 5)) {
+      if (pastDeadline && pastDeadline()) { withBudget.push(Object.assign({}, f, { budget: 0 })); continue; }
+      const budget = await fetchFilmBudget(f.id);
+      await delay(150);
+      withBudget.push(Object.assign({}, f, { budget }));
+    }
+    return withBudget;
   } catch (e) { return []; }
 }
 
-async function buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline) {
+async function buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline, avgRtByPickId) {
   return Promise.all(picks.map(async (pick) => {
     const ownerName = ownerNameById[pick.member_id] || pick.member_id;
     const currentScore = Number(pick.metric) || 0; // totalScore (sum of BO x RT already banked)
     let upcoming = [];
     if (!pastDeadline || !pastDeadline()) {
-      try { upcoming = await fetchUpcomingFilms(pick.pick, fyEnd); await delay(200); } catch (e) { upcoming = []; }
+      try { upcoming = await fetchUpcomingFilms(pick.pick, fyEnd, pastDeadline); await delay(200); } catch (e) { upcoming = []; }
     }
+
+    // Real data when we have it: this actor's own average RT from films
+    // ALREADY scored this season (film_entries, fetched once in the
+    // handler) — a flat industry-wide guess only when they have none yet.
+    const ownRtAvg = avgRtByPickId && avgRtByPickId[pick.id];
+    const rtMean = typeof ownRtAvg === 'number' ? ownRtAvg : 55;
 
     if (upcoming.length === 0) {
       return {
@@ -538,23 +581,34 @@ async function buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline) {
       };
     }
 
-    // Wide, explicitly-low-confidence bands: no real pre-release BO
-    // forecast exists publicly. Median box office ~$40M, RT centered on
-    // the actor's own average from films already scored this season.
-    const filmCount = upcoming.length;
+    // Still explicitly low-confidence — no real pre-release box-office
+    // forecast exists publicly, and this isn't pretending otherwise. But
+    // anchored on real signals where they exist rather than one flat
+    // guess for every actor and every film: box office centers on the
+    // film's own disclosed TMDB budget (median guess ~2.2x budget, a
+    // common rough industry rule of thumb for a wide theatrical release —
+    // still a guess, just a less arbitrary one) when a studio has
+    // registered it, falling back to a flat $40M median otherwise; RT
+    // centers on the actor's own track record this season, falling back
+    // to a generic 55 only if they have no scored films yet.
+    const films = upcoming;
     return {
       id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentScore,
       deltaSampler: (rng) => {
         let total = 0;
-        for (let i = 0; i < filmCount; i++) {
-          const boMillions = Math.max(0, Math.exp(sampleNormal(rng, Math.log(40), 0.9)));
-          const rt = clamp(sampleNormal(rng, 55, 20), 0, 100);
+        for (const f of films) {
+          const budgetMillions = (f.budget || 0) / 1e6;
+          const anchorMedianBO = budgetMillions > 0 ? clamp(budgetMillions * 2.2, 5, 400) : 40;
+          const boMillions = Math.max(0, Math.exp(sampleNormal(rng, Math.log(anchorMedianBO), 0.9)));
+          const rt = clamp(sampleNormal(rng, rtMean, 18), 0, 100);
           total += boMillions * rt / 100;
         }
         return total;
       },
       bonusSampler: () => 0,
-      sourceNote: 'tmdb_upcoming(' + filmCount + ' titles),box_office=unforecastable_wide_guess',
+      sourceNote: 'tmdb_upcoming(' + films.length + ' titles' +
+        (films.some((f) => f.budget > 0) ? ',budget_anchored' : ',no_budget_disclosed_yet') + ')' +
+        (typeof ownRtAvg === 'number' ? ',rt_anchored_on_own_history(' + Math.round(ownRtAvg) + '%)' : ',rt_flat_guess(no_own_history_yet)'),
       confidence: 'low',
     };
   }));
@@ -681,6 +735,29 @@ module.exports = async function handler(req, res) {
 
   const picksByCategory = {};
   allPicks.forEach((p) => { (picksByCategory[p.category] = picksByCategory[p.category] || []).push(p); });
+
+  // Real, already-collected data for Actor/Actress: each pick's own
+  // already-scored films this season, specifically their RT scores — the
+  // one genuine signal available for what an UNRELEASED film from the
+  // same actor might score, since there's no public pre-release RT
+  // forecast anywhere. Used to replace a flat guess with the actor's own
+  // track record. See buildFilmModel.
+  const filmPickIds = (picksByCategory['Actor'] || []).concat(picksByCategory['Actress'] || []).map((p) => p.id);
+  const avgRtByPickId = {};
+  if (filmPickIds.length > 0) {
+    const { data: filmEntries } = await supabase
+      .from('film_entries').select('pick_id, rotten_tom').in('pick_id', filmPickIds);
+    const rtByPick = {};
+    (filmEntries || []).forEach((f) => {
+      const rt = Number(f.rotten_tom) || 0;
+      if (rt <= 0) return; // 0 means "not yet scored/found", same convention update-entertainment.js uses — not a real RT of zero
+      (rtByPick[f.pick_id] = rtByPick[f.pick_id] || []).push(rt);
+    });
+    Object.keys(rtByPick).forEach((pickId) => {
+      const arr = rtByPick[pickId];
+      avgRtByPickId[pickId] = arr.reduce((a, b) => a + b, 0) / arr.length;
+    });
+  }
 
   const results = {};
   const runStartedAt = Date.now();
@@ -821,9 +898,9 @@ module.exports = async function handler(req, res) {
   // bonusConfig, same as Golf.
   await runCategory('F1', 'desc', (picks) => buildRankingPointsModel(picks, 'F1', ownerNameById), null);
   // ── Entertainment ──
-  await runCategory('Actor', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline),
+  await runCategory('Actor', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline, avgRtByPickId),
     { titleKeyword: 'Academy Awards', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
-  await runCategory('Actress', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline),
+  await runCategory('Actress', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline, avgRtByPickId),
     { titleKeyword: 'Academy Awards', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
   // ── Musician ──
   await runCategory('Musician', 'desc', (picks) => buildMusicianModel(picks, fyStart, fyEnd, ownerNameById),

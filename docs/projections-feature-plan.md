@@ -55,7 +55,7 @@ and awards shows are still live).
 |---|---|---|---|
 | NFL/NBA/MLB/NHL/MLS | ESPN power index / BPI (`sports.core.api.espn.com/.../powerindex`) if reachable, else regression-to-mean extrapolation of current win% with binomial variance over games remaining | Kalshi/Polymarket championship market, found by **keyword search** (`"Super Bowl"`, `"NBA Finals"`, etc.) against `gamma-api.polymarket.com/events` and `external-api.kalshi.com/trade-api/v2/markets` — never a hardcoded ticker, since tickers change every season | **Medium** — ESPN's power-index endpoint and both markets are documented as public/free but were not live-reachable from this build sandbox (network policy blocks `sports.core.api.espn.com` and `gamma-api.polymarket.com` here); the parsing will very likely need the same kind of iteration the existing `update-sports.js`/`update-events.js`/`update-billboard.js` changelogs show once it runs on Vercel against real traffic |
 | Tennis/Golf/F1 | Linear extrapolation of the picked athlete's own points-per-event rate × events remaining (ranking points are already a live cumulative metric, so this is closer to "continue the trend" than a true forecast) | Tennis: Kalshi/Polymarket keyword search for the remaining major. Golf/F1: **no bonusConfig** — Golf has no majors left this year; F1's real bonus rule is per-podium across 4 specific featured races (AUS/MIA/ATX/LV), not a season-championship market, so a generic "F1 champion" search would model the wrong event (caught live — see "Caught via live testing" below) | **Medium** for Tennis; Golf/F1 bonus is just the already-banked value held flat, deliberately not simulated further |
-| Actor/Actress | TMDB upcoming-release discovery (reusing the existing `TMDB_API_KEY`) for titles releasing inside the remaining Fantasy Year window; box office modeled as a wide log-normal band with **no real forecast confidence** (there is no clean public API for pre-release BO forecasts); RT modeled as the actor's own historical mean | Polymarket "Academy Awards" market search, only ever populated close to the ceremony | **Low** — explicitly labeled as such in the stored record (`confidence: "low"`). This is a genuine guess dressed up as a wide band, not a forecast. Don't let the UI present it with the same visual confidence as the sports numbers. |
+| Actor/Actress | TMDB upcoming-release discovery (reusing the existing `TMDB_API_KEY`) for titles releasing inside the remaining Fantasy Year window; box office is a wide log-normal band **anchored on the film's own disclosed TMDB budget** when a studio has registered one (median guess ≈ 2.2× budget — a rough industry rule of thumb, still a guess) and falls back to a flat $40M median otherwise; RT is centered on the actor's **own already-scored films this season** (`film_entries`, real data) rather than a flat number, falling back to a generic 55 only when they have no scored films yet | Polymarket "Academy Awards" market search, only ever populated close to the ceremony | **Low** — explicitly labeled as such in the stored record (`confidence: "low"`). Still a genuine guess, not a forecast — real signals (budget, own RT history) narrow and center the guess where available, they don't turn it into one. Don't let the UI present it with the same visual confidence as the sports numbers. |
 | Musician | Decay-curve regression fit to the artist's **own already-cached** `billboard_weeks`/`music_songs` history (this is the one category where we already have months of real, collected data — no new external dependency) | Polymarket "Grammy" market search | **Medium-high for base** (real historical data), **low for bonus** (depends entirely on whether a Grammy market exists yet) |
 | Country | None needed — `gdp_forecasts` is already a static twice-yearly commissioner-entered number (`update-country.js`), so the "projection" is just the current value with zero variance | Olympics bonus = 0 unless the season window contains an Olympics | **Deterministic** (correctly reflects that this number doesn't move intra-season) |
 | Stock | **Explicitly not modeled as a projection.** Stored as `method: "trend_only"`, `confidence: "not_a_projection"` — an annualized extrapolation of the realized return so far, shown in the UI as a plain trend arrow, never a Monte Carlo band | n/a (category has no bonus) | **N/A by design** — I'm not building a fake-confident model for individual stock price movement. A trend line is fine; presenting it with the same visual weight as the sports simulations would be dishonest. If you want this changed, that's a product call, but I'd push back on it. |
@@ -191,3 +191,44 @@ reintroduced:
   guessing at a correctly-scoped replacement market this build can't
   verify. Lesson: a plausible-sounding odds-market keyword isn't the same
   as checking the actual scoring rule it's supposed to represent.
+
+## Second iteration — found by re-reading, not by another live run
+
+User asked for the odds-matching to actually start working, not just stay
+documented as unverified. Before touching anything live again, re-read
+this file adversarially against what the rest of the repo already
+documents, and found a real bug that fully explains why the first live
+run's bonus-EV numbers never showed any probabilistic variance:
+
+- **Team names were never de-prefixed before the odds-market search.**
+  `update-sports.js` stores NFL/NBA/MLB/NHL/MLS picks as `"KC Chiefs"`,
+  `"LAL Lakers"` — an abbreviation prefix plus name, specifically because
+  ESPN's own team names don't carry it (that file has its own
+  `stripPickPrefix()` for exactly this). This file was passing that raw,
+  prefixed string straight into the betting-market match as the search
+  term. `"kansas city chiefs"` does not contain `"kc chiefs"` as a
+  substring — so the match could never have succeeded, regardless of
+  whether Kalshi/Polymarket actually carry a Super Bowl market (they
+  almost certainly do; these are high-volume, commonly-listed markets).
+  This was a real logic bug provable from this repo's own documented data
+  format, not a live-reachability question. Fixed by adding the same
+  `stripPickPrefix()` pattern here and applying it to the two builders
+  that need it (`buildWinPctModel`, `buildPointsRateModel`) — NCAAF/NCAAB
+  and the individual-athlete/artist categories don't store a prefix, so
+  they were never affected.
+- **Artistic categories were upgraded from flat guesses to real-data-
+  anchored guesses.** Actor/Actress box office now anchors its median on
+  each upcoming film's own disclosed TMDB `budget` (when a studio has
+  registered one) instead of a flat $40M for every film; RT now centers
+  on the actor's own already-scored films this season (`film_entries`,
+  fetched once per run) instead of a flat industry-wide 55 — the gap
+  between what an earlier comment here claimed ("RT centered on the
+  actor's own average") and what the code actually did, caught by
+  re-reading the two against each other. Still genuinely low-confidence
+  — narrowing a guess with real signals isn't the same as having a real
+  forecast — but no longer ignoring data already sitting in the database.
+- Musician's Grammy bonus and Country's GDP/Olympics bonus were checked
+  too: both already correctly inherit from the "hold already-recorded
+  bonus flat" fix, since whatever a commissioner has entered for either
+  already flows through `pick.bonus`/`pick.metric`. No separate fix
+  needed there.
