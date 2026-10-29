@@ -194,21 +194,49 @@ async function fetchJsonWithTimeout(url, ms) {
 }
 
 /**
+ * Same as fetchJsonWithTimeout but keeps the failure detail instead of
+ * collapsing everything to null — used only where that detail matters
+ * (the odds-market lookups below), not threaded through the other
+ * callers of fetchJsonWithTimeout to keep this change's blast radius
+ * small.
+ */
+async function fetchJsonDiagnostic(url, ms) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(ms), headers: { Accept: 'application/json' } });
+    if (!res.ok) return { ok: false, status: res.status, json: null };
+    const json = await res.json().catch(() => null);
+    return { ok: json !== null, status: res.status, json };
+  } catch (err) {
+    return { ok: false, status: 0, json: null, error: err.message };
+  }
+}
+
+/**
  * Finds a Polymarket event by title keyword, then returns the YES price
  * (0-1 probability) of whichever outcome's text contains `outcomeKeyword`.
- * Returns null (never 0, which would read as "definitely won't happen")
- * if no event/outcome match is found.
+ * Returns { prob: null, reason } instead of a bare null on failure — a
+ * live test showed bonus EV staying flat across every sports pick even
+ * after fixing the team-name prefix bug, and "no match" alone wasn't
+ * enough to tell whether that's because Kalshi/Polymarket don't have
+ * these markets, the title search found nothing, the request itself
+ * failed, or a market was found but no outcome text matched. The reason
+ * string answers that on the next live run instead of guessing again.
  */
 async function findPolymarketProbability(titleKeyword, outcomeKeyword) {
   const url = 'https://gamma-api.polymarket.com/events?active=true&closed=false&limit=10&title=' + encodeURIComponent(titleKeyword);
-  const data = await fetchJsonWithTimeout(url, 8000);
+  const res = await fetchJsonDiagnostic(url, 8000);
+  if (res.error) return { prob: null, reason: 'fetch_error:' + res.error };
+  if (!res.ok) return { prob: null, reason: 'http_' + res.status };
+  const data = res.json;
   const events = Array.isArray(data) ? data : (data && data.events) || [];
-  if (!events || events.length === 0) return null;
+  if (!events || events.length === 0) return { prob: null, reason: 'no_events_matched_title(' + titleKeyword + ')' };
 
   const needle = outcomeKeyword.toLowerCase();
+  let marketsScanned = 0;
   for (const ev of events) {
     const markets = ev.markets || [];
     for (const m of markets) {
+      marketsScanned++;
       const question = (m.question || m.groupItemTitle || '').toLowerCase();
       if (!question.includes(needle)) continue;
       try {
@@ -216,18 +244,22 @@ async function findPolymarketProbability(titleKeyword, outcomeKeyword) {
         const prices = JSON.parse(m.outcomePrices || '[]');
         const yesIdx = outcomes.findIndex((o) => String(o).toLowerCase() === 'yes');
         const price = yesIdx >= 0 ? parseFloat(prices[yesIdx]) : parseFloat(prices[0]);
-        if (!isNaN(price)) return clamp(price, 0, 1);
+        if (!isNaN(price)) return { prob: clamp(price, 0, 1), reason: 'matched' };
       } catch (e) { /* malformed market payload — skip, don't guess */ }
     }
   }
-  return null;
+  return { prob: null, reason: events.length + '_events_' + marketsScanned + '_markets_none_matched_outcome(' + outcomeKeyword + ')' };
 }
 
 /**
  * Secondary/best-effort Kalshi lookup. Uses only the officially-documented
  * public endpoints (no API key). The series ticker guess is NOT verified
  * live — this is intentionally best-effort and silently returns null on
- * any shape mismatch rather than throwing.
+ * any shape mismatch rather than throwing. Not currently given a real
+ * series ticker anywhere this file calls findChampionshipProbability
+ * (kalshiSeriesGuess is always null), so this path is dead code until
+ * someone has a verified ticker to pass in — kept because the function
+ * itself is sound, just unfed.
  */
 async function findKalshiProbability(seriesTickerGuess, outcomeKeyword) {
   const url = 'https://external-api.kalshi.com/trade-api/v2/markets?series_ticker=' + encodeURIComponent(seriesTickerGuess) + '&status=open&limit=100';
@@ -242,15 +274,15 @@ async function findKalshiProbability(seriesTickerGuess, outcomeKeyword) {
   return isNaN(yesBid) ? null : clamp(yesBid, 0, 1);
 }
 
-/** Tries Polymarket then Kalshi; returns { prob, source } or null. */
+/** Tries Polymarket then Kalshi; returns { prob, source, reason }. reason is only meaningful when prob is null. */
 async function findChampionshipProbability(titleKeyword, outcomeKeyword, kalshiSeriesGuess) {
   const poly = await findPolymarketProbability(titleKeyword, outcomeKeyword);
-  if (poly !== null) return { prob: poly, source: 'polymarket:' + titleKeyword };
+  if (poly.prob !== null) return { prob: poly.prob, source: 'polymarket:' + titleKeyword, reason: null };
   if (kalshiSeriesGuess) {
     const kalshi = await findKalshiProbability(kalshiSeriesGuess, outcomeKeyword);
-    if (kalshi !== null) return { prob: kalshi, source: 'kalshi:' + kalshiSeriesGuess };
+    if (kalshi !== null) return { prob: kalshi, source: 'kalshi:' + kalshiSeriesGuess, reason: null };
   }
-  return null;
+  return { prob: null, source: null, reason: 'polymarket:' + poly.reason };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -806,18 +838,28 @@ module.exports = async function handler(req, res) {
         // result map only because attachBonusSampler looks it up that way
         // (one pick per owner per category).
         const bonusProbByOwner = {};
+        // Captures the FIRST failure reason seen in this category as a
+        // category-wide diagnostic (titleKeyword is the same for every
+        // pick here, so the root cause — no events found, events found
+        // but no outcome matched, a fetch error — is almost always the
+        // same across all of them too). Tells the next live run exactly
+        // where the lookup is failing instead of just "no match".
+        let bonusDiagnostic = null;
         for (const m of models) {
-          if (pastDeadline()) { bonusProbByOwner[m.ownerName] = null; continue; }
+          if (pastDeadline()) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'skipped:time_budget_exceeded'; continue; }
           try {
             const found = await findChampionshipProbability(bonusConfig.titleKeyword, m.pickName, bonusConfig.kalshiSeriesGuess);
-            bonusProbByOwner[m.ownerName] = found ? found.prob : null;
-          } catch (e) { bonusProbByOwner[m.ownerName] = null; }
+            bonusProbByOwner[m.ownerName] = found.prob;
+            if (found.prob === null && !bonusDiagnostic) bonusDiagnostic = found.reason;
+          } catch (e) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'exception:' + e.message; }
           await delay(150);
         }
         models = attachBonusSampler(models, bonusProbByOwner, bonusConfig.bonusPointsIfWin);
         // See attachBonusSampler's own comment — this is a real, named
         // limitation, not an implementation detail to bury.
-        models = models.map((m) => Object.assign({}, m, { sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only' }));
+        models = models.map((m) => Object.assign({}, m, {
+          sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only|odds_lookup:' + (bonusDiagnostic || 'matched'),
+        }));
       }
 
       // picks.length, NOT the league-wide member count — matches the exact

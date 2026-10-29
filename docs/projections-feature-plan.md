@@ -232,3 +232,23 @@ run's bonus-EV numbers never showed any probabilistic variance:
   bonus flat" fix, since whatever a commissioner has entered for either
   already flows through `pick.bonus`/`pick.metric`. No separate fix
   needed there.
+
+## Third iteration — the prefix fix alone wasn't enough
+
+A live run after the prefix fix still showed every sports bonus EV as a
+flat whole number (MLB/NBA/NCAAB all checked) — the tell that none of
+them carry any probability-weighted contribution, since `alreadyBanked +
+probability × upside` is essentially never a round number. The prefix
+bug was real and worth fixing, but something else is still blocking the
+Polymarket match, and there was no way to tell *what* from this build —
+could be no event found for the title search, an event found but no
+market's question text matching the team name, an HTTP error, or a
+genuinely malformed response.
+
+Rather than guess again, `findPolymarketProbability` now returns a
+specific failure reason instead of a bare null
+(`no_events_matched_title(...)`, `N_events_M_markets_none_matched_outcome(...)`,
+`http_NNN`, `fetch_error:...`), and the orchestrator records the first
+one seen per category into `source_detail` as `odds_lookup:<reason>`.
+The next live run will say exactly where this is breaking instead of
+just confirming — again — that it is.
