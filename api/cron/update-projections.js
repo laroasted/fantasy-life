@@ -297,13 +297,25 @@ function parseRecordToGamesPlayed(record, league) {
   return { wins, losses, played, remaining: total - played };
 }
 
-/** NFL/NBA/MLB — metric is win%. NHL/MLS — metric handled by points below. */
+/**
+ * NFL/NBA/MLB — metric is win%. NHL/MLS — metric handled by points below.
+ *
+ * The ESPN power-index fetch below is reachability-only right now: its
+ * response shape was never verified live (see file header), so its
+ * values are NOT wired into deltaSampler — the model always runs the
+ * binomial-on-current-win% calculation. The fetch is kept so
+ * source_detail can record whether ESPN responded, as a signal for
+ * whoever wires the real values in next, but sourceNote below
+ * deliberately does NOT claim ESPN's numbers influenced this pick's
+ * projection, because they don't yet.
+ */
 async function buildWinPctModel(picks, league, seasonYear, locks, ownerNameById, pastDeadline) {
   let espnItems = null;
   if (!pastDeadline || !pastDeadline()) {
     try { espnItems = await fetchEspnPowerIndex(league, seasonYear); } catch (e) { espnItems = null; }
   }
-  const sourceNote = espnItems ? 'espn_power_index(unverified_shape)' : 'fallback:binomial_on_current_winpct';
+  const sourceNote = 'binomial_on_current_winpct' +
+    (espnItems ? '(espn_power_index reachable but not yet wired into the model — reachability signal only)' : '(espn unreachable)');
 
   return picks.map((pick) => {
     const ownerName = ownerNameById[pick.member_id] || pick.member_id;
@@ -342,26 +354,55 @@ async function buildWinPctModel(picks, league, seasonYear, locks, ownerNameById,
   });
 }
 
+/**
+ * NHL's record is always "N pts" (see update-sports.js — no dash, so
+ * parseRecordToGamesPlayed always returns null for it). Rather than
+ * falling through to a content-free fallback for the entire season,
+ * approximate games-played from the calendar date against the NHL's
+ * actual ~Oct 1 – Apr 15 regular-season window. Approximate by design,
+ * same honesty bar as EVENTS_REMAINING_BY_MONTH below — this drives
+ * Monte Carlo variance, not a displayed fact.
+ */
+function estimateNhlGamesPlayed(now) {
+  const year = now.getFullYear();
+  let start = new Date(year, 9, 1); // Oct 1
+  if (now < start) start = new Date(year - 1, 9, 1);
+  const end = new Date(start); end.setMonth(end.getMonth() + 7); // ~Apr 1, 7 months later
+  const total = SEASON_LENGTH.NHL;
+  const seasonMs = end - start;
+  const elapsedMs = clamp(now - start, 0, seasonMs);
+  const played = Math.round((elapsedMs / seasonMs) * total);
+  return { played, remaining: total - played };
+}
+
 /** NHL/MLS — metric is cumulative points, not win%. Simpler linear-rate model. */
 function buildPointsRateModel(picks, league, ownerNameById) {
   return picks.map((pick) => {
     const ownerName = ownerNameById[pick.member_id] || pick.member_id;
-    const games = parseRecordToGamesPlayed(pick.record, league);
     const currentPoints = Number(pick.metric) || 0;
+    let games = parseRecordToGamesPlayed(pick.record, league);
+    let sourceNote = 'points_per_game_rate(parsed_record)';
+    if (!games && league === 'NHL') {
+      games = estimateNhlGamesPlayed(new Date());
+      sourceNote = 'points_per_game_rate(date_estimated_games_played,approximate)';
+    }
 
     let deltaSampler;
     if (games && games.remaining > 0 && games.played > 0) {
       const ptsPerGame = currentPoints / games.played;
       const meanDelta = ptsPerGame * games.remaining;
+      // Points only accumulate (never decrease), so the sampled delta is
+      // clamped non-negative — same convention as the win%-sports model.
       deltaSampler = (rng) => Math.max(0, sampleNormal(rng, meanDelta, meanDelta * 0.35));
     } else {
-      deltaSampler = (rng) => sampleNormal(rng, 0, Math.max(currentPoints * 0.1, 2));
+      deltaSampler = (rng) => Math.max(0, sampleNormal(rng, 0, Math.max(currentPoints * 0.1, 2)));
+      sourceNote = 'fallback:generic_small_variance(no_games_data)';
     }
 
     return {
       id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentPoints,
       deltaSampler, bonusSampler: () => 0,
-      sourceNote: 'fallback:points_per_game_rate',
+      sourceNote,
     };
   });
 }
@@ -402,6 +443,49 @@ function buildRankingPointsModel(picks, category, ownerNameById) {
       deltaSampler: (rng) => Math.max(0, sampleNormal(rng, meanDelta, meanDelta * 0.5 + 1)),
       bonusSampler: () => 0,
       sourceNote: 'fallback:points_per_event_rate,eventsRemaining=' + eventsRemaining,
+    };
+  });
+}
+
+/**
+ * NCAAF/NCAAB — base metric is AP poll points (update-college.js), which
+ * is a weekly voter-sentiment score, NOT a per-game accumulated stat —
+ * it can go up OR down week to week, unlike win% or cumulative points.
+ * So this gets a symmetric variance band around the current value
+ * rather than the monotonic accumulation models above, and holds flat
+ * (zero variance) once the regular-season AP poll freezes for the year
+ * (see update-college.js's own freezeDate per league), since there's no
+ * more poll movement left to simulate before bowls/tournament bonus
+ * outcomes take over.
+ */
+const COLLEGE_FREEZE = { NCAAF: { month: 12, day: 9 }, NCAAB: { month: 3, day: 5 } };
+function isPastCollegeFreeze(league, now) {
+  const freeze = COLLEGE_FREEZE[league];
+  const todayNum = (now.getMonth() + 1) * 100 + now.getDate();
+  const freezeNum = freeze.month * 100 + freeze.day;
+  // NCAAB's poll season spans the new year (Nov–Mar); only the Jan–Mar
+  // stretch can be "past" its freeze date. NCAAF's poll season is
+  // within one calendar year, so a plain numeric compare works, but
+  // also treat the off-season months (Jan–Jul) as frozen since there's
+  // no active poll to simulate movement in.
+  if (league === 'NCAAB') return now.getMonth() + 1 <= 3 && todayNum >= freezeNum;
+  return todayNum >= freezeNum || now.getMonth() + 1 < 8;
+}
+
+function buildCollegeRankingModel(picks, league, ownerNameById) {
+  const frozen = isPastCollegeFreeze(league, new Date());
+  return picks.map((pick) => {
+    const ownerName = ownerNameById[pick.member_id] || pick.member_id;
+    const currentPoints = Number(pick.metric) || 0;
+    const deltaSampler = frozen
+      ? () => 0
+      : (rng) => Math.max(-currentPoints, sampleNormal(rng, 0, Math.max(currentPoints * 0.12, 3)));
+    return {
+      id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentPoints,
+      deltaSampler, bonusSampler: () => 0,
+      sourceNote: frozen
+        ? 'static:ap_poll_frozen_past_regular_season'
+        : 'fallback:ap_poll_symmetric_variance(no_real_forecast_source)',
     };
   });
 }
@@ -682,6 +766,11 @@ module.exports = async function handler(req, res) {
   for (const league of ['NHL', 'MLS']) {
     await runCategory(league, 'desc', (picks) => buildPointsRateModel(picks, league, ownerNameById), bonusConfigFor(league));
   }
+  // ── College (AP poll, not the same accumulation shape as pro sports) ──
+  await runCategory('NCAAF', 'desc', (picks) => buildCollegeRankingModel(picks, 'NCAAF', ownerNameById),
+    { titleKeyword: 'College Football Playoff', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
+  await runCategory('NCAAB', 'desc', (picks) => buildCollegeRankingModel(picks, 'NCAAB', ownerNameById),
+    { titleKeyword: 'NCAA Tournament', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
   // ── Individual-ranking sports ──
   await runCategory('Tennis', 'desc', (picks) => buildRankingPointsModel(picks, 'Tennis', ownerNameById),
     { titleKeyword: 'Grand Slam', kalshiSeriesGuess: null, bonusPointsIfWin: 5 });
