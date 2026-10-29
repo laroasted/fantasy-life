@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Target, Users, Shuffle, Trophy, Pencil, Rocket, History as HistoryIcon, PartyPopper, Download, BarChart3 } from "lucide-react";
 import { DRAFT_MEMBERS, MEMBER_COLORS, NEW_MEMBER_COLORS } from "../constants/members";
 import { DRAFT_CATEGORIES, CATEGORY_ORDER, CATEGORY_KEY_TO_ID } from "../constants/categories";
 import { PICK_OPTIONS } from "../constants/pickOptions";
@@ -359,7 +359,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     return (
       <div style={{ maxWidth: 600, margin: "0 auto" }}>
         <div style={{ ...cardStyle, marginBottom: 16, textAlign: "center" }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>🎯</div>
+          <Target size={48} style={{ marginBottom: 8 }} color={theme.acc} />
           <h2 style={{ margin: "0 0 8px", fontSize: isMobile ? 18 : 22 }}>New Season Draft</h2>
           <p style={{ color: theme.dim, fontSize: 13 }}>Set up members, enter guesses, and determine draft order.</p>
         </div>
@@ -369,7 +369,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         {/* Member Management */}
         <div style={{ ...cardStyle, marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>👥 Members ({activeMembers.length})</h3>
+            <h3 style={{ margin: 0, fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+              <Users size={16} /> Members ({activeMembers.length})
+            </h3>
             <button onClick={() => setShowMemberMgmt(!showMemberMgmt)}
               style={{ ...buttonStyle(theme.srf), fontSize: 11, padding: "4px 10px", border: `1px solid ${theme.bdr}` }}>
               {showMemberMgmt ? "Close" : "Manage"}
@@ -443,14 +445,17 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           <button onClick={calculateOrder} style={{ ...buttonStyle(), width: "100%" }}>Calculate Draft Order</button>
           <button onClick={randomizeOrder}
-            style={{ ...buttonStyle(theme.srf), width: "100%", border: `1px solid ${theme.bdr}`, color: theme.dim }}>
-            🎲 Or Skip & Randomize Order
+            style={{ ...buttonStyle(theme.srf), width: "100%", border: `1px solid ${theme.bdr}`, color: theme.dim,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Shuffle size={14} /> Or Skip & Randomize Order
           </button>
         </div>
  
         {draftOrder.length > 0 && (
           <div style={{ ...cardStyle, marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>🏆 Draft Order (Snake)</h3>
+            <h3 style={{ margin: "0 0 8px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+              <Trophy size={16} color={theme.yel} /> Draft Order (Snake)
+            </h3>
             <p style={{ color: theme.dim, fontSize: 12, margin: "0 0 8px" }}>
               {draftOrder.length} members → max base = {draftOrder.length}
             </p>
@@ -464,9 +469,15 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             ))}
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <button onClick={() => { track(EVENTS.DRAFT_ORDER_EDIT_REOPENED); setManualOrder(draftOrder); setDraftOrder([]); }}
-                style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>✏️ Edit</button>
+                style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}`,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Pencil size={14} /> Edit
+              </button>
               <button onClick={startDraft}
-                style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 16 }}>🚀 Start Draft!</button>
+                style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 16,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <Rocket size={16} /> Start Draft!
+              </button>
             </div>
           </div>
         )}
@@ -479,17 +490,18 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const panelToggle = isMobile && (
     <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
       {[
-        { id: "draft", label: "🎯 Draft" },
-        { id: "rosters", label: "👥 Rosters" },
-        { id: "history", label: "📋 History" },
+        { id: "draft", label: "Draft", Icon: Target },
+        { id: "rosters", label: "Rosters", Icon: Users },
+        { id: "history", label: "History", Icon: HistoryIcon },
       ].map((p) => (
         <button key={p.id} onClick={() => { track(EVENTS.DRAFT_PANEL_SWITCHED, { panel: p.id }); setMobilePanel(p.id); }}
           style={{
             ...buttonStyle(mobilePanel === p.id ? theme.acc : theme.srf),
             flex: 1, fontSize: 12,
             border: mobilePanel === p.id ? "none" : `1px solid ${theme.bdr}`,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
           }}>
-          {p.label}
+          <p.Icon size={13} /> {p.label}
         </button>
       ))}
     </div>
@@ -560,7 +572,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       {isComplete ? (
         <div>
           <div style={{ ...cardStyle, textAlign: "center", padding: isMobile ? 20 : 32, marginBottom: 16 }}>
-            <div style={{ fontSize: isMobile ? 48 : 60, marginBottom: 12 }}>🎉</div>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+              <PartyPopper size={isMobile ? 48 : 60} color={theme.acc} />
+            </div>
             <h2 style={{ margin: "0 0 8px", fontSize: isMobile ? 20 : 24 }}>Draft Complete!</h2>
             <p style={{ color: theme.mut, fontSize: 13, marginBottom: 16 }}>
               {draftOrder.length} members · Max base: {draftOrder.length}
@@ -573,10 +587,13 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
               <button onClick={() => { track(EVENTS.DRAFT_FINALIZE_MODAL_OPENED, { season_name: seasonName }); setShowFinalizeModal(true); }} disabled={!isCommissioner}
-                style={{ ...buttonStyle(theme.grn), padding: "12px 24px", fontSize: isMobile ? 13 : 15, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default" }}>
-                🏆 Finalize & Launch {seasonName}
+                style={{ ...buttonStyle(theme.grn), padding: "12px 24px", fontSize: isMobile ? 13 : 15, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default",
+                  display: "flex", alignItems: "center", gap: 8 }}>
+                <Trophy size={16} /> Finalize & Launch {seasonName}
               </button>
-              <button onClick={exportCSV} style={buttonStyle(theme.acc)}>📄 Export CSV</button>
+              <button onClick={exportCSV} style={{ ...buttonStyle(theme.acc), display: "flex", alignItems: "center", gap: 6 }}>
+                <Download size={14} /> Export CSV
+              </button>
             </div>
             {!isCommissioner && (
               <div style={{ marginTop: 12, fontSize: 12, color: theme.dim }}>
@@ -590,7 +607,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
               display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
               <div style={{ ...cardStyle, maxWidth: 500, width: "100%", padding: 24 }}>
-                <h3 style={{ margin: "0 0 12px", fontSize: 18, color: theme.red }}>⚠️ Commissioner Authorization</h3>
+                <h3 style={{ margin: "0 0 12px", fontSize: 18, color: theme.red, display: "flex", alignItems: "center", gap: 8 }}>
+                  <AlertTriangle size={18} /> Commissioner Authorization
+                </h3>
                 <div style={{ fontSize: 13, color: theme.mut, lineHeight: 1.7, marginBottom: 16 }}>
                   This will archive the current season and launch <strong>{seasonName}</strong> as the new active season.
                   All {draftOrder.length} members × 15 categories = {draftOrder.length * 15} picks will be saved to Supabase.
@@ -717,7 +736,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   return (
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20 }}>🎯 {seasonName} Draft</h2>
+        <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20, display: "flex", alignItems: "center", gap: 8 }}>
+          <Target size={isMobile ? 17 : 20} /> {seasonName} Draft
+        </h2>
         {!isMobile && (
           <button onClick={() => { track(EVENTS.DRAFT_HISTORY_PANEL_TOGGLED, { is_visible: !showHistory }); setShowHistory(!showHistory); }}
             style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>
@@ -746,7 +767,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
  
       {/* Draft Board */}
       <div style={{ marginTop: 16, ...cardStyle, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>📊 Draft Board</h3>
+        <h3 style={{ margin: "0 0 12px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+          <BarChart3 size={16} /> Draft Board
+        </h3>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: isMobile ? 10 : 11 }}>
           <thead>
             <tr>

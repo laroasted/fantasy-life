@@ -8,6 +8,7 @@ import { track, EVENTS } from "../utils/analytics";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
 import PayPalButton from "./PayPalButton";
 import ScrollFadeEdges from "./ScrollFadeEdges";
+import { Badge, CategoryPill } from "./Badges";
 
 var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
 
@@ -40,14 +41,7 @@ var RANK_TEXT_COLORS = {
 function RankBadge({ rank, size }) {
  var dim = size <= 13 ? 22 : 25;
  if (rank === 1) {
-  return (
-   <span style={{
-    display: "inline-flex", alignItems: "center", justifyContent: "center",
-    width: dim, height: dim, borderRadius: "50%", flexShrink: 0,
-    background: theme.acc + "26", border: `1.5px solid ${theme.acc}`,
-    color: theme.acc, fontSize: size <= 13 ? 11 : 12, fontWeight: 800,
-   }}>{rank}</span>
-  );
+  return <Badge color={theme.acc} shape="circle" size={dim} bgAlpha="26" borderAlpha="">{rank}</Badge>;
  }
  return (
   <span style={{
@@ -610,29 +604,21 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
     paddingBottom: isMobile ? 4 : 0,
     msOverflowStyle: "none", scrollbarWidth: "none",
    }}>
-    <button onClick={function () {
+    <CategoryPill active={!selCat} onClick={function () {
        track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: "overall", previous_category: selCat || "overall" });
        setSelCat(null); setExpRow(null);
-      }}
-     style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-      border: "1px solid " + (!selCat ? theme.acc : theme.bdr),
-      background: !selCat ? theme.acc : theme.card,
-      color: !selCat ? "#1A1200" : theme.txt, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+      }}>
      Overall
-    </button>
+    </CategoryPill>
     {CATEGORY_ORDER.map(function (k) {
      var isSel = selCat === k;
      return (
-      <button key={k} onClick={function () {
+      <CategoryPill key={k} active={isSel} onClick={function () {
          track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: k, previous_category: selCat || "overall" });
          setSelCat(k); setExpRow(null);
-        }}
-       style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-        border: "1px solid " + (isSel ? theme.acc : theme.bdr),
-        background: isSel ? theme.acc : theme.card,
-        color: isSel ? "#1A1200" : theme.txt, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+        }}>
        {CATEGORY_LABELS[k]}
-      </button>
+      </CategoryPill>
      );
     })}
    </div>
