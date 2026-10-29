@@ -847,9 +847,10 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
    </div>
 
    {/* MOCK ONLY — sidebar. Category Leaders uses real data already passed
-       into this component (seasonData.categories); Upcoming is hardcoded
-       sample data, same as the orientation strip mock before it was wired
-       to calendar_events — not plumbed through from App.jsx yet. */}
+       into this component (seasonData.categories). An "Upcoming" card was
+       dropped from the first version of this mock — it only had hardcoded
+       sample events, which would mislead real viewers once shipped; wiring
+       it to real calendar_events is a follow-up, not this PR. */}
    {isWide && (
     <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
      <div style={{ ...cardStyle, padding: 16 }}>
@@ -863,6 +864,13 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
         var nameText = cl.owners.length === 0 ? "—"
          : isTied ? cl.owners.join(" & ")
          : cl.owners[0];
+        // Any tied leader being paywalled blurs the shared score — showing
+        // one tied member's real number would let you back into the
+        // paywalled member's number by elimination.
+        var leaderPaywalled = cl.owners.some(function (name) {
+         var id = (members.find(function (x) { return x.name === name; }) || {}).id;
+         return isPaywalled(seasonData, id);
+        });
         return (
          <div key={cl.key} onClick={function () {
             track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: cl.key, previous_category: selCat || "overall" });
@@ -875,31 +883,15 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           <span title={isTied ? "Tied: " + cl.owners.join(", ") : undefined}
            style={{ fontSize: 12, fontWeight: 700, flex: 1, textAlign: "right",
            color: singleId ? (MEMBER_COLORS[singleId] || theme.txt) : (cl.owners.length === 0 ? theme.dim : theme.txt),
-           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-           {nameText}
+           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex",
+           alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
+           {leaderPaywalled && <Lock size={10} color={theme.yel} style={{ flexShrink: 0 }} />}
+           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameText}</span>
           </span>
-          <span style={{ fontSize: 12, fontWeight: 800, color: theme.txt, width: 28, textAlign: "right", flexShrink: 0 }}>
+          <span style={Object.assign({ fontSize: 12, fontWeight: 800, color: theme.txt, width: 28, textAlign: "right", flexShrink: 0 },
+           leaderPaywalled ? PAYWALL_BLUR_STYLE : {})}>
            {cl.owners.length > 0 ? cl.total : ""}
           </span>
-         </div>
-        );
-       })}
-      </div>
-     </div>
-
-     <div style={{ ...cardStyle, padding: 16 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, marginBottom: 10,
-       textTransform: "uppercase", letterSpacing: 1 }}>Upcoming</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-       {[
-        { title: "NFL Week 9", when: "Sun" },
-        { title: "F1 Brazilian GP", when: "Nov 15" },
-        { title: "Grammy Nominations", when: "Dec 6" },
-       ].map(function (ev, i) {
-        return (
-         <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
-          <span style={{ color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.title}</span>
-          <span style={{ color: theme.dim, flexShrink: 0 }}>{ev.when}</span>
          </div>
         );
        })}
