@@ -252,3 +252,29 @@ specific failure reason instead of a bare null
 one seen per category into `source_detail` as `odds_lookup:<reason>`.
 The next live run will say exactly where this is breaking instead of
 just confirming — again — that it is.
+
+## Fourth iteration — the diagnostic paid off immediately
+
+The instrumented run reported `odds_lookup:polymarket:
+10_events_46_markets_none_matched_outcome(Broncos)` for NFL — a real
+diagnosis, not a guess: the title search genuinely finds 10 real events
+totaling 46 real markets (the query mechanics work end to end), but none
+of them mention the team at all. 46 markets spread across 10 events is
+too thin for the real ~32-team Super Bowl Champion market to be among
+them — that alone would hold ~32 sub-markets. Most likely those 10 are a
+grab-bag of anything with "Super Bowl" in the title (MVP odds, halftime
+show, prop bets), and the real championship market either sorts outside
+an unordered top-10 window or isn't literally titled with the search
+phrase.
+
+Changed the events query to sort by volume descending and widened the
+window from 10 to 25 (the real championship market, being one of the
+most heavily-traded contracts on the platform, should sort near the top
+by volume if this assumption holds), and added `m.title` as a third
+fallback field for a sub-market's question text in case the real field
+name differs from the two already tried. Both changes are reasoned from
+the diagnostic, not blind guesses, but still unverified against a live
+response — this build still can't reach Polymarket directly. If the
+next run's `marketsScanned` count jumps well past 46, the sort/window
+fix helped even if the outcome still doesn't match, which would point at
+the field-name guess as the next thing to check.
