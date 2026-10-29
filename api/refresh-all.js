@@ -3,9 +3,18 @@
  *
  * Triggered by the Refresh button in the header. Runs every data-updating
  * cron job (sports, college, stocks, entertainment, billboard, events,
- * country) concurrently, then snapshot-scores, then update-projections
- * once they're done, so a visitor can force a live update instead of
- * waiting for the next scheduled run.
+ * country) concurrently, then snapshot-scores, so a visitor can force a
+ * live update instead of waiting for the next scheduled run.
+ *
+ * update-projections is DELIBERATELY NOT chained in here. It was, briefly
+ * (see PR #16 history) — caught via a live timeout against a real deploy:
+ * this function already runs close to its own maxDuration just on the 7
+ * data jobs (Billboard scraping and the per-film TMDB/OMDB calls in
+ * entertainment are both documented as able to run long), and stacking
+ * projections' own up-to-40s external-call budget on top of that blew
+ * straight through the ceiling. Projections stays on its own independent
+ * daily cron schedule (vercel.json), where it gets the full function
+ * timeout to itself instead of sharing it with 8 other jobs.
  *
  * Calls each cron module's handler directly in-process (no HTTP hop) with
  * a fake req/res pair, reusing the same CRON_SECRET auth each job already
@@ -53,7 +62,6 @@ const updateBillboard = require('./cron/update-billboard');
 const updateEvents = require('./cron/update-events');
 const updateCountry = require('./cron/update-country');
 const snapshotScores = require('./cron/snapshot-scores');
-const updateProjections = require('./cron/update-projections');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -135,12 +143,8 @@ module.exports = async function handler(req, res) {
     DATA_JOBS.map(function (job) { return runJob(job[0], job[1]); })
   );
   var snapshotResult = await runJob('snapshot-scores', snapshotScores);
-  // Projections read `picks` for their current-value baseline, same as
-  // snapshot-scores — must run after the data jobs have actually written,
-  // not concurrently with them.
-  var projectionsResult = await runJob('projections', updateProjections);
 
-  var jobs = dataResults.concat([snapshotResult, projectionsResult]);
+  var jobs = dataResults.concat([snapshotResult]);
   var allOk = jobs.every(function (j) { return j.ok; });
 
   return res.status(200).json({
