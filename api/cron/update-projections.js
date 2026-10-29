@@ -224,20 +224,22 @@ async function fetchJsonDiagnostic(url, ms) {
  *
  * A diagnosed run showed the title search for "Super Bowl" genuinely
  * finding 10 real events totaling 46 real markets — the query mechanics
- * work — but NONE of them mentioned the team being searched for. 46
- * markets across 10 events is too few for one of them to be the actual
- * ~32-team championship market (that alone would have ~32 sub-markets);
- * more likely those 10 are a grab-bag of anything with "Super Bowl" in
- * the title (MVP odds, halftime show, prop bets) and the real
- * championship market either sorts outside an unordered top-10 window
- * or just isn't literally titled with the search phrase. Sorting by
- * volume descending and widening the window both raise the odds of
- * actually surfacing it — still a guess about Polymarket's exact
- * ranking behavior, not a verified fix, since this build still can't
- * reach the live API to confirm.
+ * work — but NONE of them mentioned the team being searched for. Tried
+ * adding order=volume&ascending=false to surface the real championship
+ * market, which DID produce matches for NFL/NBA — but a wider check
+ * exposed why: MLB ("World Series"), MLS ("MLS Cup"), and NCAAB ("NCAA
+ * Tournament") — three unrelated searches — all came back with the
+ * EXACT same event/market count. order/ascending aren't documented for
+ * this endpoint, and evidently break the title filter entirely once
+ * added, silently falling back to an unfiltered top-N-by-volume list.
+ * NFL/NBA only "matched" because their markets are popular enough to be
+ * in that unfiltered list anyway, not because per-category search
+ * actually worked — the right answer for the wrong reason. Reverted;
+ * kept the wider limit (an independent, lower-risk change) without the
+ * sort params.
  */
 async function findPolymarketProbability(titleKeyword, outcomeKeyword) {
-  const url = 'https://gamma-api.polymarket.com/events?active=true&closed=false&limit=25&order=volume&ascending=false&title=' + encodeURIComponent(titleKeyword);
+  const url = 'https://gamma-api.polymarket.com/events?active=true&closed=false&limit=25&title=' + encodeURIComponent(titleKeyword);
   const res = await fetchJsonDiagnostic(url, 8000);
   if (res.error) return { prob: null, reason: 'fetch_error:' + res.error };
   if (!res.ok) return { prob: null, reason: 'http_' + res.status };

@@ -278,3 +278,32 @@ response — this build still can't reach Polymarket directly. If the
 next run's `marketsScanned` count jumps well past 46, the sort/window
 fix helped even if the outcome still doesn't match, which would point at
 the field-name guess as the next thing to check.
+
+## Fifth iteration — the sort fix was right for the wrong reason
+
+That run DID produce matches — NFL showed `odds_lookup:matched` with
+plausible fractional bonus EV (0.3, 0.11, 1.14 — roughly 3%/1%/11%
+championship-win probabilities). Looked like a clean win. A broader
+check across MLB/MLS/NCAAB caught the real problem before calling it
+done: all three — searching for "World Series", "MLS Cup", and "NCAA
+Tournament" respectively, three *unrelated* terms — came back with the
+exact same `25_events_1082_markets`. That's not survivable as a
+coincidence; it means `order=volume&ascending=false` (undocumented for
+Polymarket's `/events` endpoint specifically) silently breaks the
+`title` filter entirely once added, falling back to an unfiltered
+top-25-by-volume list across all of Polymarket. NFL and NBA only
+"matched" because their championship markets are popular enough to
+appear in that unfiltered list regardless — the right-looking answer for
+the wrong reason, which would have shipped as a confirmed fix without
+the second check.
+
+Reverted `order`/`ascending`, kept the wider `limit=25` alone (an
+independent change, not implicated by the identical-count evidence).
+Re-verifying NFL/NBA still match through genuine per-category filtering
+now, not through an unfiltered list they happened to be popular enough
+to land in. Also worth remembering when reading the next result: MLB's
+real World Series may already be over or concluding around this point in
+the season, so a legitimate `no_events_matched_title` for MLB specifically
+could mean "the active market genuinely doesn't exist anymore," not
+"still broken" — season-end timing, not a bug, needs to be checked
+before assuming either way.
