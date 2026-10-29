@@ -223,7 +223,7 @@ export default function Trends({ seasonData }) {
   // per-series end labels that replace the single "leader" label. Members
   // can be added with arbitrary names (not just the fixed roster), so size
   // the right margin off the longest *visible* name instead of a fixed guess.
-  const W = 720, H = isMobile ? 320 : 380;
+  const W = 720, H = isMobile ? 480 : 460;
   const labelCharW = isMobile ? 6.2 : 6.8;
   const maxNameLen = visibleSeries.reduce((m, sr) => Math.max(m, sr.name.length), 4);
   const padL = 36, padR = Math.min(110, Math.max(isMobile ? 42 : 52, maxNameLen * labelCharW + 13));
