@@ -237,15 +237,37 @@ async function fetchJsonDiagnostic(url, ms) {
  * actually worked — the right answer for the wrong reason. Reverted;
  * kept the wider limit (an independent, lower-risk change) without the
  * sort params.
+ *
+ * ROOT CAUSE, finally confirmed: /events?title= was never a real filter
+ * on this endpoint at all — all three outcomes above (plain "no match",
+ * "matched by accident", "identical counts across searches") were
+ * symptoms of the same thing. The actual fix is below: Polymarket's real
+ * full-text search endpoint, verified live (see this function's own
+ * comment).
  */
 async function findPolymarketProbability(titleKeyword, outcomeKeyword) {
-  const url = 'https://gamma-api.polymarket.com/events?active=true&closed=false&limit=25&title=' + encodeURIComponent(titleKeyword);
+  // VERIFIED live via Firecrawl's Alexandria integration (which has its
+  // own network path, unlike this file's deploy target) — NOT the
+  // /events?title= filter used before, which three separate live runs
+  // proved doesn't actually filter anything. This is Polymarket's real
+  // full-text search: querying "Super Bowl Champion" correctly found the
+  // current season's actual market even though it's literally titled
+  // "Pro Football: 2027 Champion" (Polymarket avoids the NFL's
+  // trademarked term) — sharing zero words with the query. Confirmed
+  // field names too: question/groupItemTitle/outcomes/outcomePrices on
+  // each event's markets[] are exactly what this file already parses
+  // below. events_status=active is Polymarket's own upstream filter
+  // (confirmed via the capability's documented parameter list); the
+  // active/closed check below is kept as a client-side safety net in
+  // case that upstream param doesn't behave as named.
+  const url = 'https://gamma-api.polymarket.com/public-search?events_status=active&limit_per_type=10&q=' + encodeURIComponent(titleKeyword);
   const res = await fetchJsonDiagnostic(url, 8000);
   if (res.error) return { prob: null, reason: 'fetch_error:' + res.error };
   if (!res.ok) return { prob: null, reason: 'http_' + res.status };
   const data = res.json;
-  const events = Array.isArray(data) ? data : (data && data.events) || [];
-  if (!events || events.length === 0) return { prob: null, reason: 'no_events_matched_title(' + titleKeyword + ')' };
+  const allEvents = Array.isArray(data) ? data : (data && data.events) || [];
+  const events = allEvents.filter((ev) => ev.active !== false && ev.closed !== true);
+  if (!events || events.length === 0) return { prob: null, reason: 'no_active_events_matched_query(' + titleKeyword + ')' };
 
   const needle = outcomeKeyword.toLowerCase();
   let marketsScanned = 0;

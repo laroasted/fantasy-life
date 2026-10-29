@@ -307,3 +307,50 @@ the season, so a legitimate `no_events_matched_title` for MLB specifically
 could mean "the active market genuinely doesn't exist anymore," not
 "still broken" — season-end timing, not a bug, needs to be checked
 before assuming either way.
+
+## Sixth iteration — root cause confirmed live, not guessed
+
+A follow-up check (removing order/ascending, keeping limit=25) found
+MLB, NBA, and NFL *still* returning the identical event/market count
+across three unrelated searches. That ruled out order/ascending as the
+cause and pointed at something more fundamental: `/events?title=` was
+likely never a real filter on this endpoint at all.
+
+This build still can't reach Polymarket directly, but it has a separate
+tool (Firecrawl's Alexandria integration) with its own network path that
+can execute Polymarket's catalogued capabilities live. Used its
+`search/query` capability directly — genuinely live, not a guess — and
+it immediately surfaced the real problem and the real fix in one call:
+querying `"Super Bowl Champion"` correctly found the current season's
+actual championship market, titled **"Pro Football: 2027 Champion"**
+(Polymarket avoids the NFL's trademarked "Super Bowl" name) — sharing
+zero words with the query. `/events?title=` was doing literal substring
+matching against event titles (if it was filtering at all); the real
+search is full-text/semantic. That's the actual root cause of all three
+earlier symptoms (no match, accidental match, identical counts) at once.
+
+The same live call also confirmed, with real data, the exact field
+names this file was already parsing: `question`, `groupItemTitle`,
+`outcomes`, `outcomePrices` (JSON-encoded string arrays) on each event's
+`markets[]` — e.g. `{"question": "Will the Arizona Cardinals win the
+2027 NFL league championship?", "outcomes": "[\"Yes\", \"No\"]",
+"outcomePrices": "[\"0.0015\", \"0.9985\"]"}`. The parsing logic was
+never the problem — only event discovery was.
+
+Fixed by switching to Polymarket's real search endpoint
+(`gamma-api.polymarket.com/public-search`, with `q`, `limit_per_type`,
+and `events_status=active` — params confirmed via the capability's own
+documented contract, not guessed) in place of the broken `/events?title=`
+filter. Kept a client-side `active !== false && closed !== true` filter
+as a safety net in case the upstream `events_status` param doesn't
+behave exactly as named. The question/outcome parsing code is unchanged
+— it didn't need to be, now that it's confirmed correct against real
+data.
+
+This endpoint, these exact parameter names, and these field names are
+now genuinely verified against a live response — not an educated guess
+dressed up as one, unlike everything before this point in the file's
+history. Still worth a live run to confirm it end to end, since the
+*deployed* code path (plain `fetch()` from Vercel) hasn't itself been
+exercised — only the equivalent call through Alexandria's own
+infrastructure has.
