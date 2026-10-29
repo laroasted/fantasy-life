@@ -182,11 +182,32 @@ export default function Trends({ seasonData }) {
 
   const visibleSeries = series.filter((sr) => !hidden.has(sr.id));
 
-  const maxVal = useMemo(() => {
-    let max = 0;
-    visibleSeries.forEach((sr) => sr.values.forEach((v) => { if (v > max) max = v; }));
-    return max || 1;
-  }, [visibleSeries]);
+  // Dynamic Y axis: zoom to the actual spread of the visible series instead of
+  // always anchoring at 0. Standings over a season tend to cluster in a narrow
+  // band relative to their absolute size (e.g. 410-460), so a zero-anchored
+  // axis flattens every line into a near-overlapping cluster — exactly what
+  // makes it hard to tell members apart at a glance, especially on a small
+  // mobile screen. Rounds the domain to clean tick steps (1/2/5 x 10^n) so the
+  // gridlines still read as real numbers, not an arbitrary crop.
+  const yScale = useMemo(() => {
+    let lo = Infinity, hi = -Infinity;
+    visibleSeries.forEach((sr) => sr.values.forEach((v) => {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }));
+    if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+    if (lo === hi) { lo -= 1; hi += 1; }
+    const targetTicks = isMobile ? 4 : 5;
+    const rawStep = (hi - lo) / targetTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const norm = rawStep / mag;
+    const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+    const min = Math.floor(lo / step) * step;
+    const max = Math.ceil(hi / step) * step;
+    const ticks = [];
+    for (let v = min; v <= max + step / 2; v += step) ticks.push(Math.round(v * 100) / 100);
+    return { min, max, ticks };
+  }, [visibleSeries, isMobile]);
 
   function toggleMember(mid) {
     const nowHidden = !hidden.has(mid);
@@ -198,32 +219,28 @@ export default function Trends({ seasonData }) {
     });
   }
 
-  // ── chart geometry ──
-  const W = 720, H = isMobile ? 240 : 300;
-  const padL = 34, padR = 12, padT = 14, padB = 26;
+  // ── chart geometry ── bigger overall, and extra right-hand room for the
+  // per-series end labels that replace the single "leader" label. Members
+  // can be added with arbitrary names (not just the fixed roster), so size
+  // the right margin off the longest *visible* name instead of a fixed guess.
+  const W = 720, H = isMobile ? 320 : 380;
+  const labelCharW = isMobile ? 6.2 : 6.8;
+  const maxNameLen = visibleSeries.reduce((m, sr) => Math.max(m, sr.name.length), 4);
+  const padL = 36, padR = Math.min(110, Math.max(isMobile ? 42 : 52, maxNameLen * labelCharW + 13));
+  const padT = 16, padB = 28;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const n = dates.length;
   const xFor = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const yFor = (v) => padT + plotH - (v / maxVal) * plotH;
+  const yFor = (v) => padT + plotH - ((v - yScale.min) / (yScale.max - yScale.min)) * plotH;
 
   function pathFor(values) {
     return values.map((v, i) => (i === 0 ? "M" : "L") + xFor(i).toFixed(2) + "," + yFor(v).toFixed(2)).join(" ");
   }
 
-  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
-    y: padT + plotH - f * plotH,
-    val: Math.round(maxVal * f),
+  const gridLines = yScale.ticks.map((val) => ({
+    y: yFor(val),
+    val,
   }));
-
-  const leader = useMemo(() => {
-    if (visibleSeries.length === 0 || n === 0) return null;
-    let best = null;
-    visibleSeries.forEach((sr) => {
-      const v = sr.values[n - 1];
-      if (!best || v > best.v) best = { id: sr.id, name: sr.name, color: sr.color, v };
-    });
-    return best;
-  }, [visibleSeries, n]);
 
   function handleMove(e) {
     if (n === 0 || !svgWrapRef.current) return;
@@ -282,6 +299,32 @@ export default function Trends({ seasonData }) {
       .sort((a, b) => b.v - a.v)
     : [];
   const hoverX = hoverIdx !== null ? xFor(hoverIdx) : null;
+
+  // Per-series end-of-line labels — every visible member gets their name
+  // pinned to where their line ends, not just the current leader. This is
+  // the main fix for "hard to tell the lines apart": color alone doesn't
+  // carry across 11 similarly-hued lines on a phone screen, but a name does.
+  // Labels are nudged apart (keeping their top-to-bottom order) so they never
+  // overlap when two members are tied or close together.
+  const labelFontSize = isMobile ? 10 : 11;
+  const minLabelGap = labelFontSize + 4;
+  const endLabels = (() => {
+    if (!visibleSeries.length) return [];
+    const items = visibleSeries
+      .map((sr) => ({ id: sr.id, name: sr.name, color: sr.color, actualY: yFor(sr.values[n - 1]) }))
+      .sort((a, b) => a.actualY - b.actualY);
+    items.forEach((it) => { it.y = it.actualY; });
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].y - items[i - 1].y < minLabelGap) {
+        items[i].y = items[i - 1].y + minLabelGap;
+      }
+    }
+    const overflow = items[items.length - 1].y - (padT + plotH);
+    if (overflow > 0) {
+      for (let i = items.length - 1; i >= 0; i--) items[i].y -= overflow;
+    }
+    return items;
+  })();
 
   return (
     <div style={{ maxWidth: 800, margin: "0 auto" }}>
@@ -343,7 +386,7 @@ export default function Trends({ seasonData }) {
             {gridLines.map((g, i) => (
               <g key={i}>
                 <line x1={padL} y1={g.y} x2={W - padR} y2={g.y} stroke="#334155" strokeWidth={1} opacity={0.4} />
-                <text x={padL - 6} y={g.y + 3} textAnchor="end" fontSize={9} fill={s.dim}>{g.val}</text>
+                <text x={padL - 7} y={g.y + 3} textAnchor="end" fontSize={10} fill={s.dim}>{g.val}</text>
               </g>
             ))}
 
@@ -352,7 +395,7 @@ export default function Trends({ seasonData }) {
               const step = Math.max(1, Math.ceil(n / (isMobile ? 4 : 7)));
               if (i % step !== 0 && i !== n - 1) return null;
               return (
-                <text key={d} x={xFor(i)} y={H - 6} textAnchor="middle" fontSize={9} fill={s.dim}>
+                <text key={d} x={xFor(i)} y={H - 8} textAnchor="middle" fontSize={10} fill={s.dim}>
                   {fmtShort(d)}
                 </text>
               );
@@ -360,30 +403,40 @@ export default function Trends({ seasonData }) {
 
             {/* Lines */}
             {visibleSeries.map((sr) => (
-              <path key={sr.id} d={pathFor(sr.values)} fill="none" stroke={sr.color} strokeWidth={2}
+              <path key={sr.id} d={pathFor(sr.values)} fill="none" stroke={sr.color} strokeWidth={3}
                 strokeLinecap="round" strokeLinejoin="round" />
             ))}
 
             {/* Last-point markers */}
             {visibleSeries.map((sr) => (
-              <circle key={sr.id} cx={xFor(n - 1)} cy={yFor(sr.values[n - 1])} r={3} fill={sr.color} />
+              <circle key={sr.id} cx={xFor(n - 1)} cy={yFor(sr.values[n - 1])} r={4}
+                fill={sr.color} stroke={s.card} strokeWidth={2} />
             ))}
 
-            {/* Leader direct label */}
-            {leader && (
-              <text x={Math.min(W - padR - 2, xFor(n - 1) + 4)} y={yFor(leader.v) - 6}
-                fontSize={10} fontWeight={700} fill={leader.color} textAnchor="end">
-                {leader.name}
-              </text>
-            )}
+            {/* Per-series end labels, nudged apart so ties/close scores don't overlap */}
+            {endLabels.map((lb) => {
+              const shifted = Math.abs(lb.y - lb.actualY) > 2;
+              return (
+                <g key={"lbl" + lb.id}>
+                  {shifted && (
+                    <line x1={xFor(n - 1) + 2} y1={lb.actualY} x2={xFor(n - 1) + 7} y2={lb.y}
+                      stroke={lb.color} strokeWidth={1} opacity={0.5} />
+                  )}
+                  <text x={xFor(n - 1) + (shifted ? 9 : 7)} y={lb.y + labelFontSize / 3}
+                    fontSize={labelFontSize} fontWeight={700} fill={lb.color} textAnchor="start">
+                    {lb.name}
+                  </text>
+                </g>
+              );
+            })}
 
             {/* Crosshair */}
             {hoverX !== null && (
               <line x1={hoverX} y1={padT} x2={hoverX} y2={padT + plotH} stroke="#94a3b8" strokeWidth={1} strokeDasharray="3,3" opacity={0.6} />
             )}
             {hoverX !== null && visibleSeries.map((sr) => (
-              <circle key={"h" + sr.id} cx={hoverX} cy={yFor(sr.values[hoverIdx])} r={3.5}
-                fill={s.card} stroke={sr.color} strokeWidth={2} />
+              <circle key={"h" + sr.id} cx={hoverX} cy={yFor(sr.values[hoverIdx])} r={4.5}
+                fill={s.card} stroke={sr.color} strokeWidth={2.5} />
             ))}
           </svg>
 
