@@ -354,3 +354,38 @@ history. Still worth a live run to confirm it end to end, since the
 *deployed* code path (plain `fetch()` from Vercel) hasn't itself been
 exercised — only the equivalent call through Alexandria's own
 infrastructure has.
+
+## Seventh iteration — confirmed live, then closed the remaining gaps the same way
+
+A live run confirmed the fix: NFL, NBA, MLB, and NHL all came back
+`odds_lookup:matched` with sane, differentiated fractional bonus EV —
+MLB's values clustering higher than NFL/NBA's makes sense too, since the
+real World Series is likely underway right now, so most MLB picks
+already have real banked bonus from earlier playoff rounds, unlike
+NFL/NBA whose playoffs are still months off.
+
+NCAAF, NCAAB, and MLS still weren't matching. Rather than guess at why,
+used the same verified Alexandria technique again on each:
+
+- NCAAF searched for "Ohio State" against 267 real markets, no match.
+  Live check: the real market says **"Ohio St."** — AP-poll-style
+  abbreviation, not the full word. A general pattern, not a one-off —
+  should also fix Michigan State, Florida State, Penn State, etc.
+- MLS searched for "LAFC" against a thin 31-market result, no match.
+  Live check: the real market says **"Los Angeles FC"** — our pick
+  storage uses the club's brand initialism, the market spells it out.
+- NCAAB searched for "Connecticut", no match. Live check: the real
+  market says **"UConn"** — not an abbreviation of "Connecticut" at
+  all, a distinct name entirely.
+
+Added a `nameVariants()` helper generating alternate search terms —
+the general State→St. substitution, plus the two specific verified
+aliases (LAFC, Connecticut/UConn) — tried alongside the original name
+for every category (a harmless no-op for names that don't match any
+pattern, e.g. "Chiefs"). This is explicitly NOT a comprehensive
+team-alias table; it's the three mismatches actually found and
+confirmed, not a guess at others that might exist. More will surface
+the same way if/when they do — this technique (search live via
+Alexandria for the exact pick name, read back the real question text)
+is now the established way to resolve a stuck "none_matched_outcome"
+diagnostic rather than guessing blind.

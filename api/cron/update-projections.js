@@ -245,7 +245,36 @@ async function fetchJsonDiagnostic(url, ms) {
  * full-text search endpoint, verified live (see this function's own
  * comment).
  */
-async function findPolymarketProbability(titleKeyword, outcomeKeyword) {
+/**
+ * Generates alternate search terms for betting-market matching. Every
+ * entry here is verified live via the same Alexandria technique used to
+ * fix the search endpoint itself — not guessed:
+ *   - College markets abbreviate "State" to "St." — the real Ohio State
+ *     market literally says "Will Ohio St. Make the 2027 College
+ *     Football Playoff National Championship Game?", not "Ohio State".
+ *     A general pattern, not a one-off — should also cover Michigan
+ *     State, Florida State, Penn State, etc.
+ *   - LAFC's real market says "Will Los Angeles FC win the 2026 MLS
+ *     Cup?" — our pick storage uses the club's brand initialism, the
+ *     market spells it out.
+ *   - UConn's real market says "Will UConn be a number 1 seed..." — not
+ *     "Connecticut" at all, a distinct mismatch from the State/St.
+ *     pattern (not an abbreviation of "Connecticut", a different name
+ *     entirely).
+ * Not a comprehensive team-alias table — these are the three mismatches
+ * actually found and confirmed so far, not a guess at others that might
+ * exist. A no-op for any name that doesn't match one of these patterns.
+ */
+const VERIFIED_NAME_ALIASES = { 'LAFC': 'Los Angeles FC', 'Connecticut': 'UConn' };
+function nameVariants(name) {
+  const variants = [name];
+  if (/\bState\b/i.test(name)) variants.push(name.replace(/\bState\b/i, 'St.'));
+  if (VERIFIED_NAME_ALIASES[name]) variants.push(VERIFIED_NAME_ALIASES[name]);
+  return variants;
+}
+
+async function findPolymarketProbability(titleKeyword, outcomeKeywords) {
+  const candidates = Array.isArray(outcomeKeywords) ? outcomeKeywords : [outcomeKeywords];
   // VERIFIED live via Firecrawl's Alexandria integration (which has its
   // own network path, unlike this file's deploy target) — NOT the
   // /events?title= filter used before, which three separate live runs
@@ -269,14 +298,14 @@ async function findPolymarketProbability(titleKeyword, outcomeKeyword) {
   const events = allEvents.filter((ev) => ev.active !== false && ev.closed !== true);
   if (!events || events.length === 0) return { prob: null, reason: 'no_active_events_matched_query(' + titleKeyword + ')' };
 
-  const needle = outcomeKeyword.toLowerCase();
+  const needles = candidates.map((k) => (k || '').toLowerCase()).filter(Boolean);
   let marketsScanned = 0;
   for (const ev of events) {
     const markets = ev.markets || [];
     for (const m of markets) {
       marketsScanned++;
       const question = (m.question || m.groupItemTitle || m.title || '').toLowerCase();
-      if (!question.includes(needle)) continue;
+      if (!needles.some((n) => question.includes(n))) continue;
       try {
         const outcomes = JSON.parse(m.outcomes || '[]');
         const prices = JSON.parse(m.outcomePrices || '[]');
@@ -286,7 +315,7 @@ async function findPolymarketProbability(titleKeyword, outcomeKeyword) {
       } catch (e) { /* malformed market payload — skip, don't guess */ }
     }
   }
-  return { prob: null, reason: events.length + '_events_' + marketsScanned + '_markets_none_matched_outcome(' + outcomeKeyword + ')' };
+  return { prob: null, reason: events.length + '_events_' + marketsScanned + '_markets_none_matched_outcome(' + candidates.join('|') + ')' };
 }
 
 /**
@@ -886,7 +915,7 @@ module.exports = async function handler(req, res) {
         for (const m of models) {
           if (pastDeadline()) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'skipped:time_budget_exceeded'; continue; }
           try {
-            const found = await findChampionshipProbability(bonusConfig.titleKeyword, m.pickName, bonusConfig.kalshiSeriesGuess);
+            const found = await findChampionshipProbability(bonusConfig.titleKeyword, nameVariants(m.pickName), bonusConfig.kalshiSeriesGuess);
             bonusProbByOwner[m.ownerName] = found.prob;
             if (found.prob === null && !bonusDiagnostic) bonusDiagnostic = found.reason;
           } catch (e) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'exception:' + e.message; }
