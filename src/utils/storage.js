@@ -470,6 +470,62 @@ try {
 }
 }
 
+/**
+* Fetch the latest projections row per pick for a season, keyed by
+* category -> owner name -> projection, so Scoreboard can look one up the
+* same way it looks up `cats[category]` entries by `owner`.
+*
+* Returns {} (not null) on any failure — the Scoreboard "Projected" toggle
+* must degrade to "not available yet" per category, never block or error
+* out the real (current) scoreboard. See docs/projections-feature-plan.md.
+*
+* @param {number} year - Season year
+* @param {Array} picks - The season's picks (from fetchSeasonFromSupabase's
+*  raw picks, or re-derived from categories) — used to map pick_id -> owner.
+* @returns {object} { [category]: { [ownerName]: projectionRow } }
+*/
+export async function fetchProjectionsFromSupabase(year, members) {
+try {
+ const { data: picks, error: pErr } = await supabase
+ .from('picks').select('id, member_id, category').eq('season_year', year);
+ if (pErr || !picks) return {};
+
+ const { data: projections, error: projErr } = await supabase
+ .from('projections').select('*').eq('season_year', year);
+ if (projErr || !projections || projections.length === 0) return {};
+
+ const memberNameById = {};
+ (members || []).forEach((m) => { memberNameById[m.id] = m.name; });
+ const pickById = {};
+ picks.forEach((p) => { pickById[p.id] = p; });
+
+ const byCategoryOwner = {};
+ projections.forEach((proj) => {
+ const pick = pickById[proj.pick_id];
+ if (!pick) return;
+ const ownerName = memberNameById[pick.member_id];
+ if (!ownerName) return;
+ if (!byCategoryOwner[proj.category]) byCategoryOwner[proj.category] = {};
+ byCategoryOwner[proj.category][ownerName] = {
+  projectedBase: Number(proj.projected_base) || 0,
+  projectedBonusEv: Number(proj.projected_bonus_ev) || 0,
+  projectedTotal: Number(proj.projected_total) || 0,
+  p10: proj.p10 !== null ? Number(proj.p10) : null,
+  p50: proj.p50 !== null ? Number(proj.p50) : null,
+  p90: proj.p90 !== null ? Number(proj.p90) : null,
+  method: proj.method,
+  confidence: proj.confidence,
+  sourceDetail: proj.source_detail,
+  computedAt: proj.computed_at,
+ };
+ });
+ return byCategoryOwner;
+} catch (err) {
+ console.error('fetchProjectionsFromSupabase error:', err);
+ return {};
+}
+}
+
 // ── Utility ──
 function groupBy(arr, key) {
 const map = {};

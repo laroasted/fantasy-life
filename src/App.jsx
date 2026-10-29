@@ -18,6 +18,7 @@ import {
   storageSet,
   STORAGE_KEYS,
   fetchSeasonFromSupabase,
+  fetchProjectionsFromSupabase,
   saveLocksToSupabase,
   savePaywallsToSupabase,
   unlockPaywallRpc,
@@ -231,6 +232,15 @@ export default function App() {
       });
     }
     if (!active) { console.warn("No stored data, using hardcoded build2025()..."); active = build2025(); source = "hardcoded"; }
+    // Projections are a nice-to-have overlay, never a load-blocker: only
+    // attempted against a real Supabase season, with its own timeout, and
+    // silently empty on any failure (fetchProjectionsFromSupabase already
+    // degrades to {} internally — see docs/projections-feature-plan.md).
+    if (active && source === "supabase") {
+      active.projections = await withTimeout(fetchProjectionsFromSupabase(active.year, active.members), 8000, {});
+    } else if (active) {
+      active.projections = {};
+    }
     setActiveSeason(active);
     setDataSource(source);
     setLastUpdated(new Date());

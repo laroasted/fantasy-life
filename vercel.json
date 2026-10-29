@@ -7,7 +7,8 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
-    "api/refresh-all.js": { "maxDuration": 60 }
+    "api/refresh-all.js": { "maxDuration": 60 },
+    "api/cron/update-projections.js": { "maxDuration": 60 }
   },
   "crons": [
     {
@@ -41,6 +42,10 @@
     {
       "path": "/api/cron/snapshot-scores",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/update-projections",
+      "schedule": "0 9 * * *"
     }
   ]
 }

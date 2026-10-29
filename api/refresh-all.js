@@ -3,9 +3,9 @@
  *
  * Triggered by the Refresh button in the header. Runs every data-updating
  * cron job (sports, college, stocks, entertainment, billboard, events,
- * country) concurrently, then snapshot-scores once they're done, so a
- * visitor can force a live update instead of waiting for the next
- * scheduled run.
+ * country) concurrently, then snapshot-scores, then update-projections
+ * once they're done, so a visitor can force a live update instead of
+ * waiting for the next scheduled run.
  *
  * Calls each cron module's handler directly in-process (no HTTP hop) with
  * a fake req/res pair, reusing the same CRON_SECRET auth each job already
@@ -118,8 +118,12 @@ module.exports = async function handler(req, res) {
     DATA_JOBS.map(function (job) { return runJob(job[0], job[1]); })
   );
   var snapshotResult = await runJob('snapshot-scores', './cron/snapshot-scores');
+  // Projections read `picks` for their current-value baseline, same as
+  // snapshot-scores — must run after the data jobs have actually written,
+  // not concurrently with them.
+  var projectionsResult = await runJob('projections', './cron/update-projections');
 
-  var jobs = dataResults.concat([snapshotResult]);
+  var jobs = dataResults.concat([snapshotResult, projectionsResult]);
   var allOk = jobs.every(function (j) { return j.ok; });
 
   return res.status(200).json({
