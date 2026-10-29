@@ -417,9 +417,22 @@ const EVENTS_REMAINING_BY_MONTH = {
   F1: { 1: 24, 2: 24, 3: 22, 4: 20, 5: 18, 6: 15, 7: 13, 8: 11, 9: 8, 10: 6, 11: 3, 12: 0 },
 };
 
-function buildRankingPointsModel(picks, category, ownerNameById) {
+/**
+ * Shared by buildRankingPointsModel (base projection) AND the handler's
+ * category registration below (deciding whether to even attempt a
+ * bonus-odds lookup). Tennis previously searched for a "remaining major"
+ * bonus market unconditionally, even in months with zero majors left —
+ * same class of bug as F1's mismatched bonus config, caught in the same
+ * live-testing pass. No remaining events means no bonus-earning
+ * opportunity left to model, not just a smaller one.
+ */
+function remainingEventsThisMonth(category) {
   const month = new Date().getMonth() + 1;
-  const eventsRemaining = (EVENTS_REMAINING_BY_MONTH[category] || {})[month] ?? 0;
+  return (EVENTS_REMAINING_BY_MONTH[category] || {})[month] ?? 0;
+}
+
+function buildRankingPointsModel(picks, category, ownerNameById) {
+  const eventsRemaining = remainingEventsThisMonth(category);
 
   return picks.map((pick) => {
     const ownerName = ownerNameById[pick.member_id] || pick.member_id;
@@ -791,10 +804,22 @@ module.exports = async function handler(req, res) {
     { titleKeyword: 'NCAA Tournament', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
   // ── Individual-ranking sports ──
   await runCategory('Tennis', 'desc', (picks) => buildRankingPointsModel(picks, 'Tennis', ownerNameById),
-    { titleKeyword: 'Grand Slam', kalshiSeriesGuess: null, bonusPointsIfWin: 5 });
+    remainingEventsThisMonth('Tennis') > 0
+      ? { titleKeyword: 'Grand Slam', kalshiSeriesGuess: null, bonusPointsIfWin: 5 }
+      : null);
   await runCategory('Golf', 'asc', (picks) => buildRankingPointsModel(picks, 'Golf', ownerNameById), null);
-  await runCategory('F1', 'desc', (picks) => buildRankingPointsModel(picks, 'F1', ownerNameById),
-    { titleKeyword: 'Formula 1', kalshiSeriesGuess: null, bonusPointsIfWin: 3 });
+  // F1's real bonus rule (CATEGORY_BONUS_RULES.F1 in
+  // src/constants/categories.js) is per-podium across 4 SPECIFIC featured
+  // races (AUS/MIA/ATX/LV), accumulating up to 12 — NOT a single
+  // season-championship bonus. A generic "who wins the F1 championship"
+  // market (which is what a bonusConfig here would search for) models
+  // the wrong event entirely. Most of those 4 races are already run by
+  // this point in the season, so the already-banked bonus (held flat by
+  // the default in runCategory) is close to final anyway. Not attempting
+  // a Las-Vegas-GP-podium-specific odds search — that needs a narrower,
+  // unverified market match this build can't confirm — so F1 gets no
+  // bonusConfig, same as Golf.
+  await runCategory('F1', 'desc', (picks) => buildRankingPointsModel(picks, 'F1', ownerNameById), null);
   // ── Entertainment ──
   await runCategory('Actor', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline),
     { titleKeyword: 'Academy Awards', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });

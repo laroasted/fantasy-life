@@ -54,7 +54,7 @@ and awards shows are still live).
 | Category | Metric projection | Bonus EV source | Confidence |
 |---|---|---|---|
 | NFL/NBA/MLB/NHL/MLS | ESPN power index / BPI (`sports.core.api.espn.com/.../powerindex`) if reachable, else regression-to-mean extrapolation of current win% with binomial variance over games remaining | Kalshi/Polymarket championship market, found by **keyword search** (`"Super Bowl"`, `"NBA Finals"`, etc.) against `gamma-api.polymarket.com/events` and `external-api.kalshi.com/trade-api/v2/markets` — never a hardcoded ticker, since tickers change every season | **Medium** — ESPN's power-index endpoint and both markets are documented as public/free but were not live-reachable from this build sandbox (network policy blocks `sports.core.api.espn.com` and `gamma-api.polymarket.com` here); the parsing will very likely need the same kind of iteration the existing `update-sports.js`/`update-events.js`/`update-billboard.js` changelogs show once it runs on Vercel against real traffic |
-| Tennis/Golf/F1 | Linear extrapolation of the picked athlete's own points-per-event rate × events remaining (ranking points are already a live cumulative metric, so this is closer to "continue the trend" than a true forecast) | Same Kalshi/Polymarket keyword search, for the specific remaining major/race | **Medium** — same reachability caveat as above |
+| Tennis/Golf/F1 | Linear extrapolation of the picked athlete's own points-per-event rate × events remaining (ranking points are already a live cumulative metric, so this is closer to "continue the trend" than a true forecast) | Tennis: Kalshi/Polymarket keyword search for the remaining major. Golf/F1: **no bonusConfig** — Golf has no majors left this year; F1's real bonus rule is per-podium across 4 specific featured races (AUS/MIA/ATX/LV), not a season-championship market, so a generic "F1 champion" search would model the wrong event (caught live — see "Caught via live testing" below) | **Medium** for Tennis; Golf/F1 bonus is just the already-banked value held flat, deliberately not simulated further |
 | Actor/Actress | TMDB upcoming-release discovery (reusing the existing `TMDB_API_KEY`) for titles releasing inside the remaining Fantasy Year window; box office modeled as a wide log-normal band with **no real forecast confidence** (there is no clean public API for pre-release BO forecasts); RT modeled as the actor's own historical mean | Polymarket "Academy Awards" market search, only ever populated close to the ceremony | **Low** — explicitly labeled as such in the stored record (`confidence: "low"`). This is a genuine guess dressed up as a wide band, not a forecast. Don't let the UI present it with the same visual confidence as the sports numbers. |
 | Musician | Decay-curve regression fit to the artist's **own already-cached** `billboard_weeks`/`music_songs` history (this is the one category where we already have months of real, collected data — no new external dependency) | Polymarket "Grammy" market search | **Medium-high for base** (real historical data), **low for bonus** (depends entirely on whether a Grammy market exists yet) |
 | Country | None needed — `gdp_forecasts` is already a static twice-yearly commissioner-entered number (`update-country.js`), so the "projection" is just the current value with zero variance | Olympics bonus = 0 unless the season window contains an Olympics | **Deterministic** (correctly reflects that this number doesn't move intra-season) |
@@ -175,3 +175,19 @@ reintroduced:
   match for the remaining title *is* found, it now adds the probability-
   weighted upside on top of that banked floor instead of replacing it
   outright.
+- **F1's bonus config modeled the wrong event.** The user spotted a pick
+  projecting 19.97 total — above what looked like a sane ceiling (12 base
+  + 3 bonus = 15). Turned out the ceiling assumption was wrong, not the
+  math: F1's real bonus rule (`CATEGORY_BONUS_RULES.F1`) pays per-podium
+  across 4 specific featured races (AUS/MIA/ATX/LV), up to 12, not a
+  single season-championship tier. The `bonusConfig` for F1 was searching
+  "who wins the F1 championship" and capping upside at 3 — a plausible-
+  looking config that modeled a completely different event than the
+  league's actual rule. The already-banked bonus (8, in the flagged pick)
+  was real and correctly held flat by the fix above; the mismatched
+  "upside" layer on top of it just happened to clamp to 0 in that
+  specific case, which is what made it look coincidentally sane. Fixed by
+  removing F1's bonusConfig entirely (same treatment as Golf) rather than
+  guessing at a correctly-scoped replacement market this build can't
+  verify. Lesson: a plausible-sounding odds-market keyword isn't the same
+  as checking the actual scoring rule it's supposed to represent.
