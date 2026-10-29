@@ -35,6 +35,7 @@ export default function Trends({ seasonData }) {
   const [isStale, setIsStale] = useState(false);
   const [viewCat, setViewCat] = useState("ALL");
   const [hidden, setHidden] = useState(() => new Set());
+  const [focusId, setFocusId] = useState(null);
   const [hoverIdx, setHoverIdx] = useState(null);
   const [showTable, setShowTable] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
@@ -50,6 +51,14 @@ export default function Trends({ seasonData }) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  // A focused member hidden via the legend, or a switch to a category/season
+  // they have no history in, would otherwise leave every other line dimmed
+  // with nothing highlighted to show for it.
+  useEffect(() => {
+    if (focusId && hidden.has(focusId)) setFocusId(null);
+  }, [focusId, hidden]);
+  useEffect(() => { setFocusId(null); }, [viewCat, seasonYear]);
 
   // A request abandoned by a year switch (or a stale manual retry) must
   // skip its own setState calls when it finally resolves. This used to be
@@ -197,7 +206,7 @@ export default function Trends({ seasonData }) {
     }));
     if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
     if (lo === hi) { lo -= 1; hi += 1; }
-    const targetTicks = isMobile ? 4 : 5;
+    const targetTicks = isMobile ? 7 : 8;
     const rawStep = (hi - lo) / targetTicks;
     const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
     const norm = rawStep / mag;
@@ -219,11 +228,24 @@ export default function Trends({ seasonData }) {
     });
   }
 
+  // Tap a member's name (end label or legend chip) to spotlight just their
+  // line — the real fix for "too many crossing lines to tell apart" on a
+  // crowded roster, versus hiding members one at a time.
+  function toggleFocus(mid) {
+    const nowFocused = focusId !== mid;
+    track(EVENTS.TRENDS_SERIES_FOCUSED, { member_name: memberMeta[mid]?.name || mid, is_focused: nowFocused });
+    setFocusId(nowFocused ? mid : null);
+  }
+
   // ── chart geometry ── bigger overall, and extra right-hand room for the
   // per-series end labels that replace the single "leader" label. Members
   // can be added with arbitrary names (not just the fixed roster), so size
   // the right margin off the longest *visible* name instead of a fixed guess.
-  const W = 720, H = isMobile ? 480 : 460;
+  // H is deliberately much taller than W: the plot's pixel height tracks H
+  // directly (height:auto keeps the render aspect-locked to viewBox W:H, so
+  // this is real vertical room, not a stretch/distortion trick), which is
+  // what actually separates 11 similarly-hued lines on a narrow phone.
+  const W = 720, H = isMobile ? 1040 : 620;
   const labelCharW = isMobile ? 6.2 : 6.8;
   const maxNameLen = visibleSeries.reduce((m, sr) => Math.max(m, sr.name.length), 4);
   const padL = 36, padR = Math.min(110, Math.max(isMobile ? 42 : 52, maxNameLen * labelCharW + 13));
@@ -368,7 +390,7 @@ export default function Trends({ seasonData }) {
       )}
 
       <div style={cardStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4, flexWrap: "wrap", gap: 6 }}>
           <h3 style={{ margin: 0, fontSize: 16 }}>
             {viewCat === "ALL" ? "Overall Standings" : CATEGORY_LABELS[viewCat]} Over Time
           </h3>
@@ -376,6 +398,22 @@ export default function Trends({ seasonData }) {
             {n} snapshot{n !== 1 ? "s" : ""} · {fmtShort(dates[0])} → {fmtShort(dates[n - 1])}
           </span>
         </div>
+
+        {focusId ? (
+          <div style={{ marginBottom: 8, fontSize: 11, color: s.dim }}>
+            Spotlighting <strong style={{ color: MEMBER_COLORS[focusId] || FALLBACK_COLOR }}>
+              {memberMeta[focusId]?.name || focusId}
+            </strong> —{" "}
+            <button onClick={() => setFocusId(null)} style={{ background: "none", border: "none",
+              color: s.acc, fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+              show everyone
+            </button>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 8, fontSize: 10.5, color: s.dim }}>
+            Tap a name to spotlight that line.
+          </div>
+        )}
 
         {/* Chart */}
         <div ref={svgWrapRef} style={{ position: "relative", width: "100%", touchAction: "none" }}
@@ -401,29 +439,50 @@ export default function Trends({ seasonData }) {
               );
             })}
 
-            {/* Lines */}
-            {visibleSeries.map((sr) => (
-              <path key={sr.id} d={pathFor(sr.values)} fill="none" stroke={sr.color} strokeWidth={3}
-                strokeLinecap="round" strokeLinejoin="round" />
-            ))}
+            {/* Lines — focused series draws last (on top) and full-strength;
+                everyone else fades back so the one line the user picked
+                reads clearly through the rest of the pack. */}
+            {(focusId
+              ? [...visibleSeries.filter((sr) => sr.id !== focusId), ...visibleSeries.filter((sr) => sr.id === focusId)]
+              : visibleSeries
+            ).map((sr) => {
+              const isFocused = focusId === sr.id;
+              const dimmed = focusId && !isFocused;
+              return (
+                <path key={sr.id} d={pathFor(sr.values)} fill="none" stroke={sr.color}
+                  strokeWidth={isFocused ? 4.5 : dimmed ? 1.5 : 3} opacity={dimmed ? 0.16 : 1}
+                  strokeLinecap="round" strokeLinejoin="round" />
+              );
+            })}
 
             {/* Last-point markers */}
-            {visibleSeries.map((sr) => (
-              <circle key={sr.id} cx={xFor(n - 1)} cy={yFor(sr.values[n - 1])} r={4}
-                fill={sr.color} stroke={s.card} strokeWidth={2} />
-            ))}
+            {visibleSeries.map((sr) => {
+              const isFocused = focusId === sr.id;
+              const dimmed = focusId && !isFocused;
+              return (
+                <circle key={sr.id} cx={xFor(n - 1)} cy={yFor(sr.values[n - 1])} r={isFocused ? 5.5 : 4}
+                  fill={sr.color} stroke={s.card} strokeWidth={2} opacity={dimmed ? 0.3 : 1} />
+              );
+            })}
 
-            {/* Per-series end labels, nudged apart so ties/close scores don't overlap */}
+            {/* Per-series end labels, nudged apart so ties/close scores don't
+                overlap. Tap one to spotlight that member's line — the hit
+                target (the transparent rect) is taller than the text itself
+                so it's comfortably tappable on a phone. */}
             {endLabels.map((lb) => {
               const shifted = Math.abs(lb.y - lb.actualY) > 2;
+              const isFocused = focusId === lb.id;
+              const dimmed = focusId && !isFocused;
               return (
-                <g key={"lbl" + lb.id}>
+                <g key={"lbl" + lb.id} onClick={() => toggleFocus(lb.id)} style={{ cursor: "pointer" }}>
+                  <rect x={xFor(n - 1)} y={lb.y - 12} width={padR} height={24} fill="transparent" />
                   {shifted && (
                     <line x1={xFor(n - 1) + 2} y1={lb.actualY} x2={xFor(n - 1) + 7} y2={lb.y}
-                      stroke={lb.color} strokeWidth={1} opacity={0.5} />
+                      stroke={lb.color} strokeWidth={1} opacity={dimmed ? 0.2 : 0.5} />
                   )}
                   <text x={xFor(n - 1) + (shifted ? 9 : 7)} y={lb.y + labelFontSize / 3}
-                    fontSize={labelFontSize} fontWeight={700} fill={lb.color} textAnchor="start">
+                    fontSize={isFocused ? labelFontSize + 1.5 : labelFontSize} fontWeight={isFocused ? 800 : 700}
+                    fill={dimmed ? s.mut : lb.color} opacity={dimmed ? 0.55 : 1} textAnchor="start">
                     {lb.name}
                   </text>
                 </g>
