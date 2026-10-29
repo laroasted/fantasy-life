@@ -432,6 +432,12 @@ export default function App() {
   // best-effort glances, not core data: any fetch problem just leaves that
   // half of the strip empty rather than showing an error.
   useEffect(() => {
+    // Clear any previous season's values immediately — otherwise, if the
+    // active season changes (a new draft gets finalized) and the new
+    // season's fetch comes back empty or errors, the strip would keep
+    // showing the old season's mover/event as if it were current.
+    setWeeklyMover(null);
+    setNextEvent(null);
     if (!activeSeason || !activeSeason.year) return;
     let cancelled = false;
     const yr = activeSeason.year;
@@ -440,27 +446,57 @@ export default function App() {
 
     (async () => {
       try {
+        // Find the latest snapshot date, and the snapshot date closest to
+        // (but not after) ~7 days before it, as two separate date-only
+        // lookups — then fetch each date's rows with an exact .in() match.
+        // A single "most recent 1000 rows" fetch can cut off mid-date for
+        // a league with enough members/categories, silently truncating the
+        // older date's rows and understating that date's total.
+        const { data: latestRows } = await supabase
+          .from("score_history")
+          .select("snapshot_date")
+          .eq("season_year", yr)
+          .order("snapshot_date", { ascending: false })
+          .limit(1);
+        const latestDate = latestRows && latestRows[0] && latestRows[0].snapshot_date;
+        if (cancelled || !latestDate) return;
+
+        const targetDate = new Date(latestDate + "T00:00:00");
+        targetDate.setDate(targetDate.getDate() - 7);
+        const targetStr = targetDate.toISOString().slice(0, 10);
+
+        const { data: baselineRows } = await supabase
+          .from("score_history")
+          .select("snapshot_date")
+          .eq("season_year", yr)
+          .lte("snapshot_date", targetStr)
+          .order("snapshot_date", { ascending: false })
+          .limit(1);
+        let baselineDate = baselineRows && baselineRows[0] && baselineRows[0].snapshot_date;
+        if (!baselineDate) {
+          const { data: earliestRows } = await supabase
+            .from("score_history")
+            .select("snapshot_date")
+            .eq("season_year", yr)
+            .order("snapshot_date", { ascending: true })
+            .limit(1);
+          baselineDate = earliestRows && earliestRows[0] && earliestRows[0].snapshot_date;
+        }
+        if (cancelled || !baselineDate || baselineDate === latestDate) return;
+
         const { data, error } = await supabase
           .from("score_history")
           .select("snapshot_date, member_id, total")
           .eq("season_year", yr)
-          .order("snapshot_date", { ascending: false })
-          .limit(1000);
+          .in("snapshot_date", [latestDate, baselineDate]);
         if (cancelled || error || !data || data.length === 0) return;
+
         const byDate = new Map();
         data.forEach((r) => {
           if (!byDate.has(r.snapshot_date)) byDate.set(r.snapshot_date, {});
           const d = byDate.get(r.snapshot_date);
           d[r.member_id] = (d[r.member_id] || 0) + (Number(r.total) || 0);
         });
-        const dates = [...byDate.keys()].sort().reverse();
-        if (dates.length < 2) return;
-        const latestDate = dates[0];
-        const targetMs = new Date(latestDate).getTime() - 7 * 86400000;
-        let baselineDate = dates[dates.length - 1];
-        for (let i = 1; i < dates.length; i++) {
-          if (new Date(dates[i]).getTime() <= targetMs) { baselineDate = dates[i]; break; }
-        }
         const latest = byDate.get(latestDate) || {};
         const baseline = byDate.get(baselineDate) || {};
         let best = null;
