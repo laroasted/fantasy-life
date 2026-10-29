@@ -156,3 +156,22 @@ reintroduced:
   available, but the games-played parser only looked for two
   dash-separated numbers, so it read the draw count as losses and
   undercounted games played. Fixed to handle both shapes.
+
+## Caught via live testing against the real deploy
+
+- **Bonus defaulted to zero, erasing already-earned points.** Every model
+  builder set `bonusSampler: () => 0` as a placeholder meant to be filled
+  in by the odds-lookup logic. When no odds match was found (which, per
+  the first live run, is the common case — ESPN's power-index is
+  unreachable from Vercel too, and Kalshi/Polymarket aren't confirmed
+  matching yet either), that placeholder stayed at flat zero, discarding
+  whatever bonus a pick had *already legitimately earned* — a playoff
+  round already won, a major already won for an already-finished category
+  like Golf, an Oscar/Grammy already decided. The user caught this
+  immediately in the real projected numbers ("doesn't account for the
+  bonus points that have already happened"). Fixed: the real default is
+  now "hold already-recorded bonus flat," applied centrally in
+  `runCategory` once `actualBonus` is known, never zero. When an odds
+  match for the remaining title *is* found, it now adds the probability-
+  weighted upside on top of that banked floor instead of replacing it
+  outright.

@@ -572,26 +572,29 @@ function buildMusicianModel(picks, fyStart, fyEnd, ownerNameById) {
 }
 
 /**
- * KNOWN SIMPLIFICATION, not an oversight: this models bonus as a single
- * binary event (win the title, or don't) against ONE market's
- * probability. The real bonus schedule (see CATEGORY_BONUS_RULES in
- * src/constants/categories.js) pays out partial tiers for a conference
- * championship loss, a divisional loss, etc. — in most seasons, those
- * smaller tiers account for more total bonus points across the league
- * than the single championship does. This systematically UNDERSTATES
- * projected bonus EV for every pick except the eventual
- * champion/favorite. A fuller model would need either a separate
- * odds-market lookup per round (more unverified-shape surface area per
- * the caveats at the top of this file) or a structured points-per-round
- * table to interpolate from title odds alone — both are future work, not
- * done here. Flagging this in projection_runs.detail / source_detail
- * rather than letting it look more complete than it is.
+ * KNOWN SIMPLIFICATION, not an oversight: this models the REMAINING
+ * bonus upside as a single binary event (go on to win the title, or
+ * don't) against ONE market's probability, added on top of whatever
+ * bonus is already banked (see the bonusSampler default set in
+ * runCategory — never zero, always at least m.actualBonus). It does NOT
+ * model the EV of advancing through yet-unresolved partial tiers between
+ * now and the end (see CATEGORY_BONUS_RULES in
+ * src/constants/categories.js — a conference-championship loss, a
+ * divisional loss, etc. each pay out their own smaller tier). A fuller
+ * model would need either a separate odds-market lookup per round (more
+ * unverified-shape surface area per the caveats at the top of this file)
+ * or a structured points-per-round table to interpolate from title odds
+ * alone — both are future work, not done here. Flagging this in
+ * projection_runs.detail / source_detail rather than letting it look
+ * more complete than it is.
  */
 function attachBonusSampler(models, bonusProbByOwner, bonusPointsIfWin) {
   return models.map((m) => {
     const prob = bonusProbByOwner[m.ownerName];
-    if (prob === null || prob === undefined) return m; // leave default (0) sampler
-    return Object.assign({}, m, { bonusSampler: (rng) => (rng() < prob ? bonusPointsIfWin : 0) });
+    if (prob === null || prob === undefined) return m; // leave the actualBonus-flat default in place
+    const alreadyBanked = m.actualBonus;
+    const upside = Math.max(0, bonusPointsIfWin - alreadyBanked);
+    return Object.assign({}, m, { bonusSampler: (rng) => alreadyBanked + (rng() < prob ? upside : 0) });
   });
 }
 
@@ -687,9 +690,24 @@ module.exports = async function handler(req, res) {
 
     try {
       let models = await buildModels(picks);
-      models = withLocks(models, category).map((m, idx) => Object.assign({}, m, {
-        actualBase: Number(picks[idx].base) || 0, actualBonus: Number(picks[idx].bonus) || 0,
-      }));
+      models = withLocks(models, category).map((m, idx) => {
+        const actualBase = Number(picks[idx].base) || 0;
+        const actualBonus = Number(picks[idx].bonus) || 0;
+        return Object.assign({}, m, {
+          actualBase, actualBonus,
+          // Builders never implement a meaningful bonusSampler of their
+          // own (they all set a `() => 0` placeholder) — this is the
+          // real default, applied here because actualBonus isn't known
+          // yet inside the builder functions. Holding bonus flat at
+          // whatever's already recorded is correct for "nothing left to
+          // model" (Golf, a settled Oscar/Grammy) AND for "partial
+          // progress already banked, no further odds match found" —
+          // it's never okay to default to zero and erase real points a
+          // pick has already earned. Only replaced below when a live
+          // odds match for the remaining top prize is found.
+          bonusSampler: () => actualBonus,
+        });
+      });
 
       if (bonusConfig) {
         // Match on the PICKED TEAM/ATHLETE/ARTIST's name, never the
