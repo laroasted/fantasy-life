@@ -266,11 +266,32 @@ async function fetchEspnPowerIndex(league, year) {
 // Each returns an array of per-pick simulation inputs for simulateCategory().
 // ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * Parses games-played out of a record string. MLS records from
+ * update-sports.js are "W-D-L · X pts" (three dash-separated numbers,
+ * draws in the middle) when stats are available — a naive two-number
+ * match would read the draw count as losses and undercount games
+ * played. NFL/NBA/MLB are plain "W-L". NHL has no dash at all ("82
+ * pts") and correctly falls through to null (caller's generic fallback).
+ */
 function parseRecordToGamesPlayed(record, league) {
-  const m = /(\d+)\s*-\s*(\d+)/.exec(record || '');
-  if (!m) return null;
-  const wins = parseInt(m[1], 10), losses = parseInt(m[2], 10);
-  const played = wins + losses;
+  const str = record || '';
+  const three = /(\d+)\s*-\s*(\d+)\s*-\s*(\d+)/.exec(str);
+  const two = three ? null : /(\d+)\s*-\s*(\d+)/.exec(str);
+  if (!three && !two) return null;
+
+  let wins, losses, played;
+  if (three) {
+    wins = parseInt(three[1], 10);
+    const draws = parseInt(three[2], 10);
+    losses = parseInt(three[3], 10);
+    played = wins + draws + losses;
+  } else {
+    wins = parseInt(two[1], 10);
+    losses = parseInt(two[2], 10);
+    played = wins + losses;
+  }
+
   const total = SEASON_LENGTH[league];
   if (!total || played > total) return null;
   return { wins, losses, played, remaining: total - played };
@@ -311,8 +332,8 @@ async function buildWinPctModel(picks, league, seasonYear, locks, ownerNameById,
     return {
       id: pick.id,
       ownerName,
+      pickName: pick.pick, // the TEAM, not the member — this is what an odds market's outcome text matches against
       currentMetric: currentWinPct,
-      lockedMetric: locks.metric, lockedBase: locks.base, lockedBonus: locks.bonus,
       actualBase: Number(pick.base) || 0, actualBonus: Number(pick.bonus) || 0,
       deltaSampler,
       bonusSampler: () => 0, // filled in by attachBonusSampler()
@@ -338,7 +359,7 @@ function buildPointsRateModel(picks, league, ownerNameById) {
     }
 
     return {
-      id: pick.id, ownerName, currentMetric: currentPoints,
+      id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentPoints,
       deltaSampler, bonusSampler: () => 0,
       sourceNote: 'fallback:points_per_game_rate',
     };
@@ -365,7 +386,7 @@ function buildRankingPointsModel(picks, category, ownerNameById) {
 
     if (category === 'Golf' || eventsRemaining === 0) {
       return {
-        id: pick.id, ownerName, currentMetric: currentPoints,
+        id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentPoints,
         deltaSampler: () => 0, bonusSampler: () => 0,
         sourceNote: 'static:no_majors_remaining_this_year',
       };
@@ -377,7 +398,7 @@ function buildRankingPointsModel(picks, category, ownerNameById) {
     const ratePerEvent = currentPoints / assumedEventsElapsed;
     const meanDelta = ratePerEvent * eventsRemaining;
     return {
-      id: pick.id, ownerName, currentMetric: currentPoints,
+      id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentPoints,
       deltaSampler: (rng) => Math.max(0, sampleNormal(rng, meanDelta, meanDelta * 0.5 + 1)),
       bonusSampler: () => 0,
       sourceNote: 'fallback:points_per_event_rate,eventsRemaining=' + eventsRemaining,
@@ -413,7 +434,7 @@ async function buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline) {
 
     if (upcoming.length === 0) {
       return {
-        id: pick.id, ownerName, currentMetric: currentScore,
+        id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentScore,
         deltaSampler: () => 0, bonusSampler: () => 0,
         sourceNote: (pastDeadline && pastDeadline()) ? 'skipped:time_budget_exceeded' : 'none:no_known_upcoming_release_in_window',
         confidence: 'low',
@@ -425,7 +446,7 @@ async function buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline) {
     // the actor's own average from films already scored this season.
     const filmCount = upcoming.length;
     return {
-      id: pick.id, ownerName, currentMetric: currentScore,
+      id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentScore,
       deltaSampler: (rng) => {
         let total = 0;
         for (let i = 0; i < filmCount; i++) {
@@ -458,7 +479,7 @@ function buildMusicianModel(picks, fyStart, fyEnd, ownerNameById) {
     const weeklyRate = currentWeeks / weeksElapsed; // real, derived from own cached history
     const meanDelta = weeklyRate * weeksRemaining;
     return {
-      id: pick.id, ownerName, currentMetric: currentWeeks,
+      id: pick.id, ownerName, pickName: pick.pick, currentMetric: currentWeeks,
       deltaSampler: (rng) => Math.max(0, sampleNormal(rng, meanDelta, meanDelta * 0.6 + 0.5)),
       bonusSampler: () => 0,
       sourceNote: 'own_billboard_history_decay_rate,weeksRemaining=' + weeksRemaining.toFixed(1),
@@ -466,6 +487,22 @@ function buildMusicianModel(picks, fyStart, fyEnd, ownerNameById) {
   });
 }
 
+/**
+ * KNOWN SIMPLIFICATION, not an oversight: this models bonus as a single
+ * binary event (win the title, or don't) against ONE market's
+ * probability. The real bonus schedule (see CATEGORY_BONUS_RULES in
+ * src/constants/categories.js) pays out partial tiers for a conference
+ * championship loss, a divisional loss, etc. — in most seasons, those
+ * smaller tiers account for more total bonus points across the league
+ * than the single championship does. This systematically UNDERSTATES
+ * projected bonus EV for every pick except the eventual
+ * champion/favorite. A fuller model would need either a separate
+ * odds-market lookup per round (more unverified-shape surface area per
+ * the caveats at the top of this file) or a structured points-per-round
+ * table to interpolate from title odds alone — both are future work, not
+ * done here. Flagging this in projection_runs.detail / source_detail
+ * rather than letting it look more complete than it is.
+ */
 function attachBonusSampler(models, bonusProbByOwner, bonusPointsIfWin) {
   return models.map((m) => {
     const prob = bonusProbByOwner[m.ownerName];
@@ -534,7 +571,6 @@ module.exports = async function handler(req, res) {
   const { data: membersArr } = await supabase.from('members').select('id, name');
   const ownerNameById = {};
   (membersArr || []).forEach((m) => { ownerNameById[m.id] = m.name; });
-  const totalMembers = (membersArr || []).length;
 
   const { data: allPicks, error: picksErr } = await supabase
     .from('picks').select('id, member_id, category, pick, base, bonus, total, metric, record')
@@ -572,24 +608,36 @@ module.exports = async function handler(req, res) {
       }));
 
       if (bonusConfig) {
+        // Match on the PICKED TEAM/ATHLETE/ARTIST's name, never the
+        // league member's — a championship market's outcome text says
+        // "Kansas City Chiefs", never "LaRosa". Keyed by ownerName in the
+        // result map only because attachBonusSampler looks it up that way
+        // (one pick per owner per category).
         const bonusProbByOwner = {};
         for (const m of models) {
           if (pastDeadline()) { bonusProbByOwner[m.ownerName] = null; continue; }
           try {
-            const found = await findChampionshipProbability(bonusConfig.titleKeyword, m.ownerName, bonusConfig.kalshiSeriesGuess);
+            const found = await findChampionshipProbability(bonusConfig.titleKeyword, m.pickName, bonusConfig.kalshiSeriesGuess);
             bonusProbByOwner[m.ownerName] = found ? found.prob : null;
           } catch (e) { bonusProbByOwner[m.ownerName] = null; }
           await delay(150);
         }
         models = attachBonusSampler(models, bonusProbByOwner, bonusConfig.bonusPointsIfWin);
+        // See attachBonusSampler's own comment — this is a real, named
+        // limitation, not an implementation detail to bury.
+        models = models.map((m) => Object.assign({}, m, { sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only' }));
       }
 
-      const simResults = simulateCategory(models, totalMembers, direction, N_SIMS, Math.random);
+      // picks.length, NOT the league-wide member count — matches the exact
+      // convention every real scoring cron uses (assignBasePointsWithTies
+      // scales off how many picks exist IN THIS CATEGORY, which is
+      // normally == total members but isn't guaranteed to be).
+      const simResults = simulateCategory(models, picks.length, direction, N_SIMS, Math.random);
       const anyLowConfidence = models.some((m) => m.confidence === 'low');
       const rows = simResults.map((r) => {
         const model = models.find((m) => m.id === r.id);
         return Object.assign({}, r, {
-          projectedMetric: round2(model.currentMetric + (model.lockedMetric ? 0 : 0)), // metric itself isn't simulated forward as a single number; base/total are
+          projectedMetric: round2(model.currentMetric), // the metric itself isn't simulated forward as a single number; base/total are
           method: 'monte_carlo', confidence: model.confidence || (anyLowConfidence ? 'low' : 'medium'),
           sourceDetail: model.sourceNote, simulations: N_SIMS,
         });

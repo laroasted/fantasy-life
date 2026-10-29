@@ -122,3 +122,37 @@ procedure.
   de-emphasize them relative to the sports numbers.
 - Stock is intentionally excluded from Monte Carlo projection. See table
   above.
+- **Bonus EV models a single binary event** (win the title, or don't)
+  against one odds market's probability. The real bonus schedule
+  (`CATEGORY_BONUS_RULES`) pays out smaller tiers for a conference
+  championship loss, a divisional loss, etc. — those smaller tiers
+  usually add up to more total bonus points league-wide than the single
+  championship does. This systematically understates projected bonus EV
+  for every pick except the eventual champion/favorite. Flagged in
+  `source_detail` as `bonus_ev_models_title_win_only` rather than left
+  implicit. Fixing it properly needs either a per-round odds lookup (more
+  unverified-shape surface area) or a structured points-per-round table
+  to interpolate from title odds alone — future work.
+
+## Caught in self-review before first deploy
+
+A few bugs were caught and fixed by re-reading this file adversarially
+before the first live run, worth recording so they don't quietly get
+reintroduced:
+
+- The championship-odds lookup was searching a betting market's outcome
+  text for the **league member's name** (e.g. "LaRosa") instead of the
+  **picked team's name** (e.g. "Kansas City Chiefs"). No market will ever
+  mention a member's name, so this would have silently zeroed out every
+  sport's bonus EV regardless of whether Kalshi/Polymarket were reachable
+  — a correctness bug, not a reachability one. Fixed by threading
+  `pickName` through every model builder and matching on that instead.
+- The Monte Carlo rank→points conversion used the league-wide member
+  count instead of `picks.length` for that specific category. Normally
+  identical (everyone drafts every category), but it's the wrong
+  semantic — the real scoring crons scale off how many picks actually
+  exist in that category, not the roster size. Fixed to match.
+- MLS records are `"W-D-L · X pts"` (three numbers) once ESPN's stats are
+  available, but the games-played parser only looked for two
+  dash-separated numbers, so it read the draw count as losses and
+  undercounted games played. Fixed to handle both shapes.
