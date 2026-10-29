@@ -50,8 +50,9 @@ function LockBtn({ locked, onToggle, size }) {
     fontSize: size, lineHeight: 1.3, color: locked ? "#eab308" : "#64748b",
     transition: "all 0.15s", flexShrink: 0, fontWeight: locked ? 400 : 600,
     letterSpacing: locked ? 0 : 0.3,
+    display: "inline-flex", alignItems: "center", gap: locked ? 0 : 4,
    }}>
-   {locked ? "\uD83D\uDD12" : "lock"}
+   {locked ? <Lock size={size} /> : <><Lock size={size} /> lock</>}
   </button>
  );
 }
@@ -479,10 +480,12 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  if (!isCommissioner) {
   return (
    <div style={{ maxWidth: 500, margin: "0 auto", ...cardStyle, textAlign: "center" }}>
-    <div style={{ fontSize: 48, marginBottom: 12 }}>{"\uD83D\uDD10"}</div>
+    <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+     <Lock size={44} color={theme.dim} />
+    </div>
     <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>Commissioner Access Required</h3>
     <p style={{ color: theme.dim, fontSize: 13, marginBottom: 16 }}>
-     Sign in with Google from the header (Draft or Settings tab) using your commissioner account to unlock scoring controls, locks, and corrections.
+     Sign in with Google from the header (visible on Draft or here) using your commissioner account to unlock scoring controls, locks, and corrections.
      </p>
     <div style={{ ...inputStyle, marginBottom: 8, textAlign: "left", opacity: 0.7 }}>
      {commissionerEmail ? commissionerEmail : "No commissioner session detected"}
@@ -1014,7 +1017,9 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ LOCKS OVERVIEW MODE ═══ */}
    {mode === "locks" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{"\uD83D\uDD12"} Lock Manager {"\u2014"} {CATEGORY_LABELS[editCat]}</h3>
+     <h3 style={{ margin: "0 0 4px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+      <Lock size={15} /> Lock Manager {"\u2014"} {CATEGORY_LABELS[editCat]}
+     </h3>
      <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 12px" }}>
       Locked fields won't be overwritten by cron jobs. Other players see a lock icon with a hover tooltip.
       New seasons always start with zero locks.

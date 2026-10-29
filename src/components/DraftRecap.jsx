@@ -8,7 +8,8 @@
 // code change for a new season to work.
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { ClipboardList, AlertTriangle } from "lucide-react";
+import { ClipboardList, AlertTriangle, ScrollText, IdCard, BarChart3, Gem, ChevronDown, ChevronRight } from "lucide-react";
+import { Badge } from "./Badges";
 import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
@@ -106,6 +107,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   const [selMember, setSelMember] = useState(null);
   const [selCat, setSelCat] = useState("NFL");
   const [filterRound, setFilterRound] = useState("All");
+  const [expandedRounds, setExpandedRounds] = useState(() => new Set());
   const [picks, setPicks] = useState([]);
   const [members, setMembers] = useState([]);
   const [draftBoard, setDraftBoard] = useState(null);
@@ -257,6 +259,20 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
       setSelMember(draftBoard.memberOrder[0]);
     }
   }, [draftBoard, selMember]);
+
+  // Draft Order starts fully collapsed on every board switch — a 15-round,
+  // 180-pick season rendered flat is the single worst screen in the app.
+  useEffect(() => {
+    setExpandedRounds(new Set());
+  }, [draftBoard]);
+
+  const toggleRound = useCallback((round) => {
+    setExpandedRounds((prev) => {
+      const next = new Set(prev);
+      if (next.has(round)) next.delete(round); else next.add(round);
+      return next;
+    });
+  }, []);
  
   // Build pickNum lookup: memberId+category → overall pick number
   const pickNumLookup = useMemo(() => {
@@ -301,6 +317,16 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   const draftFiltered = useMemo(() => {
     return enrichedSnake.filter(p => filterRound === "All" || p.round === parseInt(filterRound));
   }, [enrichedSnake, filterRound]);
+
+  // ── Draft order grouped by round, for the collapse-by-round view ──
+  const draftRoundGroups = useMemo(() => {
+    const m = new Map();
+    draftFiltered.forEach((p) => {
+      if (!m.has(p.round)) m.set(p.round, []);
+      m.get(p.round).push(p);
+    });
+    return [...m.entries()];
+  }, [draftFiltered]);
 
   // ── Draft value (steals & busts) ──
   // Ranks every scored pick twice — by draft order and by points — among only
@@ -371,15 +397,6 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
     outlineOffset: -2, transition: "all 0.15s",
   });
  
-  const roundBadge = (r) => {
-    const c = ROUND_COLORS[r] || theme.mut;
-    return {
-      display: "inline-flex", alignItems: "center", justifyContent: "center",
-      minWidth: 26, height: 26, borderRadius: 7, fontSize: 11, fontWeight: 800,
-      background: `${c}18`, color: c, border: `1.5px solid ${c}35`, flexShrink: 0,
-    };
-  };
- 
   // ── Loading / Error / No data ──
   if (loading) {
     return (
@@ -447,10 +464,10 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
 
       {/* ── View Tabs ── */}
       <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "draft" }); setView("draft"); }} style={pill(view === "draft")}>📜 Draft Order</button>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "member" }); setView("member"); }} style={pill(view === "member")}>🪪 By Team</button>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "category" }); setView("category"); }} style={pill(view === "category")}>📊 By Category</button>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "value" }); setView("value"); }} style={pill(view === "value")}>💎 Value</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "draft" }); setView("draft"); }} style={{ ...pill(view === "draft"), display: "inline-flex", alignItems: "center", gap: 6 }}><ScrollText size={14} /> Draft Order</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "member" }); setView("member"); }} style={{ ...pill(view === "member"), display: "inline-flex", alignItems: "center", gap: 6 }}><IdCard size={14} /> By Team</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "category" }); setView("category"); }} style={{ ...pill(view === "category"), display: "inline-flex", alignItems: "center", gap: 6 }}><BarChart3 size={14} /> By Category</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "value" }); setView("value"); }} style={{ ...pill(view === "value"), display: "inline-flex", alignItems: "center", gap: 6 }}><Gem size={14} /> Value</button>
       </div>
 
       {/* ═══════════ DRAFT ORDER ═══════════ */}
@@ -463,43 +480,59 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
               {Array.from({ length: numRounds }, (_, i) => <option key={i} value={i + 1}>Round {i + 1}</option>)}
             </select>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {draftFiltered.map((p, idx) => {
-              const prev = idx > 0 ? draftFiltered[idx - 1].round : null;
-              const isStart = p.round !== prev;
-              const ptsColor = getPointsColor(p.total);
+          <div style={{ display: "flex", flexDirection: "column", gap: filterRound === "All" ? 6 : 2 }}>
+            {draftRoundGroups.map(([round, roundPicks]) => {
+              const isExpanded = filterRound !== "All" || expandedRounds.has(round);
+              const scored = roundPicks.filter(p => p.total !== null).length;
               return (
-                <div key={p.pickNum}>
-                  {isStart && filterRound === "All" && (
-                    <div style={{ padding: "14px 0 6px", display: "flex", alignItems: "center", gap: 10,
-                      borderTop: p.round > 1 ? `1px solid ${theme.bdr}` : "none", marginTop: p.round > 1 ? 8 : 0 }}>
-                      <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 3, color: theme.mut }}>ROUND {p.round}</span>
-                      <span style={{ fontSize: 10, color: theme.dim }}>{p.round % 2 === 1 ? "↓" : "↑ snake"}</span>
+                <div key={round}>
+                  {filterRound === "All" && (
+                    <button onClick={() => toggleRound(round)} style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: 10,
+                      padding: "10px 10px", borderRadius: 8, cursor: "pointer",
+                      background: theme.card, border: `1px solid ${theme.bdr}`,
+                      color: theme.txt, textAlign: "left", marginBottom: isExpanded ? 4 : 0,
+                    }}>
+                      {isExpanded ? <ChevronDown size={14} color={theme.dim} /> : <ChevronRight size={14} color={theme.dim} />}
+                      <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 3, color: theme.mut }}>ROUND {round}</span>
+                      <span style={{ fontSize: 10, color: theme.dim }}>{round % 2 === 1 ? "↓" : "↑ snake"}</span>
+                      <span style={{ fontSize: 11, color: theme.dim, marginLeft: "auto" }}>
+                        {scored}/{roundPicks.length} scored
+                      </span>
+                    </button>
+                  )}
+                  {isExpanded && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      {roundPicks.map((p, idx) => {
+                        const ptsColor = getPointsColor(p.total);
+                        return (
+                          <div key={p.pickNum} style={{
+                            display: "grid", gridTemplateColumns: "38px 72px 1fr 68px 54px",
+                            alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8,
+                            background: idx % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent",
+                          }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
+                              {String(p.pickNum).padStart(3, "0")}
+                            </span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] || theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {p.member}
+                            </span>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {p.pick}
+                            </span>
+                            <span style={{ fontSize: 10, color: theme.mut, whiteSpace: "nowrap" }}>
+                              {CAT_ICONS[p.category]} {p.category}
+                            </span>
+                            <div style={{ textAlign: "right" }}>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: ptsColor, fontVariantNumeric: "tabular-nums" }}>
+                                {p.total !== null ? p.total : "—"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
-                  <div style={{
-                    display: "grid", gridTemplateColumns: "38px 72px 1fr 68px 54px",
-                    alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8,
-                    background: idx % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent",
-                  }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
-                      {String(p.pickNum).padStart(3, "0")}
-                    </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] || theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {p.member}
-                    </span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {p.pick}
-                    </span>
-                    <span style={{ fontSize: 10, color: theme.mut, whiteSpace: "nowrap" }}>
-                      {CAT_ICONS[p.category]} {p.category}
-                    </span>
-                    <div style={{ textAlign: "right" }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: ptsColor, fontVariantNumeric: "tabular-nums" }}>
-                        {p.total !== null ? p.total : "—"}
-                      </span>
-                    </div>
-                  </div>
                 </div>
               );
             })}
@@ -547,7 +580,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                   background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                   borderTop: `1px solid ${theme.bdr}22`,
                 }}>
-                  <div style={roundBadge(row.round)}>{row.round}</div>
+                  <Badge color={ROUND_COLORS[row.round] || theme.mut}>{row.round}</Badge>
                   <span style={{ fontSize: 11, fontWeight: 600, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
                     #{row.pickNum}
                   </span>
@@ -612,7 +645,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                   background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                   borderTop: `1px solid ${theme.bdr}22`,
                 }}>
-                  <div style={roundBadge(row.round)}>{row.round}</div>
+                  <Badge color={ROUND_COLORS[row.round] || theme.mut}>{row.round}</Badge>
                   <span style={{ fontSize: 11, fontWeight: 600, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
                     #{row.pickNum}
                   </span>

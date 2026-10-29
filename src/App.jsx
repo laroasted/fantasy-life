@@ -49,9 +49,12 @@ const TABS = [
   { id: "calendar",   label: "Calendar",   Icon: CalendarIcon },
   { id: "recap",      label: "Recap",      Icon: ClipboardList },
   { id: "draft",      label: "Draft",      Icon: Target },
-  { id: "settings",   label: "Settings",   Icon: SettingsIcon },
 ];
-const TAB_IDS = TABS.map(function (t) { return t.id; }).concat(["privacy"]);
+// Settings lives behind the header gear icon, not the tab bar — it's the
+// only fully sign-in-gated surface, unlike Draft which works (just doesn't
+// save) without a commissioner session. "settings" stays a valid activeTab
+// and a valid ?tab= value even though it's no longer in TABS.
+const TAB_IDS = TABS.map(function (t) { return t.id; }).concat(["privacy", "settings"]);
 
 // Lets a link like "?tab=draft" land directly on that tab instead of
 // always opening to Scoreboard, so a tab is actually shareable.
@@ -59,6 +62,19 @@ function tabFromUrl() {
   var params = new URLSearchParams(window.location.search);
   var fromUrl = params.get("tab");
   return TAB_IDS.includes(fromUrl) ? fromUrl : "scoreboard";
+}
+
+// "Sun" for an event landing this week, "Nov 15" for anything further out —
+// same <=6-day "this week" window Calendar.jsx uses for its "now" status.
+function fmtEventWhen(dateStr) {
+  var parts = dateStr.split("-").map(Number);
+  var date = new Date(parts[0], parts[1] - 1, parts[2]);
+  var now = new Date();
+  now.setHours(0, 0, 0, 0);
+  var diffDays = Math.round((date - now) / 86400000);
+  return diffDays <= 6
+    ? date.toLocaleDateString("en-US", { weekday: "short" })
+    : date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 export default function App() {
@@ -75,6 +91,8 @@ export default function App() {
   const [commissionerRole, setCommissionerRole] = useState(null);
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [weeklyMover, setWeeklyMover] = useState(null);
+  const [nextEvent, setNextEvent] = useState(null);
  
   const configuredCommissioners = getConfiguredCommissionerEmails();
   const isCommissioner = commissionerRole === "commissioner" || commissionerRole === "admin";
@@ -409,6 +427,76 @@ export default function App() {
     return archivedSeasons.find((s) => s && s.year === selectedYear) || activeSeason;
   }, [activeSeason, archivedSeasons, selectedYear, isViewingActive]);
 
+  // "This Week" orientation strip data — the biggest score_history mover
+  // over the last ~7 days, and the next calendar_events entry. Both are
+  // best-effort glances, not core data: any fetch problem just leaves that
+  // half of the strip empty rather than showing an error.
+  useEffect(() => {
+    if (!activeSeason || !activeSeason.year) return;
+    let cancelled = false;
+    const yr = activeSeason.year;
+    const memberNameById = {};
+    (activeSeason.members || []).forEach((m) => { memberNameById[m.id] = m.name; });
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("score_history")
+          .select("snapshot_date, member_id, total")
+          .eq("season_year", yr)
+          .order("snapshot_date", { ascending: false })
+          .limit(1000);
+        if (cancelled || error || !data || data.length === 0) return;
+        const byDate = new Map();
+        data.forEach((r) => {
+          if (!byDate.has(r.snapshot_date)) byDate.set(r.snapshot_date, {});
+          const d = byDate.get(r.snapshot_date);
+          d[r.member_id] = (d[r.member_id] || 0) + (Number(r.total) || 0);
+        });
+        const dates = [...byDate.keys()].sort().reverse();
+        if (dates.length < 2) return;
+        const latestDate = dates[0];
+        const targetMs = new Date(latestDate).getTime() - 7 * 86400000;
+        let baselineDate = dates[dates.length - 1];
+        for (let i = 1; i < dates.length; i++) {
+          if (new Date(dates[i]).getTime() <= targetMs) { baselineDate = dates[i]; break; }
+        }
+        const latest = byDate.get(latestDate) || {};
+        const baseline = byDate.get(baselineDate) || {};
+        let best = null;
+        Object.keys(latest).forEach((mid) => {
+          const delta = Math.round(((latest[mid] || 0) - (baseline[mid] || 0)) * 100) / 100;
+          if (delta > 0 && (!best || delta > best.delta)) best = { memberId: mid, delta: delta };
+        });
+        if (!cancelled && best) {
+          setWeeklyMover({ name: memberNameById[best.memberId] || best.memberId, delta: best.delta });
+        }
+      } catch (e) {
+        console.warn("Orientation strip: score_history fetch failed, omitting mover:", e);
+      }
+    })();
+
+    (async () => {
+      try {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const { data, error } = await supabase
+          .from("calendar_events")
+          .select("title, event_date")
+          .eq("season_year", yr)
+          .gte("event_date", todayStr)
+          .order("event_date")
+          .order("sort_order")
+          .limit(1);
+        if (cancelled || error || !data || data.length === 0) return;
+        setNextEvent({ title: data[0].title, date: data[0].event_date });
+      } catch (e) {
+        console.warn("Orientation strip: calendar_events fetch failed, omitting next event:", e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeSeason]);
+
   if (!loaded) {
     return (
       <div style={{ background: theme.bg, minHeight: "100vh", display: "flex", flexDirection: "column",
@@ -534,6 +622,23 @@ export default function App() {
                 animation: refreshing ? "spin 1s linear infinite" : "none" }}>↻</span>
               {!isMobile && (refreshing ? "Refreshing..." : "Refresh")}
             </button>
+            <button onClick={() => {
+                track(EVENTS.TAB_VIEWED, { tab_name: "settings", previous_tab: activeTab, is_mobile: isMobile });
+                setActiveTab("settings");
+              }}
+              title="Settings"
+              style={{
+                background: "none",
+                border: "1px solid " + (activeTab === "settings" ? theme.acc : theme.bdr),
+                borderRadius: 8,
+                padding: isMobile ? "5px 7px" : "6px 9px",
+                color: activeTab === "settings" ? theme.acc : theme.mut,
+                cursor: "pointer",
+                display: "flex", alignItems: "center",
+                flexShrink: 0,
+              }}>
+              <SettingsIcon size={isMobile ? 14 : 15} />
+            </button>
             <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
           </div>
  
@@ -609,6 +714,34 @@ export default function App() {
                   {dataSource === "supabase" ? "Live" : dataSource === "local" ? "Cached" : "Offline"}
                   {" "}· Updated {lastUpdated.toLocaleTimeString()}
                 </p>
+              )}
+              {isViewingActive && (weeklyMover || nextEvent) && (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  gap: isMobile ? 10 : 16, flexWrap: "wrap",
+                  marginTop: 14, padding: isMobile ? "7px 14px" : "8px 18px",
+                  background: theme.card, border: `1px solid ${theme.bdr}`, borderRadius: 999,
+                  fontSize: isMobile ? 11 : 12,
+                }}>
+                  {weeklyMover && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <TrendingUp size={13} color={theme.grn} />
+                      <b style={{ color: theme.acc }}>{weeklyMover.name}</b>
+                      <span style={{ color: theme.dim }}>+{weeklyMover.delta} this week</span>
+                    </span>
+                  )}
+                  {weeklyMover && nextEvent && (
+                    <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
+                  )}
+                  {nextEvent && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <CalendarIcon size={12} color={theme.dim} />
+                      <span style={{ color: theme.dim }}>Next:</span>
+                      <b style={{ color: theme.txt }}>{nextEvent.title}</b>
+                      <span style={{ color: theme.dim }}>{fmtEventWhen(nextEvent.date)}</span>
+                    </span>
+                  )}
+                </div>
               )}
             </div>
             <Scoreboard seasonData={viewingSeasonData} onUnlockPaywall={isViewingActive ? handlePaywallUnlock : undefined} />

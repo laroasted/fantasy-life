@@ -6,6 +6,7 @@ import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
 import ScrollFadeEdges from "./ScrollFadeEdges";
+import { Dot, CategoryPill } from "./Badges";
 
 // ══════════════════════════════════════════════════════
 //  TRENDS — standings-over-time chart, backed by the
@@ -292,27 +293,19 @@ export default function Trends({ seasonData }) {
         overflowX: isMobile ? "auto" : "visible", WebkitOverflowScrolling: "touch",
         paddingBottom: isMobile ? 4 : 0, msOverflowStyle: "none", scrollbarWidth: "none",
       }}>
-        <button onClick={() => {
+        <CategoryPill active={viewCat === "ALL"} onClick={() => {
             track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "trends", category: "overall", previous_category: viewCat });
             setViewCat("ALL");
-          }}
-          style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-            border: "1px solid " + (viewCat === "ALL" ? s.acc : s.bdr),
-            background: viewCat === "ALL" ? s.acc : s.card,
-            color: viewCat === "ALL" ? "#1A1200" : s.txt, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+          }}>
           Overall
-        </button>
+        </CategoryPill>
         {CATEGORY_ORDER.map((k) => (
-          <button key={k} onClick={() => {
+          <CategoryPill key={k} active={viewCat === k} onClick={() => {
               track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "trends", category: k, previous_category: viewCat });
               setViewCat(k);
-            }}
-            style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
-              border: "1px solid " + (viewCat === k ? s.acc : s.bdr),
-              background: viewCat === k ? s.acc : s.card,
-              color: viewCat === k ? "#1A1200" : s.txt, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+            }}>
             {CATEGORY_LABELS[k]}
-          </button>
+          </CategoryPill>
         ))}
       </div>
       </ScrollFadeEdges>
@@ -410,7 +403,7 @@ export default function Trends({ seasonData }) {
               {hoverRows.map((r) => (
                 <div key={r.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "1px 0" }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#cbd5e1" }}>
-                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: r.color, display: "inline-block" }} />
+                    <Dot color={r.color} />
                     {r.name}
                   </span>
                   <span style={{ fontWeight: 700, color: "#f8fafc" }}>{r.v}</span>
@@ -433,7 +426,7 @@ export default function Trends({ seasonData }) {
                   cursor: "pointer", fontSize: 10, fontWeight: 600,
                   color: isHidden ? "#475569" : "#e2e8f0", opacity: isHidden ? 0.5 : 1,
                 }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: sr.color, display: "inline-block" }} />
+                <Dot color={sr.color} />
                 {sr.name}
               </button>
             );
