@@ -87,6 +87,10 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [dataSource, setDataSource] = useState("loading");
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  // MOCK ONLY — mirrors Scoreboard.jsx's own "wide" breakpoint so the
+  // header can widen in lockstep with Scoreboard's sidebar instead of
+  // staying a fixed 900px while Scoreboard goes to 1080px.
+  const [isWide, setIsWide] = useState(window.innerWidth >= 1024);
   const [authReady, setAuthReady] = useState(false);
   const [commissionerSession, setCommissionerSession] = useState(null);
   const [commissionerRole, setCommissionerRole] = useState(null);
@@ -101,7 +105,10 @@ export default function App() {
  
   // Track viewport width
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 640);
+    const onResize = () => {
+      setIsMobile(window.innerWidth < 640);
+      setIsWide(window.innerWidth >= 1024);
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -567,7 +574,7 @@ export default function App() {
         padding: isMobile ? "12px 12px 0" : "16px 20px 0",
         position: "sticky", top: 0, zIndex: 100,
       }}>
-        <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div style={{ maxWidth: (isWide && activeTab === "scoreboard") ? 1080 : 900, margin: "0 auto" }}>
           {/* Title row */}
           <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12,
             marginBottom: isMobile ? 10 : 16 }}>
