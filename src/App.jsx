@@ -3,6 +3,7 @@ import {
   Trophy,
   BarChart3,
   TrendingUp,
+  TrendingDown,
   Calendar as CalendarIcon,
   ClipboardList,
   Target,
@@ -91,7 +92,8 @@ export default function App() {
   const [commissionerRole, setCommissionerRole] = useState(null);
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [weeklyMover, setWeeklyMover] = useState(null);
+  const [biggestRiser, setBiggestRiser] = useState(null);
+  const [biggestFaller, setBiggestFaller] = useState(null);
   const [nextEvent, setNextEvent] = useState(null);
  
   const configuredCommissioners = getConfiguredCommissionerEmails();
@@ -436,7 +438,8 @@ export default function App() {
     // active season changes (a new draft gets finalized) and the new
     // season's fetch comes back empty or errors, the strip would keep
     // showing the old season's mover/event as if it were current.
-    setWeeklyMover(null);
+    setBiggestRiser(null);
+    setBiggestFaller(null);
     setNextEvent(null);
     if (!activeSeason || !activeSeason.year) return;
     let cancelled = false;
@@ -499,16 +502,17 @@ export default function App() {
         });
         const latest = byDate.get(latestDate) || {};
         const baseline = byDate.get(baselineDate) || {};
-        let best = null;
+        let riser = null, faller = null;
         Object.keys(latest).forEach((mid) => {
           const delta = Math.round(((latest[mid] || 0) - (baseline[mid] || 0)) * 100) / 100;
-          if (delta > 0 && (!best || delta > best.delta)) best = { memberId: mid, delta: delta };
+          if (delta > 0 && (!riser || delta > riser.delta)) riser = { memberId: mid, delta: delta };
+          if (delta < 0 && (!faller || delta < faller.delta)) faller = { memberId: mid, delta: delta };
         });
-        if (!cancelled && best) {
-          setWeeklyMover({ name: memberNameById[best.memberId] || best.memberId, delta: best.delta });
-        }
+        if (cancelled) return;
+        if (riser) setBiggestRiser({ name: memberNameById[riser.memberId] || riser.memberId, delta: riser.delta });
+        if (faller) setBiggestFaller({ name: memberNameById[faller.memberId] || faller.memberId, delta: faller.delta });
       } catch (e) {
-        console.warn("Orientation strip: score_history fetch failed, omitting mover:", e);
+        console.warn("Orientation strip: score_history fetch failed, omitting riser/faller:", e);
       }
     })();
 
@@ -751,7 +755,7 @@ export default function App() {
                   {" "}· Updated {lastUpdated.toLocaleTimeString()}
                 </p>
               )}
-              {isViewingActive && (weeklyMover || nextEvent) && (
+              {isViewingActive && (biggestRiser || biggestFaller || nextEvent) && (
                 <div style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
                   gap: isMobile ? 10 : 16, flexWrap: "wrap",
@@ -759,14 +763,24 @@ export default function App() {
                   background: theme.card, border: `1px solid ${theme.bdr}`, borderRadius: 999,
                   fontSize: isMobile ? 11 : 12,
                 }}>
-                  {weeklyMover && (
+                  {biggestRiser && (
                     <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
                       <TrendingUp size={13} color={theme.grn} />
-                      <b style={{ color: theme.acc }}>{weeklyMover.name}</b>
-                      <span style={{ color: theme.dim }}>+{weeklyMover.delta} this week</span>
+                      <b style={{ color: theme.acc }}>{biggestRiser.name}</b>
+                      <span style={{ color: theme.dim }}>+{biggestRiser.delta} this week</span>
                     </span>
                   )}
-                  {weeklyMover && nextEvent && (
+                  {biggestRiser && biggestFaller && (
+                    <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
+                  )}
+                  {biggestFaller && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <TrendingDown size={13} color={theme.red} />
+                      <b style={{ color: theme.txt }}>{biggestFaller.name}</b>
+                      <span style={{ color: theme.dim }}>{biggestFaller.delta} this week</span>
+                    </span>
+                  )}
+                  {(biggestRiser || biggestFaller) && nextEvent && (
                     <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
                   )}
                   {nextEvent && (
