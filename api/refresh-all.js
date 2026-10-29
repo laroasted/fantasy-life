@@ -37,6 +37,24 @@
 
 const { createClient } = require('@supabase/supabase-js');
 
+// Required statically, by literal path, not via a runtime variable passed
+// to require(). Vercel's build-time bundler (@vercel/nft) traces literal
+// require() calls to decide which files get packaged into this function's
+// deployment — it can't trace `require(someVariable)`, so a dynamic path
+// here silently produces a function bundle missing api/cron/*.js entirely
+// ("Cannot find module './cron/update-sports'" at runtime). This bit
+// every job here, not just new ones, until it was caught against a real
+// deploy — see PR #16.
+const updateSports = require('./cron/update-sports');
+const updateCollege = require('./cron/update-college');
+const updateStocks = require('./cron/update-stocks');
+const updateEntertainment = require('./cron/update-entertainment');
+const updateBillboard = require('./cron/update-billboard');
+const updateEvents = require('./cron/update-events');
+const updateCountry = require('./cron/update-country');
+const snapshotScores = require('./cron/snapshot-scores');
+const updateProjections = require('./cron/update-projections');
+
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -67,10 +85,9 @@ async function claimRefreshSlot() {
   }
 }
 
-async function runJob(name, modulePath) {
+async function runJob(name, jobHandler) {
   var startedAt = Date.now();
   try {
-    var jobHandler = require(modulePath);
     var fakeReq = { method: 'POST', headers: { authorization: 'Bearer ' + (CRON_SECRET || '') } };
     var captured = { statusCode: 200, body: null };
     var fakeRes = {
@@ -85,13 +102,13 @@ async function runJob(name, modulePath) {
 }
 
 const DATA_JOBS = [
-  ['sports', './cron/update-sports'],
-  ['college', './cron/update-college'],
-  ['stocks', './cron/update-stocks'],
-  ['entertainment', './cron/update-entertainment'],
-  ['billboard', './cron/update-billboard'],
-  ['events', './cron/update-events'],
-  ['country', './cron/update-country'],
+  ['sports', updateSports],
+  ['college', updateCollege],
+  ['stocks', updateStocks],
+  ['entertainment', updateEntertainment],
+  ['billboard', updateBillboard],
+  ['events', updateEvents],
+  ['country', updateCountry],
 ];
 
 module.exports = async function handler(req, res) {
@@ -117,11 +134,11 @@ module.exports = async function handler(req, res) {
   var dataResults = await Promise.all(
     DATA_JOBS.map(function (job) { return runJob(job[0], job[1]); })
   );
-  var snapshotResult = await runJob('snapshot-scores', './cron/snapshot-scores');
+  var snapshotResult = await runJob('snapshot-scores', snapshotScores);
   // Projections read `picks` for their current-value baseline, same as
   // snapshot-scores — must run after the data jobs have actually written,
   // not concurrently with them.
-  var projectionsResult = await runJob('projections', './cron/update-projections');
+  var projectionsResult = await runJob('projections', updateProjections);
 
   var jobs = dataResults.concat([snapshotResult, projectionsResult]);
   var allOk = jobs.every(function (j) { return j.ok; });
