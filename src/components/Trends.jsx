@@ -318,13 +318,25 @@ export default function Trends({ seasonData }) {
     val,
   }));
 
-  function handleMove(e) {
+  function handlePointerX(clientX) {
     if (n === 0 || !svgWrapRef.current) return;
     const rect = svgWrapRef.current.getBoundingClientRect();
-    const relX = ((e.clientX - rect.left) / rect.width) * W;
+    const relX = ((clientX - rect.left) / rect.width) * W;
     let idx = Math.round(((relX - padL) / plotW) * (n - 1));
     idx = Math.max(0, Math.min(n - 1, idx));
     setHoverIdx(idx);
+  }
+  function handleMove(e) {
+    handlePointerX(e.clientX);
+  }
+  // Touch never had a crosshair at all before — only onMouseMove was wired
+  // up, so a finger drag did nothing. Now that the chart is tall enough to
+  // fill most of a phone screen, that gap matters more: touchAction "none"
+  // was blocking the page's vertical scroll over the chart for no benefit.
+  // "pan-y" lets a vertical swipe scroll the page normally; a touchmove
+  // that isn't purely vertical still reaches this handler for the crosshair.
+  function handleTouchMove(e) {
+    if (e.touches && e.touches.length) handlePointerX(e.touches[0].clientX);
   }
 
   const tableDates = useMemo(() => [...dates].reverse().slice(0, showTable === "all" ? dates.length : 21), [dates, showTable]);
@@ -509,9 +521,11 @@ export default function Trends({ seasonData }) {
 
         {/* Chart */}
         {chartMode === "lines" && (
-        <div ref={svgWrapRef} style={{ position: "relative", width: "100%", touchAction: "none" }}
+        <div ref={svgWrapRef} style={{ position: "relative", width: "100%", touchAction: "pan-y" }}
           onMouseMove={handleMove}
-          onMouseLeave={() => setHoverIdx(null)}>
+          onMouseLeave={() => setHoverIdx(null)}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={() => setHoverIdx(null)}>
           <svg viewBox={"0 0 " + W + " " + H} style={{ width: "100%", height: "auto", display: "block" }}>
             {/* Gridlines */}
             {gridLines.map((g, i) => (
