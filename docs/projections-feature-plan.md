@@ -417,3 +417,146 @@ only bare initialisms like LAFC/NYCFC do. Added `'NYCFC': 'New York
 City FC'` to `VERIFIED_NAME_ALIASES`. Still not a comprehensive
 alias table — just the fourth confirmed mismatch. The same
 read-the-diagnostic-then-verify-live loop applies to any future one.
+
+## Ninth iteration — bonus went from "fractional EV" to "ranked into the
+real bracket", and base now mirrors the real crons' own freeze windows
+
+All 7 sports categories' odds matching confirmed working. User then
+reviewed the actual projected numbers against what they know about each
+category's real-world state and found a different, bigger class of
+problem — not an odds-matching bug, a methodology gap:
+
+1. **MLB was still projecting movement after the season was completely
+   over.** BAL Orioles' base showed 5 (current) projecting to 9.14 — but
+   the World Series had already concluded. Root cause: this file never
+   checked whether a sport's real season was even still active before
+   Monte-Carlo-simulating it. update-sports.js already freezes MLB's
+   `activeMonths` to `[4,5,6,7,8,9]` (no October) for exactly this
+   reason — base is final for the year — but update-projections.js had
+   no equivalent check at all, so it kept projecting movement the real
+   cron would never actually write.
+
+2. **NBA/NHL bonus was still being probability-weighted after the real
+   outcome was already known.** User's example: SA Spurs lost the NBA
+   Finals (a fact, not a forecast) and should show bonus = 7 exactly, not
+   7.65. Root cause, confirmed by re-reading update-sports.js's own FIX 4
+   comment: NBA/NHL's `base` tracks the NEW season (their `activeMonths`
+   = Oct–Feb) while `bonus` comes from the PRECEDING season's playoffs,
+   which are always fully decided by the time that new-season window
+   opens — "Bonus points are NEVER touched" by that cron at all; it's
+   pure commissioner entry. So querying live odds for a fresh, unrelated
+   future bracket and layering probability-weighted upside on top of an
+   already-final number was actively wrong, not just redundant.
+
+3. **The fractional-EV bonus model itself was the wrong shape for a
+   single-elimination bracket.** Every pick's own win probability × the
+   top prize understates the real favorite (their true win% is well
+   under 100%) and spreads false credit across the whole field (everyone
+   gets a sliver of a prize only one of them can actually win). User's
+   own words: "take the most likely to win it all and slate them in to
+   win all the Championship points (10) and the second most likely to be
+   the Lose Finals bonus (7 points) and so on" — i.e. RANK the field by
+   live win probability and slot it into the league's real bracket tiers
+   (`CATEGORY_BONUS_RULES` in `src/constants/categories.js`: NFL/MLB/
+   NBA/NHL/MLS all share the same 10/7/5/3/2 ladder — champion / lose
+   finals / lose conf champ / lose round 2 / lose round 1).
+
+4. **F1 had NO bonus model at all** (explicitly set to `bonusConfig:
+   null` back in the seventh iteration, because a generic "wins the F1
+   championship" search was the wrong event). But F1's real bonus rule
+   (`CATEGORY_BONUS_RULES.F1`) is concrete and modelable: 3/2/1 points
+   for 1st/2nd/3rd place in each of 4 SPECIFIC featured races (AUS, MIA,
+   ATX/US, LV). User's example: Kimi Antonelli's 8 banked points (2nd
+   AUS + 1st MIA + 1st US GP = 2+3+3) are correct and already reflect 3
+   of those 4 races — but the 4th (Las Vegas) hasn't happened yet and
+   he's a live favorite for it, and the projection showed zero credit
+   for that.
+
+5. **Tennis's bonus lookup was gated by the wrong calendar logic.**
+   `remainingEventsThisMonth('Tennis')` read a generic "Grand Slams left
+   this calendar year" table that goes to 0 every September–December —
+   but this league's Tennis category has ONE specific target event, the
+   Australian Open (`CATEGORY_METRICS.Tennis` is literally "Post
+   Australian Open World Ranking Pts"; the category's own freeze date in
+   update-events.js is Jan 31, right after the AO wraps). So the AO was
+   always the real target, hadn't happened yet, and the gate was
+   wrongly suppressing the lookup for it. User's example: Sinner
+   (favorite) and Alcaraz (2nd favorite) should show 5 and 3 respectively
+   ahead of the January AO; both showed 0.
+
+### Fixes
+
+- **`isSportBaseActive(league)`** — a direct duplicate of
+  update-sports.js's own `ESPN_LEAGUES[...].activeMonths` table. When a
+  sport's base is out of season, the category is routed through
+  `runStatic` entirely (same deterministic path already used for
+  Country/Stock) instead of `runCategory`'s Monte Carlo — base AND bonus
+  both hold flat at the real actual values, full stop. This is what
+  fixes MLB.
+- **`bonusConfigFor(league)`** returns `null` for NBA/NHL specifically
+  while `isSportBaseActive(league)` is true (their new-season base
+  window) — no odds lookup attempted at all, bonus stays locked to
+  whatever's already recorded. `source_detail` gets an explicit
+  `bonus_locked:prior_season_already_decided` note rather than silently
+  doing nothing.
+- **`rankIntoTierBonus(models, probs, tierValues)`** — the new core
+  bracket model. One search (`findMarketProbabilitiesForPicks`, see
+  below) gets every pick's live win probability from the SAME market
+  snapshot (not probability in isolation — rank only means something
+  when everyone's compared against each other), ranks descending, and
+  slots rank 1 into `tierValues[0]`, rank 2 into `tierValues[1]`, etc.
+  Still respects the existing floor (`Math.max(actualBonus, tier)`) — a
+  pick already eliminated with real banked points never gets projected
+  below them just because they now rank outside the modeled tiers.
+  Replaces `attachBonusSampler`'s fractional-EV approach for NFL/MLB (when
+  in season)/NBA (off-season)/NHL (off-season)/MLS/Tennis.
+  NCAAF/NCAAB/Actor/Actress/Musician are explicitly NOT moved to this
+  model yet — their real bonus rules fork into separate named
+  tiers/awards rather than one clean elimination bracket, so they stay on
+  the old EV path (`bonusConfig.kind` left unset on their configs) as
+  documented future work, not an oversight.
+- **`findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVariants)`**
+  — does ONE search call per category instead of one per pick (the old
+  `findChampionshipProbability` loop), returning a probability per pick
+  id from the same event snapshot. Needed for ranking to be meaningful,
+  and as a side effect cuts network calls for a 12-pick category from 12
+  down to 1.
+- **`addTierBonus(models, probs, tierValues)`** — same rank-into-tiers
+  idea as `rankIntoTierBonus`, but ADDS the tier instead of taking the
+  max, for a bonus that pays out independently more than once (F1's
+  per-race podium bonus) rather than a single bracket with one eventual
+  winner.
+- **`applyF1FeaturedRaceBonus` / `F1_FEATURED_RACES`** — tries each of
+  the 4 named races' own market in order. A race that's already run
+  won't have an active Polymarket event anymore (resolved/closed), so
+  this naturally finds only the race(s) still open without hardcoding
+  exact 2026 race dates — the market's own active/closed state IS the
+  "has this race happened yet" signal. Whichever race comes back live
+  gets its podium tier added on top of the already-banked total.
+- **Tennis's bonus config** switched from the old EV shape gated by
+  `remainingEventsThisMonth` to `{ kind: 'tierLadder', titleKeyword:
+  'Australian Open', tierValues: [5, 3, 2], mode: 'replace' }`, always
+  attempted (no gate) — matches this category's real single-target-event
+  design instead of a generic any-slam-this-year table.
+
+### Known follow-up, not done this pass
+
+- Tennis's BASE model (not bonus) still uses the old
+  `remainingEventsThisMonth`-gated rate projection, which likely
+  understates ranking-point growth September–December (ATP ranking
+  points accumulate from non-major tournaments too, not just majors) —
+  flagged but out of scope for this round, which was about bonus.
+- NCAAF/NCAAB/Actor/Actress/Musician bonus still use the single-market
+  fractional-EV model. NCAAF/NCAAB's real bonus rule forks into distinct
+  named bowl games rather than one elimination bracket; Actor/Actress/
+  Musician are award-nomination shaped, not a ranked field at all in the
+  same sense. Both need their own dedicated design, not a drop-in reuse
+  of `rankIntoTierBonus`.
+- `findMarketProbabilitiesForPicks` (and `applyF1FeaturedRaceBonus`'s
+  per-race searches) still don't normalize diacritics the way
+  update-events.js's `normalizeStr` does for ESPN name matching — a
+  driver/player name with an accent (not an issue for any example seen
+  live so far) could fail to match a betting market's plain-ASCII
+  question text. Same class of gap as the existing team-name-alias
+  table: fix if/when a live diagnostic actually shows it, not guessed at
+  in advance.

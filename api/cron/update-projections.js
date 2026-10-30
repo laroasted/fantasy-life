@@ -59,6 +59,26 @@ const RUN_BUDGET_MS = 40000;
 // drives a Monte Carlo *variance* estimate, not a scoreboard number. ──
 const SEASON_LENGTH = { NFL: 17, NBA: 82, MLB: 162, NHL: 82, MLS: 34 };
 
+// Mirrors update-sports.js's ESPN_LEAGUES[...].activeMonths exactly — the
+// real base-scoring cron freezes these months already (e.g. MLB goes
+// frozen in October: the World Series is over and there's no regular
+// season left to simulate). Projections has to agree with it instead of
+// Monte-Carlo-projecting movement that cron would never actually write.
+// Duplicated here rather than imported because these two files share no
+// module today and this is a small, stable table — same tradeoff already
+// made for isFieldLocked.
+const SPORTS_ACTIVE_MONTHS = {
+  NFL: [9, 10, 11, 12, 1],
+  NBA: [10, 11, 12, 1, 2],
+  NHL: [10, 11, 12, 1, 2],
+  MLB: [4, 5, 6, 7, 8, 9],
+  MLS: [4, 5, 6, 7, 8, 9, 10],
+};
+function isSportBaseActive(league, now) {
+  const month = (now || new Date()).getMonth() + 1;
+  return SPORTS_ACTIVE_MONTHS[league].includes(month);
+}
+
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -772,6 +792,162 @@ function attachBonusSampler(models, bonusProbByOwner, bonusPointsIfWin) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// BRACKET-RANKED BONUS — replaces the single-market EV model above for
+// any category whose real bonus rule (CATEGORY_BONUS_RULES in
+// src/constants/categories.js) is a single-elimination bracket: ONE
+// eventual champion, ONE runner-up, then smaller tiers going out earlier
+// (e.g. NFL's "10:Win SB | 7:Lose SB | 5:Lose Conf Champ | 3:Lose Div |
+// 2:Lose WC"). attachBonusSampler's fractional-EV approach (every pick's
+// own win% × bonusPointsIfWin) under-projects the real favorite (their
+// true win probability is well under 100%) and over-projects the rest of
+// the field (everyone gets a sliver of credit for a prize only one of
+// them can actually win). Ranking the field by live win probability and
+// slotting it into the real bracket tiers is a much closer match to what
+// will actually happen — per direct user instruction after reviewing
+// live projection output.
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Looks up ONE betting-market event (by title keyword) and returns a win
+ * probability per PICK, in a single search call shared across the whole
+ * category — not one search per pick like findChampionshipProbability.
+ * Every pick's probability has to come from the same market snapshot to
+ * be comparable against each other, which rank-based tier assignment
+ * needs (and as a side effect, this also cuts the network calls for a
+ * 12-pick category from 12 down to 1).
+ */
+async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVariants) {
+  const url = 'https://gamma-api.polymarket.com/public-search?events_status=active&limit_per_type=10&q=' + encodeURIComponent(titleKeyword);
+  const res = await fetchJsonDiagnostic(url, 8000);
+  if (res.error) return { probs: {}, reason: 'fetch_error:' + res.error };
+  if (!res.ok) return { probs: {}, reason: 'http_' + res.status };
+  const data = res.json;
+  const allEvents = Array.isArray(data) ? data : (data && data.events) || [];
+  const events = allEvents.filter((ev) => ev.active !== false && ev.closed !== true);
+  if (!events || events.length === 0) return { probs: {}, reason: 'no_active_events_matched_query(' + titleKeyword + ')' };
+
+  let marketsScanned = 0;
+  const probs = {};
+  for (const entry of picksWithNameVariants) {
+    const needles = entry.nameVariants.map((v) => (v || '').toLowerCase()).filter(Boolean);
+    let matchedPrice = null;
+    for (const ev of events) {
+      if (matchedPrice !== null) break;
+      for (const m of (ev.markets || [])) {
+        marketsScanned++;
+        const question = (m.question || m.groupItemTitle || m.title || '').toLowerCase();
+        if (!needles.some((n) => question.includes(n))) continue;
+        try {
+          const outcomes = JSON.parse(m.outcomes || '[]');
+          const prices = JSON.parse(m.outcomePrices || '[]');
+          const yesIdx = outcomes.findIndex((o) => String(o).toLowerCase() === 'yes');
+          const price = yesIdx >= 0 ? parseFloat(prices[yesIdx]) : parseFloat(prices[0]);
+          if (!isNaN(price)) { matchedPrice = clamp(price, 0, 1); break; }
+        } catch (e) { /* malformed market payload — skip, don't guess */ }
+      }
+    }
+    probs[entry.id] = matchedPrice;
+  }
+  const anyMatched = Object.keys(probs).some((id) => probs[id] !== null);
+  return { probs, reason: anyMatched ? null : (events.length + '_events_' + marketsScanned + '_markets_none_matched_any_pick') };
+}
+
+/**
+ * Assigns bonus by RANK among a single-elimination bracket. The most
+ * likely pick (by live win probability) is slotted into tierValues[0]
+ * (champion), the next most likely into tierValues[1] (runner-up), and
+ * so on; anything ranked past the end of tierValues gets 0. Never
+ * projects BELOW what a pick has already banked — max() keeps a pick's
+ * real earned points even if it now ranks outside the modeled tiers
+ * (e.g. already mathematically eliminated).
+ */
+function rankIntoTierBonus(models, probs, tierValues) {
+  const contenders = models
+    .filter((m) => typeof probs[m.id] === 'number')
+    .slice()
+    .sort((a, b) => probs[b.id] - probs[a.id]);
+  const tierByPickId = {};
+  contenders.forEach((m, idx) => { tierByPickId[m.id] = tierValues[idx] !== undefined ? tierValues[idx] : 0; });
+  return models.map((m) => {
+    const tier = tierByPickId[m.id] !== undefined ? tierByPickId[m.id] : 0;
+    const projected = Math.max(m.actualBonus, tier);
+    return Object.assign({}, m, { bonusSampler: () => projected });
+  });
+}
+
+/**
+ * Same rank-into-tiers idea as rankIntoTierBonus, but ADDS the tier to
+ * whatever's already banked instead of taking the max — for a bonus rule
+ * that pays out independently more than once (F1's per-featured-race
+ * placement bonus), not a single bracket with one eventual winner.
+ */
+function addTierBonus(models, probs, tierValues) {
+  const contenders = models
+    .filter((m) => typeof probs[m.id] === 'number')
+    .slice()
+    .sort((a, b) => probs[b.id] - probs[a.id]);
+  const tierByPickId = {};
+  contenders.forEach((m, idx) => { tierByPickId[m.id] = tierValues[idx] !== undefined ? tierValues[idx] : 0; });
+  return models.map((m) => {
+    const addition = tierByPickId[m.id] !== undefined ? tierByPickId[m.id] : 0;
+    const projected = m.actualBonus + addition;
+    return Object.assign({}, m, { bonusSampler: () => projected });
+  });
+}
+
+/**
+ * F1's real bonus rule (CATEGORY_BONUS_RULES.F1) pays out per-podium
+ * finish across 4 SPECIFIC featured races (Australian, Miami, United
+ * States, Las Vegas GPs) — 3/2/1 points for 1st/2nd/3rd in THAT race —
+ * not a single season-championship market. A generic "wins the F1
+ * championship" search (the previous attempt) modeled the wrong event
+ * entirely and was removed rather than fixed in place; this models the
+ * real rule instead.
+ *
+ * Tries each featured race's own market in calendar order. A race that's
+ * already run won't have an active market anymore (Polymarket
+ * resolves/closes it), so this naturally skips to whichever race(s) are
+ * still open without needing to hardcode exact 2026 race dates — the
+ * market's own active/closed state IS the "has this race happened yet"
+ * signal. Whichever race(s) come back with live odds get their podium
+ * tier ADDED on top of whatever's already banked from earlier races in
+ * the season (see addTierBonus) — never replacing it, since this bonus
+ * accumulates independently race by race, unlike the bracket sports.
+ */
+const F1_FEATURED_RACES = [
+  { key: 'AUS', title: 'Australian Grand Prix', tierValues: [3, 2, 1] },
+  { key: 'MIA', title: 'Miami Grand Prix', tierValues: [3, 2, 1] },
+  { key: 'ATX', title: 'United States Grand Prix', tierValues: [3, 2, 1] },
+  { key: 'LV', title: 'Las Vegas Grand Prix', tierValues: [3, 2, 1] },
+];
+
+async function applyF1FeaturedRaceBonus(models, pastDeadline) {
+  let current = models;
+  let anyOpenRace = false;
+  let lastNote = 'no_featured_race_markets_open';
+  for (const race of F1_FEATURED_RACES) {
+    if (pastDeadline()) { lastNote = 'skipped:time_budget_exceeded'; break; }
+    const picksWithVariants = current.map((m) => ({ id: m.id, nameVariants: [m.pickName] }));
+    let lookup;
+    try { lookup = await findMarketProbabilitiesForPicks(race.title, picksWithVariants); }
+    catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
+    const matchedAny = Object.keys(lookup.probs).some((id) => lookup.probs[id] !== null);
+    if (matchedAny) {
+      current = addTierBonus(current, lookup.probs, race.tierValues);
+      anyOpenRace = true;
+      lastNote = race.key + ':matched';
+    } else {
+      lastNote = race.key + ':' + (lookup.reason || 'no_match');
+    }
+    await delay(150);
+  }
+  return {
+    models: current,
+    sourceNoteSuffix: 'f1_featured_race_bonus(' + (anyOpenRace ? lastNote : 'no_race_open,last=' + lastNote) + ')',
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // SUPABASE I/O
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -906,34 +1082,56 @@ module.exports = async function handler(req, res) {
       });
 
       if (bonusConfig) {
-        // Match on the PICKED TEAM/ATHLETE/ARTIST's name, never the
-        // league member's — a championship market's outcome text says
-        // "Kansas City Chiefs", never "LaRosa". Keyed by ownerName in the
-        // result map only because attachBonusSampler looks it up that way
-        // (one pick per owner per category).
-        const bonusProbByOwner = {};
-        // Captures the FIRST failure reason seen in this category as a
-        // category-wide diagnostic (titleKeyword is the same for every
-        // pick here, so the root cause — no events found, events found
-        // but no outcome matched, a fetch error — is almost always the
-        // same across all of them too). Tells the next live run exactly
-        // where the lookup is failing instead of just "no match".
-        let bonusDiagnostic = null;
-        for (const m of models) {
-          if (pastDeadline()) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'skipped:time_budget_exceeded'; continue; }
-          try {
-            const found = await findChampionshipProbability(bonusConfig.titleKeyword, nameVariants(m.pickName), bonusConfig.kalshiSeriesGuess);
-            bonusProbByOwner[m.ownerName] = found.prob;
-            if (found.prob === null && !bonusDiagnostic) bonusDiagnostic = found.reason;
-          } catch (e) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'exception:' + e.message; }
-          await delay(150);
+        if (bonusConfig.kind === 'tierLadder') {
+          // Match on the PICKED TEAM/ATHLETE's name, never the league
+          // member's — a championship market's outcome text says "Kansas
+          // City Chiefs", never "LaRosa".
+          const picksWithVariants = models.map((m) => ({ id: m.id, nameVariants: nameVariants(m.pickName) }));
+          let lookup = { probs: {}, reason: 'skipped:time_budget_exceeded' };
+          if (!pastDeadline()) {
+            try { lookup = await findMarketProbabilitiesForPicks(bonusConfig.titleKeyword, picksWithVariants); }
+            catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
+          }
+          models = bonusConfig.mode === 'add'
+            ? addTierBonus(models, lookup.probs, bonusConfig.tierValues)
+            : rankIntoTierBonus(models, lookup.probs, bonusConfig.tierValues);
+          models = models.map((m) => Object.assign({}, m, {
+            sourceNote: m.sourceNote + '|bonus_tier_ladder(' + bonusConfig.tierValues.join('/') + ')|odds_lookup:' + (lookup.reason || 'matched'),
+          }));
+        } else if (bonusConfig.kind === 'custom') {
+          const applied = await bonusConfig.apply(models, pastDeadline);
+          models = applied.models.map((m) => Object.assign({}, m, {
+            sourceNote: m.sourceNote + '|' + (applied.sourceNoteSuffix || 'custom_bonus'),
+          }));
+        } else {
+          // Legacy single-market EV path — still used for categories this
+          // pass didn't rework (NCAAF/NCAAB's non-bracket-shaped bowl/CFP
+          // tiers, Actor/Actress/Musician awards): every pick's own win
+          // probability × bonusPointsIfWin, added on top of the banked
+          // floor. See docs/projections-feature-plan.md for why the
+          // bracket sports moved off this model and these haven't, yet.
+          const bonusProbByOwner = {};
+          // Captures the FIRST failure reason seen in this category as a
+          // category-wide diagnostic (titleKeyword is the same for every
+          // pick here, so the root cause — no events found, events found
+          // but no outcome matched, a fetch error — is almost always the
+          // same across all of them too). Tells the next live run exactly
+          // where the lookup is failing instead of just "no match".
+          let bonusDiagnostic = null;
+          for (const m of models) {
+            if (pastDeadline()) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'skipped:time_budget_exceeded'; continue; }
+            try {
+              const found = await findChampionshipProbability(bonusConfig.titleKeyword, nameVariants(m.pickName), bonusConfig.kalshiSeriesGuess);
+              bonusProbByOwner[m.ownerName] = found.prob;
+              if (found.prob === null && !bonusDiagnostic) bonusDiagnostic = found.reason;
+            } catch (e) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'exception:' + e.message; }
+            await delay(150);
+          }
+          models = attachBonusSampler(models, bonusProbByOwner, bonusConfig.bonusPointsIfWin);
+          models = models.map((m) => Object.assign({}, m, {
+            sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only|odds_lookup:' + (bonusDiagnostic || 'matched'),
+          }));
         }
-        models = attachBonusSampler(models, bonusProbByOwner, bonusConfig.bonusPointsIfWin);
-        // See attachBonusSampler's own comment — this is a real, named
-        // limitation, not an implementation detail to bury.
-        models = models.map((m) => Object.assign({}, m, {
-          sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only|odds_lookup:' + (bonusDiagnostic || 'matched'),
-        }));
       }
 
       // picks.length, NOT the league-wide member count — matches the exact
@@ -961,7 +1159,7 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  async function runStatic(category, method, confidence) {
+  async function runStatic(category, method, confidence, sourceDetail) {
     const startedAt = new Date().toISOString();
     const picks = picksByCategory[category] || [];
     if (picks.length === 0) { results[category] = { status: 'skipped', reason: 'no picks' }; await logRun(supabase, seasonYear, category, 'skipped', {}, startedAt); return; }
@@ -972,7 +1170,8 @@ module.exports = async function handler(req, res) {
       projectedBonusEv: Number(p.bonus) || 0,
       projectedTotal: Number(p.total) || 0,
       p10: null, p50: null, p90: null,
-      method, confidence, sourceDetail: method === 'trend_only' ? 'stock_price_not_modeled_see_design_doc' : 'gdp_forecast_is_already_static',
+      method, confidence,
+      sourceDetail: sourceDetail || (method === 'trend_only' ? 'stock_price_not_modeled_see_design_doc' : 'gdp_forecast_is_already_static'),
       simulations: 0,
     }));
     const written = await upsertProjections(supabase, seasonYear, category, rows);
@@ -982,37 +1181,71 @@ module.exports = async function handler(req, res) {
 
   // ── Win%-based sports ──
   for (const league of ['NFL', 'NBA', 'MLB']) {
-    await runCategory(league, 'desc',
-      (picks) => buildWinPctModel(picks, league, seasonYear, locks, ownerNameById, pastDeadline),
-      bonusConfigFor(league));
+    if (!isSportBaseActive(league)) {
+      // Real base-scoring cron (update-sports.js) is frozen this month —
+      // the regular season (and for MLB, the postseason right behind it)
+      // is over, nothing left to simulate. Hold the real actual values
+      // flat rather than keep Monte-Carlo-projecting movement that cron
+      // would never actually write.
+      await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen');
+      continue;
+    }
+    const bonusConfig = bonusConfigFor(league);
+    await runCategory(league, 'desc', async (picks) => {
+      const models = await buildWinPctModel(picks, league, seasonYear, locks, ownerNameById, pastDeadline);
+      // NBA: bonusConfigFor returns null here because the bonus-deciding
+      // event already happened (see bonusConfigFor's own comment) — note
+      // that explicitly in source_detail rather than leaving it silent.
+      return bonusConfig ? models : models.map((m) => Object.assign({}, m, {
+        sourceNote: m.sourceNote + '|bonus_locked:prior_season_already_decided',
+      }));
+    }, bonusConfig);
   }
   // ── Points-based sports ──
   for (const league of ['NHL', 'MLS']) {
-    await runCategory(league, 'desc', (picks) => buildPointsRateModel(picks, league, ownerNameById), bonusConfigFor(league));
+    if (!isSportBaseActive(league)) {
+      await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen');
+      continue;
+    }
+    const bonusConfig = bonusConfigFor(league);
+    await runCategory(league, 'desc', async (picks) => {
+      const models = await buildPointsRateModel(picks, league, ownerNameById);
+      return bonusConfig ? models : models.map((m) => Object.assign({}, m, {
+        sourceNote: m.sourceNote + '|bonus_locked:prior_season_already_decided',
+      }));
+    }, bonusConfig);
   }
   // ── College (AP poll, not the same accumulation shape as pro sports) ──
+  // Still on the legacy single-market EV bonus model (kind unset) — the
+  // real NCAAF/NCAAB bonus rule forks into separate named bowl games
+  // rather than one clean single-elimination bracket (see
+  // CATEGORY_BONUS_RULES.NCAAF/NCAAB), so it doesn't map onto
+  // rankIntoTierBonus the same direct way the pro sports' brackets do.
+  // Left as future work, not reworked this pass.
   await runCategory('NCAAF', 'desc', (picks) => buildCollegeRankingModel(picks, 'NCAAF', ownerNameById),
     { titleKeyword: 'College Football Playoff', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
   await runCategory('NCAAB', 'desc', (picks) => buildCollegeRankingModel(picks, 'NCAAB', ownerNameById),
     { titleKeyword: 'NCAA Tournament', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
   // ── Individual-ranking sports ──
+  // Tennis's bonus event is specifically the Australian Open — not "any
+  // remaining Grand Slam this calendar year" (CATEGORY_METRICS.Tennis is
+  // literally "Post Australian Open World Ranking Pts"; the category's
+  // own freeze date in update-events.js is Jan 31, right after the AO
+  // wraps). The old remainingEventsThisMonth('Tennis') gate read the
+  // calendar-year-majors-remaining table instead, which goes to 0 every
+  // September–December even though the AO — this category's actual
+  // target event — hasn't happened yet and is still fully live to model.
+  // Bracket-ranked the same as the pro sports' championships, using this
+  // category's own real bonus ladder (CATEGORY_BONUS_RULES.Tennis).
   await runCategory('Tennis', 'desc', (picks) => buildRankingPointsModel(picks, 'Tennis', ownerNameById),
-    remainingEventsThisMonth('Tennis') > 0
-      ? { titleKeyword: 'Grand Slam', kalshiSeriesGuess: null, bonusPointsIfWin: 5 }
-      : null);
+    { kind: 'tierLadder', titleKeyword: 'Australian Open', tierValues: [5, 3, 2], mode: 'replace' });
   await runCategory('Golf', 'asc', (picks) => buildRankingPointsModel(picks, 'Golf', ownerNameById), null);
-  // F1's real bonus rule (CATEGORY_BONUS_RULES.F1 in
-  // src/constants/categories.js) is per-podium across 4 SPECIFIC featured
-  // races (AUS/MIA/ATX/LV), accumulating up to 12 — NOT a single
-  // season-championship bonus. A generic "who wins the F1 championship"
-  // market (which is what a bonusConfig here would search for) models
-  // the wrong event entirely. Most of those 4 races are already run by
-  // this point in the season, so the already-banked bonus (held flat by
-  // the default in runCategory) is close to final anyway. Not attempting
-  // a Las-Vegas-GP-podium-specific odds search — that needs a narrower,
-  // unverified market match this build can't confirm — so F1 gets no
-  // bonusConfig, same as Golf.
-  await runCategory('F1', 'desc', (picks) => buildRankingPointsModel(picks, 'F1', ownerNameById), null);
+  // F1's real bonus rule (CATEGORY_BONUS_RULES.F1) is per-podium across 4
+  // SPECIFIC featured races (AUS/MIA/ATX/LV) — modeled properly now via
+  // applyF1FeaturedRaceBonus, which tries each race's own market and adds
+  // whichever one(s) are still live on top of the already-banked total.
+  await runCategory('F1', 'desc', (picks) => buildRankingPointsModel(picks, 'F1', ownerNameById),
+    { kind: 'custom', apply: (models, pastDeadlineFn) => applyF1FeaturedRaceBonus(models, pastDeadlineFn) });
   // ── Entertainment ──
   await runCategory('Actor', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline, avgRtByPickId),
     { titleKeyword: 'Academy Awards', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
@@ -1036,11 +1269,28 @@ module.exports = async function handler(req, res) {
 };
 
 function bonusConfigFor(league) {
+  // Each of these is a single-elimination bracket (CATEGORY_BONUS_RULES in
+  // src/constants/categories.js): ONE champion (10), ONE runner-up (7),
+  // then 5/3/2 going out earlier. Ranked into those tiers by live
+  // championship odds (rankIntoTierBonus) rather than each pick's own
+  // fractional win probability — see that function's own comment for why.
+  const TIER_VALUES = [10, 7, 5, 3, 2];
   const CHAMPIONSHIP_TITLE = { NFL: 'Super Bowl', NBA: 'NBA Finals', MLB: 'World Series', NHL: 'Stanley Cup', MLS: 'MLS Cup' };
-  const BONUS_IF_WIN = { NFL: 10, NBA: 10, MLB: 10, NHL: 10, MLS: 10 };
+  // NBA/NHL: the bonus THIS pick can still earn isn't from a bracket
+  // that's still being played out. Per update-sports.js's own FIX 4
+  // comment, base scoring for NBA/NHL runs the NEW season (their
+  // Oct–Feb activeMonths) while bonus comes from the PRECEDING season's
+  // playoffs — always fully over by the time that new-season window
+  // opens. Modeling fresh odds for a different, not-yet-run future
+  // bracket and adding it on top of an already-settled bonus would be
+  // actively wrong, not just redundant, so there's no odds lookup at all
+  // while that window is open: the real recorded actual_bonus (whatever
+  // the commissioner already has in the picks table) is the final
+  // answer, same as a commissioner-locked field.
+  if ((league === 'NBA' || league === 'NHL') && isSportBaseActive(league)) return null;
   const title = CHAMPIONSHIP_TITLE[league];
   if (!title) return null;
-  return { titleKeyword: title, kalshiSeriesGuess: null, bonusPointsIfWin: BONUS_IF_WIN[league] };
+  return { kind: 'tierLadder', titleKeyword: title, tierValues: TIER_VALUES, mode: 'replace' };
 }
 
 // Exported for local unit testing of the pure math core (see
