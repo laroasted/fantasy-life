@@ -816,14 +816,19 @@ function attachBonusSampler(models, bonusProbByOwner, bonusPointsIfWin) {
  * needs (and as a side effect, this also cuts the network calls for a
  * 12-pick category from 12 down to 1).
  */
-async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVariants) {
+async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVariants, eventFilter) {
   const url = 'https://gamma-api.polymarket.com/public-search?events_status=active&limit_per_type=10&q=' + encodeURIComponent(titleKeyword);
   const res = await fetchJsonDiagnostic(url, 8000);
   if (res.error) return { probs: {}, reason: 'fetch_error:' + res.error };
   if (!res.ok) return { probs: {}, reason: 'http_' + res.status };
   const data = res.json;
   const allEvents = Array.isArray(data) ? data : (data && data.events) || [];
-  const events = allEvents.filter((ev) => ev.active !== false && ev.closed !== true);
+  // eventFilter is an extra client-side narrowing beyond active/closed —
+  // needed because Polymarket's search is loose enough that e.g. "Best
+  // Actor Winner" also returns the separate "Best Supporting Actor
+  // Winner" event (confirmed live), the same class of cross-match
+  // already found and fixed for F1's practice-lap vs podium markets.
+  const events = allEvents.filter((ev) => ev.active !== false && ev.closed !== true && (!eventFilter || eventFilter(ev)));
   if (!events || events.length === 0) return { probs: {}, reason: 'no_active_events_matched_query(' + titleKeyword + ')' };
 
   let marketsScanned = 0;
@@ -897,7 +902,17 @@ function rankIntoTierBonus(models, probs, tierValues) {
  * Same rank-into-tiers idea as rankIntoTierBonus, but ADDS the tier to
  * whatever's already banked instead of taking the max — for a bonus rule
  * that pays out independently more than once (F1's per-featured-race
- * placement bonus), not a single bracket with one eventual winner.
+ * placement bonus, an artist winning more than one Grammy category),
+ * not a single bracket with one eventual winner.
+ *
+ * Reads the running total from m.bonusSampler() rather than the static
+ * m.actualBonus — this function is meant to be called repeatedly in a
+ * loop (once per race/category), and m.actualBonus never changes after
+ * the first call, so chaining off it would silently DISCARD every
+ * addition but the last whenever more than one market matches in the
+ * same run. bonusSampler() always reflects whatever the previous call
+ * in the chain (or the actualBonus-flat default, on the first call)
+ * last set it to.
  */
 function addTierBonus(models, probs, tierValues) {
   const contenders = models
@@ -908,9 +923,117 @@ function addTierBonus(models, probs, tierValues) {
   contenders.forEach((m, idx) => { tierByPickId[m.id] = tierValues[idx] !== undefined ? tierValues[idx] : 0; });
   return models.map((m) => {
     const addition = tierByPickId[m.id] !== undefined ? tierByPickId[m.id] : 0;
-    const projected = m.actualBonus + addition;
+    const projected = m.bonusSampler() + addition;
     return Object.assign({}, m, { bonusSampler: () => projected });
   });
+}
+
+/** Same accumulation idea as addTierBonus, but only the single most
+ * likely pick in this market gets credit (no 2nd/3rd place tier) — for
+ * an award category that has exactly one winner and no partial-credit
+ * placement, like a Grammy category. */
+function addSingleWinnerTier(models, probs, tier) {
+  return addTierBonus(models, probs, [tier]);
+}
+
+/**
+ * Combines a WIN-market ranking (only the single most likely pick gets
+ * winTier) with a NOMINATION-market ranking (the top nomineeCount most
+ * likely picks each get nomTier) into one pass. Takes the max across
+ * actualBonus/winTier/nomTier per pick — not additive, since winning
+ * implies having been nominated (CATEGORY_BONUS_RULES' win tier already
+ * supersedes its own category's nomination tier), and a pick can't earn
+ * a nomination-without-a-win AND a win in the same category at once.
+ */
+function combinedAwardTierBonus(models, winProbs, winTier, nomProbs, nomTier, nomineeCount) {
+  const winContenders = models.filter((m) => typeof winProbs[m.id] === 'number').slice().sort((a, b) => winProbs[b.id] - winProbs[a.id]);
+  const winnerPickId = winContenders.length > 0 ? winContenders[0].id : null;
+
+  const nomContenders = models.filter((m) => typeof nomProbs[m.id] === 'number').slice().sort((a, b) => nomProbs[b.id] - nomProbs[a.id]);
+  const nominatedIds = new Set(nomContenders.slice(0, nomineeCount).map((m) => m.id));
+
+  return models.map((m) => {
+    const winValue = m.id === winnerPickId ? winTier : 0;
+    const nomValue = nominatedIds.has(m.id) ? nomTier : 0;
+    const projected = Math.max(m.actualBonus, winValue, nomValue);
+    return Object.assign({}, m, { bonusSampler: () => projected });
+  });
+}
+
+/**
+ * Oscars (CATEGORY_BONUS_RULES.Actor/Actress): looks up the real "Best
+ * X Winner" and "Best X Nominations" markets (awardLabel is "Best
+ * Actor" or "Best Actress"), explicitly excluding the Supporting
+ * category's own markets — verified live that a loose search for e.g.
+ * "Best Actor Winner" also returns "Best Supporting Actor Winner", the
+ * same class of cross-match already found and fixed for F1's
+ * practice-lap vs podium markets. Only the LEAD track is modeled — a
+ * pick who ends up nominated in Supporting instead (a different pair of
+ * tiers in CATEGORY_BONUS_RULES) isn't covered; not verified live, not
+ * guessed at blind. Oscar's Best Actor/Actress field is always exactly
+ * 5 nominees, hence nomineeCount=5.
+ */
+async function applyOscarBonus(models, pastDeadline, awardLabel) {
+  const excludeSupporting = (ev) => !/supporting/i.test(ev.title || '');
+  let winProbs = {}, winReason = 'skipped:time_budget_exceeded';
+  if (!pastDeadline()) {
+    const picksWithVariants = models.map((m) => ({ id: m.id, nameVariants: [m.pickName] }));
+    try {
+      const lookup = await findMarketProbabilitiesForPicks(awardLabel + ' Winner', picksWithVariants, excludeSupporting);
+      winProbs = lookup.probs; winReason = lookup.reason || 'matched';
+    } catch (e) { winReason = 'exception:' + e.message; }
+    await delay(150);
+  }
+
+  let nomProbs = {}, nomReason = 'skipped:time_budget_exceeded';
+  if (!pastDeadline()) {
+    const picksWithVariants2 = models.map((m) => ({ id: m.id, nameVariants: [m.pickName] }));
+    try {
+      const lookup = await findMarketProbabilitiesForPicks(awardLabel + ' Nominations', picksWithVariants2, excludeSupporting);
+      nomProbs = lookup.probs; nomReason = lookup.reason || 'matched';
+    } catch (e) { nomReason = 'exception:' + e.message; }
+  }
+
+  const updated = combinedAwardTierBonus(models, winProbs, 10, nomProbs, 3, 5);
+  return { models: updated, sourceNoteSuffix: 'oscar_bonus(win:' + winReason + '|nom:' + nomReason + ')' };
+}
+
+/**
+ * Grammys (CATEGORY_BONUS_RULES.Musician): tries each real Grammy
+ * category market Polymarket actually lists — confirmed live via
+ * Alexandria (Album/Song/Record of the Year, Best Rap Album, Best New
+ * Artist; no Pop/Rock-album or nomination-only markets were found to
+ * exist right now, so those tiers of CATEGORY_BONUS_RULES.Musician
+ * aren't modeled — not guessed at blind). The "big three" (Album/Song/
+ * Record of the Year) pay the 7-tier; Best Rap Album/Best New Artist
+ * pay the 3-tier, matching "Best Song/Album Win" vs "Pop/Rock/Rap/New
+ * Artist Win". Only the single most-likely winner in EACH market gets
+ * that market's tier, added on top of whatever's already banked — an
+ * artist can genuinely win more than one Grammy category in the same
+ * ceremony, unlike a sports bracket's single champion.
+ */
+const GRAMMY_MARKETS = [
+  { title: 'Album of the Year Winner', tier: 7 },
+  { title: 'Song of the Year Winner', tier: 7 },
+  { title: 'Record of the Year Winner', tier: 7 },
+  { title: 'Best Rap Album Winner', tier: 3 },
+  { title: 'Best New Artist Winner', tier: 3 },
+];
+
+async function applyGrammyBonus(models, pastDeadline) {
+  let current = models;
+  const reasonParts = [];
+  for (const market of GRAMMY_MARKETS) {
+    if (pastDeadline()) { reasonParts.push(market.title + ':skipped:time_budget_exceeded'); break; }
+    const picksWithVariants = current.map((m) => ({ id: m.id, nameVariants: [m.pickName] }));
+    let lookup;
+    try { lookup = await findMarketProbabilitiesForPicks(market.title, picksWithVariants); }
+    catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
+    current = addSingleWinnerTier(current, lookup.probs, market.tier);
+    reasonParts.push(market.title + ':' + (lookup.reason || 'matched'));
+    await delay(150);
+  }
+  return { models: current, sourceNoteSuffix: 'grammy_bonus(' + reasonParts.join('|') + ')' };
 }
 
 /**
@@ -1265,13 +1388,19 @@ module.exports = async function handler(req, res) {
   await runCategory('F1', 'desc', (picks) => buildRankingPointsModel(picks, 'F1', ownerNameById),
     { kind: 'custom', apply: (models, pastDeadlineFn) => applyF1FeaturedRaceBonus(models, pastDeadlineFn) });
   // ── Entertainment ──
+  // Oscars 2027 Best Actor/Actress Winner + Nominations markets are
+  // real and live (confirmed via Alexandria before writing this, same
+  // as every other odds integration in this file) — replaces the old
+  // generic "Academy Awards" EV search, which was too broad to
+  // distinguish Best Actor from Best Supporting Actor and didn't model
+  // nominations at all.
   await runCategory('Actor', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline, avgRtByPickId),
-    { titleKeyword: 'Academy Awards', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
+    { kind: 'custom', apply: (models, pastDeadlineFn) => applyOscarBonus(models, pastDeadlineFn, 'Best Actor') });
   await runCategory('Actress', 'desc', (picks) => buildFilmModel(picks, fyEnd, ownerNameById, pastDeadline, avgRtByPickId),
-    { titleKeyword: 'Academy Awards', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
+    { kind: 'custom', apply: (models, pastDeadlineFn) => applyOscarBonus(models, pastDeadlineFn, 'Best Actress') });
   // ── Musician ──
   await runCategory('Musician', 'desc', (picks) => buildMusicianModel(picks, fyStart, fyEnd, ownerNameById),
-    { titleKeyword: 'Grammy', kalshiSeriesGuess: null, bonusPointsIfWin: 7 });
+    { kind: 'custom', apply: (models, pastDeadlineFn) => applyGrammyBonus(models, pastDeadlineFn) });
   // ── Deterministic / explicitly-not-a-forecast categories ──
   await runStatic('Country', 'static', 'deterministic');
   await runStatic('Stock', 'trend_only', 'not_a_projection');

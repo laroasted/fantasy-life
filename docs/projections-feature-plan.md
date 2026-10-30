@@ -616,3 +616,84 @@ that doesn't exist yet).
 Both of these are documented as confirmed live findings, not guesses —
 checked directly against Polymarket's real data via Alexandria before
 concluding anything, per this file's established methodology.
+
+## Eleventh iteration — Actor/Actress/Musician get real odds, and a
+latent accumulation bug in addTierBonus is fixed before it could bite
+
+Verified live (via Alexandria, same technique as every other odds
+integration) that real, well-differentiated Polymarket markets exist
+for all three remaining categories, contrary to the previous build's
+assumption that only sports/Tennis had usable data:
+
+- **Oscars 2027**: separate "Best Actor Winner", "Best Actor
+  Nominations", "Best Actress Winner", "Best Actress Nominations"
+  events (plus their own Supporting-category equivalents) all exist and
+  are well-priced — e.g. Julianne Moore showed 74.5% to win / 96.85% to
+  be nominated for Best Actress, nothing like the flat/tied F1 case.
+- **Grammys 2027**: Album/Song/Record of the Year, Best Rap Album, and
+  Best New Artist Winner markets all exist and are well-priced (e.g.
+  Olivia Rodrigo 43% favorite for Album of the Year, Ella Langley 57.5%
+  for Best New Artist). No Pop/Rock-album or nomination-only markets
+  were found to exist right now — not modeled, rather than guessed at.
+
+**A real cross-match risk, caught before it shipped, not from a live
+test.** A loose search for "Best Actor Winner" also matches "Best
+Supporting Actor Winner" (confirmed live) — the exact same class of bug
+already found in the tenth iteration for F1's practice-lap vs podium
+markets. Fixed by adding an optional `eventFilter` parameter to
+`findMarketProbabilitiesForPicks` and excluding any event whose title
+contains "Supporting" for the Oscar lookups.
+
+**A real, structural bug in `addTierBonus`, also caught before it
+shipped.** The function computed each pick's projected bonus as
+`m.actualBonus + addition` — but `actualBonus` is a static field set
+once at the start of `runCategory` and never updated afterward. F1's
+`applyF1FeaturedRaceBonus` calls `addTierBonus` in a loop, once per
+featured race; if more than one race's market had been open at the same
+time, every call after the first would have silently DISCARDED the
+earlier race's addition (overwriting `bonusSampler` from `actualBonus +
+this_race_only`, not `running_total + this_race`). This never surfaced
+in live testing because only one F1 race (Las Vegas) has ever been open
+in a test run — but Grammy's 5-separate-market loop (`applyGrammyBonus`)
+was certain to exercise exactly this path, since an artist can
+realistically top more than one category's market in the same run.
+Fixed by reading the running total from `m.bonusSampler()` (which
+reflects whatever the previous call in the chain last set it to, or the
+actualBonus-flat default on the first call) instead of the static
+field. `rankIntoTierBonus` (used once per category, never chained) and
+`combinedAwardTierBonus` (computes both its inputs in one pass, no
+chaining) didn't need the same fix.
+
+### New functions
+
+- **`combinedAwardTierBonus`** — merges a WIN-market ranking (single
+  most-likely pick gets the win tier) with a NOMINATION-market ranking
+  (top `nomineeCount` most-likely picks each get the nomination tier)
+  via `Math.max(actualBonus, winTier, nomTier)` — not additive, since a
+  pick can't simultaneously be "nominated without winning" and "won" in
+  the same category.
+- **`applyOscarBonus(models, pastDeadline, awardLabel)`** — the Actor/
+  Actress custom bonus applier, parameterized by `awardLabel` ("Best
+  Actor" / "Best Actress") so one function serves both categories.
+- **`addSingleWinnerTier`** — `addTierBonus` with a single-entry tier
+  array; only the market's single most-likely pick gets credit, no 2nd/
+  3rd place partial credit (Grammy categories don't have a runner-up
+  tier, unlike Oscar nominations or a sports bracket).
+- **`applyGrammyBonus`** — loops `GRAMMY_MARKETS`, adding each market's
+  tier to whichever pick is that market's most-likely winner.
+
+### Known follow-up, not done this pass
+
+- Actor/Actress Supporting-category cross-nomination (CATEGORY_BONUS_
+  RULES' 7/2 tiers) isn't modeled — only the Lead track. Rare enough in
+  practice, and not verified live, to be worth guessing at.
+- Musician's nomination-without-win tier (1 point) isn't modeled — no
+  live nomination-only Grammy market was found to exist. Same honesty
+  bar as everywhere else in this file: not guessed at blind.
+- Actor/Actress/Musician picks haven't been live-tested against this
+  league's actual stored names yet (unlike the sports team-name-alias
+  cycle, which went through several real mismatches before settling).
+  Expect the same kind of iterate-after-deploy name-matching fixes if a
+  live run's `source_detail` shows `none_matched_any_pick` for a
+  particular actor/artist whose stored name doesn't exactly match how
+  Polymarket spells it.
