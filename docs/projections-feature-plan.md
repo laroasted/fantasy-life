@@ -560,3 +560,59 @@ problem — not an odds-matching bug, a methodology gap:
   question text. Same class of gap as the existing team-name-alias
   table: fix if/when a live diagnostic actually shows it, not guessed at
   in advance.
+
+## Tenth iteration — two more live findings: one real data gap, one real
+bug (caught by the user's own domain knowledge, not from a stack trace)
+
+Live run after the ninth-iteration fix confirmed MLB/NBA/NHL all
+correct (frozen flat for MLB, bonus locked for NBA/NHL with clean
+whole-number values pulled straight from `picks.bonus`, base still
+projecting). Two more things stood out:
+
+**Tennis: confirmed no bug, a genuine data-availability gap.** Every
+Tennis row came back `odds_lookup:no_active_events_matched_query
+(Australian Open)`. Checked directly against Polymarket (two separate
+searches, "Australian Open" and "Australian Open winner") rather than
+assuming the code was at fault: the only "Australian Open"-tagged
+events that exist right now are two stale, already-`closed: true`
+match-level bets from the January 2026 tournament — there is no live
+outright-winner futures market yet for the January 2027 edition, three
+months out. The code's own client-side `active && !closed` filter
+correctly excludes the stale ones, which is exactly why nothing
+survived. This should resolve on its own once Polymarket actually lists
+that market (typically closer to the event) — nothing to fix in this
+file.
+
+**F1: a real bug, and a more interesting one than a bad keyword match.**
+User expected Kimi Antonelli — 8 points already banked, 2nd at AUS + 1st
+at MIA + 1st at the US GP — to be the betting favorite for the
+remaining Las Vegas GP and show meaningful added bonus. The live run
+instead ranked Leclerc > Piastri > Antonelli (+3/+2/+1). Verified
+directly against Polymarket's real Las Vegas GP markets rather than
+trusting the ranking: the "Driver Podium Finish" and "Practice 3
+Fastest Lap" events (both matched by the broad "Las Vegas Grand Prix"
+title search) have the IDENTICAL price, `0.495` / `0.505`, for all 23
+drivers — zero differentiation whatsoever, meaning the market has no
+real trading volume yet (it's 3 weeks before the race). `rankIntoTierBonus`
+and `addTierBonus` sort by probability, and JS's sort is stable — when
+every value ties, the sort doesn't reorder anything, so the "ranking"
+was silently just the database's own pick-insertion order, not a real
+market read. Leclerc/Piastri/Antonelli landing on top was coincidence,
+not a signal.
+
+Fixed in `findMarketProbabilitiesForPicks` (shared by every tier-ladder
+and F1 lookup, not just this one race): if every pick that matched a
+market comes back with the exact same price, that's treated as "no real
+signal" — same as no match at all — instead of letting a tie-order
+artifact get reported as a ranking. `source_detail` now reports
+`flat_untraded_market(all_matched_at_X)` for this case, distinct from
+`none_matched_outcome`, so a future live run can tell "the market
+exists but isn't priced yet" apart from "the market doesn't exist" or
+"the name didn't match." This should also self-resolve as the Las Vegas
+GP gets closer and real volume comes in — same open question as Tennis,
+different mechanism (a market that exists but isn't priced yet, vs. one
+that doesn't exist yet).
+
+Both of these are documented as confirmed live findings, not guesses —
+checked directly against Polymarket's real data via Alexandria before
+concluding anything, per this file's established methodology.

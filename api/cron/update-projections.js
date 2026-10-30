@@ -849,7 +849,25 @@ async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVarian
     probs[entry.id] = matchedPrice;
   }
   const anyMatched = Object.keys(probs).some((id) => probs[id] !== null);
-  return { probs, reason: anyMatched ? null : (events.length + '_events_' + marketsScanned + '_markets_none_matched_any_pick') };
+  if (!anyMatched) {
+    return { probs, reason: events.length + '_events_' + marketsScanned + '_markets_none_matched_any_pick' };
+  }
+
+  // A brand-new market can list every outcome at the same flat default
+  // price before any real trading volume comes in (confirmed live: a
+  // Las Vegas GP market 3 weeks out had the IDENTICAL 0.495/0.505 for
+  // all 23 drivers — zero differentiation). Ranking off that isn't
+  // reading the market, it's reading whatever order the picks happened
+  // to come out of the database in (a tie leaves a stable sort
+  // untouched) — not a real signal, so treat it the same as no match
+  // rather than silently manufacturing a ranking from coincidence.
+  const matchedValues = Object.keys(probs).map((id) => probs[id]).filter((p) => typeof p === 'number');
+  const distinctValues = new Set(matchedValues.map((p) => Math.round(p * 1000)));
+  if (matchedValues.length > 1 && distinctValues.size === 1) {
+    return { probs: {}, reason: 'flat_untraded_market(all_matched_at_' + matchedValues[0] + ')' };
+  }
+
+  return { probs, reason: null };
 }
 
 /**
