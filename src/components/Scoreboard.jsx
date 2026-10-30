@@ -9,6 +9,7 @@ import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall
 import PayPalButton from "./PayPalButton";
 import ScrollFadeEdges from "./ScrollFadeEdges";
 import { Badge, CategoryPill } from "./Badges";
+import ActivityFeed from "./ActivityFeed";
 
 var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
 
@@ -955,11 +956,14 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
 
    </div>
 
-   {/* MOCK ONLY — sidebar. Category Leaders uses real data already passed
-       into this component (seasonData.categories). An "Upcoming" card was
-       dropped from the first version of this mock — it only had hardcoded
-       sample events, which would mislead real viewers once shipped; wiring
-       it to real calendar_events is a follow-up, not this PR. */}
+   {/* Sidebar. Category Leaders and Activity use real data — Category
+       Leaders from seasonData.categories (already in this component),
+       Activity from its own score_events fetch (ActivityFeed.jsx; only
+       NFL/NBA/NHL/MLB/MLS write to it so far, see
+       supabase/phase5_score_events.sql). An "Upcoming" card was dropped
+       from an earlier version of this mock — it only had hardcoded sample
+       events, which would mislead real viewers once shipped; wiring it to
+       real calendar_events is still a follow-up, not done here. */}
    {isWide && (
     <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
      <div style={{ ...cardStyle, padding: 16 }}>
@@ -1006,6 +1010,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
        })}
       </div>
      </div>
+     <ActivityFeed seasonData={seasonData} surface={surfaceName}
+      onCategorySelect={function (cat) { setSelCat(cat); setExpRow(null); }} />
     </div>
    )}
    </div>

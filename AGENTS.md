@@ -101,11 +101,12 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `tab_viewed` | app-wide | `tab_name`, `previous_tab`, `is_mobile` |
 | `category_filter_changed` | scoreboard, trends, settings, recap | `surface`, `category`, `previous_category` |
 | `member_row_expanded` | scoreboard | `surface`, `category`, `member_name` |
-| `data_fallback_used` | season, calendar | `surface`, `fallback_level`, `reason` |
+| `data_fallback_used` | season, calendar, trends, activity_feed | `surface`, `fallback_level`, `reason` |
 | `app_loaded` | app | `data_source`, `is_mobile`, `archived_season_count` |
 | `season_loaded` | app | `data_source`, `year`, `is_refresh` |
 | `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms`, `is_skipped` |
 | `overall_category_tile_clicked` | scoreboard | `category` |
+| `activity_feed_load_failed` | scoreboard | `error_message` |
 | `projections_toggled` | scoreboard | `surface`, `is_enabled`, `season_year` |
 | `trends_view_toggled` | trends | `view` |
 | `trends_series_toggled` | trends | `member_name`, `is_hidden` |
@@ -164,6 +165,32 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   Anonymous visitors have no other write access to `seasons` — don't widen
   that without re-checking the RLS policies in `supabase/phase1_commissioner_auth.sql`.
 - Toll amount/currency: `src/constants/paywall.js`.
+
+## Activity feed (Scoreboard sidebar)
+
+- `score_events` (`supabase/phase7_score_events.sql` — numbered 7 because
+  main had already taken phase5/phase6 for Projections by the time this
+  merged; the table and column names are unaffected by the filename) is
+  an append-only log of individual nonzero score changes, distinct from
+  `score_history` (phase 2's one-row-per-member-per-category-per-day
+  snapshot that powers Trends). Each row has a `cause` string and a
+  `source` naming which cron wrote it.
+- Only `api/cron/update-sports.js` (NFL/NBA/NHL/MLB/MLS) writes here —
+  diffing each pick's old vs. new total at write time, reusing the matched
+  ESPN team/record it already has in memory for the `cause` text. The
+  other `update-*.js` crons don't write to `score_events` yet; see
+  `docs/score-events-phase7.md` for why that's deliberate, not missing.
+- Rendered by `src/components/ActivityFeed.jsx` in `Scoreboard.jsx`'s
+  sidebar. A paywalled member's entries still show (name, category,
+  cause) but the delta number is blurred with the same
+  `PAYWALL_BLUR_STYLE` the rest of Scoreboard.jsx uses — a bare "something
+  changed" with no number doesn't undercut the paywall the way a visible
+  delta would. Keep this consistent if the feed is ever extended to other
+  categories: a paywalled member's events should never show an unblurred
+  delta anywhere.
+- Clicking an entry filters the scoreboard to that category via the
+  existing `EVENTS.CATEGORY_FILTER_CHANGED` with `surface: "scoreboard"`
+  — reused, not a new event, per this file's own naming convention.
 
 ## Projections
 

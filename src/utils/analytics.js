@@ -120,6 +120,7 @@ export const EVENTS = {
 
   // Scoreboard
   OVERALL_CATEGORY_TILE_CLICKED: "overall_category_tile_clicked",
+  ACTIVITY_FEED_LOAD_FAILED: "activity_feed_load_failed",
   PROJECTIONS_TOGGLED: "projections_toggled",
 
   // Trends

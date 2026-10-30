@@ -277,6 +277,12 @@ module.exports = async function handler(req, res) {
  
   const results = {};
   const currentMonth = new Date().getMonth() + 1;
+  // Collected across every league, then batch-inserted once at the end —
+  // same shape as snapshot-scores.js's single upsert. A failure writing
+  // these must never block or roll back the picks.update() calls above;
+  // the activity feed is a nice-to-have view on top of real scoring, not
+  // part of it.
+  const scoreEvents = [];
  
   for (const [league, config] of Object.entries(ESPN_LEAGUES)) {
     console.log(`Processing ${league}...`);
@@ -345,8 +351,28 @@ module.exports = async function handler(req, res) {
  
       const { error: updateErr } = await supabase.from('picks').update(updateObj).eq('id', m.id);
       if (updateErr) { console.error(` Failed to update ${m.member_id}:`, updateErr.message); continue; }
- 
+
       updated++;
+
+      // Diff against the pre-update row (m.base, m.bonus) to log what
+      // actually moved. A locked base means updateObj.base was never set,
+      // so newBaseVal === m.base and delta is naturally 0 — no special
+      // case needed to skip locked no-ops.
+      const newBaseVal = baseLocked ? (Number(m.base) || 0) : (Number(m.newBase) || 0);
+      const oldTotal = (Number(m.base) || 0) + (Number(m.bonus) || 0);
+      const newTotal = newBaseVal + (Number(m.bonus) || 0);
+      const delta = Math.round((newTotal - oldTotal) * 10) / 10;
+      if (delta !== 0) {
+        scoreEvents.push({
+          season_year: seasonYear,
+          member_id: m.member_id,
+          category: league,
+          delta,
+          cause: m.espnTeam + (m.record ? ` (${m.record})` : ''),
+          source: 'update-sports',
+        });
+      }
+
       rankings.push({
         member: m.member_id,
         pick: m.pick,
@@ -367,7 +393,17 @@ module.exports = async function handler(req, res) {
       rankings,
     };
   }
- 
+
+  if (scoreEvents.length > 0) {
+    const { error: eventsErr } = await supabase.from('score_events').insert(scoreEvents);
+    // Logged, not surfaced in the response or returned as a failure: the
+    // activity feed is additive. If supabase/phase7_score_events.sql
+    // hasn't been applied yet, this just fails quietly on every run until
+    // it is — same as snapshot-scores.js's relationship to score_history.
+    if (eventsErr) console.error(`Failed to write score_events: ${eventsErr.message}`);
+    else console.log(`Wrote ${scoreEvents.length} score_events rows`);
+  }
+
   console.log('\nDone!');
   return res.status(200).json({
     message: 'Sports standings update complete',
