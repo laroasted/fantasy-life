@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { TrendingUp, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
-import { theme, cardStyle } from "../constants/theme";
+import { theme, cardStyle, radius } from "../constants/theme";
 import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
@@ -28,12 +28,66 @@ function fmtLong(str) {
   return pD(str).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
+// One member's whole trajectory at a glance — scaled to *their own* min/max,
+// not the shared axis, so the shape of a tight race and a blowout both read
+// clearly. The small-multiples alternative to the single combined chart:
+// trades "who was ahead of whom on date X" for "is each line's shape obvious
+// without untangling it from ten others" — see choosing-a-form.md's guidance
+// that past ~4 converging series, small multiples is usually the right call.
+function SparkTile({ sr, firstDateLabel, isMobile, onClick }) {
+  const n = sr.values.length;
+  const first = sr.values[0];
+  const last = sr.values[n - 1];
+  const delta = Math.round((last - first) * 100) / 100;
+  const isUp = delta >= 0;
+
+  let lo = Infinity, hi = -Infinity;
+  sr.values.forEach((v) => { if (v < lo) lo = v; if (v > hi) hi = v; });
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.12 || 1;
+  lo -= pad; hi += pad;
+
+  const w = 100, h = 34;
+  const xFor = (i) => (n <= 1 ? w / 2 : (i / (n - 1)) * w);
+  const yFor = (v) => h - ((v - lo) / (hi - lo)) * h;
+  const path = sr.values.map((v, i) => (i === 0 ? "M" : "L") + xFor(i).toFixed(1) + "," + yFor(v).toFixed(1)).join(" ");
+  const areaPath = path + ` L${xFor(n - 1).toFixed(1)},${h} L0,${h} Z`;
+
+  return (
+    <button onClick={onClick} style={{
+      display: "flex", flexDirection: "column", gap: 6, textAlign: "left",
+      background: s.srf, border: "1px solid " + s.bdr, borderRadius: radius.sm,
+      padding: 10, cursor: "pointer", minWidth: 0,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: sr.color, minWidth: 0 }}>
+          <Dot color={sr.color} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sr.name}</span>
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 800, color: s.txt, flexShrink: 0 }}>{last}</span>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+        style={{ width: "100%", height: isMobile ? 36 : 42, display: "block" }}>
+        <path d={areaPath} fill={sr.color} opacity={0.1} stroke="none" />
+        <path d={path} fill="none" stroke={sr.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={xFor(n - 1)} cy={yFor(last)} r={2.5} fill={sr.color} />
+      </svg>
+      <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600,
+        color: isUp ? theme.grn : theme.red }}>
+        {isUp ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+        {isUp && delta > 0 ? "+" : ""}{delta} since {firstDateLabel}
+      </span>
+    </button>
+  );
+}
+
 export default function Trends({ seasonData }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isStale, setIsStale] = useState(false);
   const [viewCat, setViewCat] = useState("ALL");
+  const [chartMode, setChartMode] = useState("lines");
   const [hidden, setHidden] = useState(() => new Set());
   const [focusId, setFocusId] = useState(null);
   const [hoverIdx, setHoverIdx] = useState(null);
@@ -399,7 +453,29 @@ export default function Trends({ seasonData }) {
           </span>
         </div>
 
-        {focusId ? (
+        {/* Lines vs. grid: the combined chart is best for "who was ahead of
+            whom on date X"; the grid is best for scanning everyone's shape
+            (rising/falling/flat) at once without untangling crossing lines. */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+          {[{ key: "lines", label: "Lines" }, { key: "grid", label: "Grid" }].map((opt) => (
+            <button key={opt.key} onClick={() => {
+                if (chartMode !== opt.key) {
+                  track(EVENTS.TRENDS_VIEW_TOGGLED, { view: opt.key });
+                  setChartMode(opt.key);
+                }
+              }}
+              style={{
+                background: chartMode === opt.key ? s.accSoft : "none",
+                border: "1px solid " + (chartMode === opt.key ? s.acc : s.bdr),
+                borderRadius: 8, padding: "5px 12px", fontSize: 11, fontWeight: 700,
+                color: chartMode === opt.key ? s.acc : s.mut, cursor: "pointer",
+              }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {chartMode === "lines" && (focusId ? (
           <div style={{ marginBottom: 8, fontSize: 11, color: s.dim }}>
             Spotlighting <strong style={{ color: MEMBER_COLORS[focusId] || FALLBACK_COLOR }}>
               {memberMeta[focusId]?.name || focusId}
@@ -413,9 +489,26 @@ export default function Trends({ seasonData }) {
           <div style={{ marginBottom: 8, fontSize: 10.5, color: s.dim }}>
             Tap a name to spotlight that line.
           </div>
+        ))}
+
+        {/* Grid view — each member's own trajectory, independently scaled.
+            Tapping a tile jumps to the lines view with that member spotlit,
+            for a closer side-by-side look. */}
+        {chartMode === "grid" && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(auto-fill, minmax(180px, 1fr))",
+            gap: 10,
+          }}>
+            {visibleSeries.map((sr) => (
+              <SparkTile key={sr.id} sr={sr} firstDateLabel={fmtShort(dates[0])} isMobile={isMobile}
+                onClick={() => { toggleFocus(sr.id); setChartMode("lines"); }} />
+            ))}
+          </div>
         )}
 
         {/* Chart */}
+        {chartMode === "lines" && (
         <div ref={svgWrapRef} style={{ position: "relative", width: "100%", touchAction: "none" }}
           onMouseMove={handleMove}
           onMouseLeave={() => setHoverIdx(null)}>
@@ -524,6 +617,7 @@ export default function Trends({ seasonData }) {
             </div>
           )}
         </div>
+        )}
 
         {/* Legend (toggleable) */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12, justifyContent: "center" }}>
