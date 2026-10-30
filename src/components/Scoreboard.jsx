@@ -185,21 +185,74 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
   );
  }
 
+ // ─── Projections (Monte Carlo "projected final" overlay) ───
+ // seasonData.projections is {} when not yet fetched or unavailable for
+ // this season — every lookup below degrades to the member's current
+ // actual total, never blocks or errors. See
+ // docs/projections-feature-plan.md for methodology/confidence tiers.
+ var projectionsByCategory = seasonData.projections || {};
+ var hasProjections = Object.keys(projectionsByCategory).length > 0;
+ var _sp = useState(false), showProjected = _sp[0], setShowProjected = _sp[1];
+
+ // Switching to a past season with no projections (the toggle itself
+ // disappears below, since it's gated on hasProjections) left
+ // showProjected stuck true from whatever season you were on before —
+ // the "Proj. Base/Bonus/Total" labels and the Monte Carlo disclaimer
+ // banner kept showing even though there was nothing projected to
+ // explain. Reset it back to the real Current view whenever the season
+ // being viewed has no projections.
+ useEffect(function () {
+  if (!hasProjections && showProjected) setShowProjected(false);
+ }, [hasProjections, showProjected]);
+
+ function projectedEntryFor(category, ownerName) {
+  var byOwner = projectionsByCategory[category];
+  return byOwner ? byOwner[ownerName] : null;
+ }
+
+ function toggleProjected() {
+  var next = !showProjected;
+  track(EVENTS.PROJECTIONS_TOGGLED, { surface: surfaceName, is_enabled: next, season_year: seasonData.year });
+  setShowProjected(next);
+ }
+
  var overallStandings = useMemo(function () {
   var sorted = members.map(function (m) {
-   var totalPts = 0;
-   var catScores = {};
+   var totalPts = 0, totalPtsProjected = 0;
+   var catScores = {}, catScoresProjected = {};
    CATEGORY_ORDER.forEach(function (k) {
     var entry = (cats[k] || []).find(function (x) { return x.owner === m.name; });
-    if (entry) { totalPts += entry.total; catScores[k] = entry.total; }
+    if (entry) {
+     totalPts += entry.total;
+     catScores[k] = entry.total;
+     var proj = projectedEntryFor(k, m.name);
+     var projTotal = proj ? proj.projectedTotal : entry.total;
+     totalPtsProjected += projTotal;
+     catScoresProjected[k] = projTotal;
+    }
    });
-   return { owner: m.name, id: m.id, totalPts: totalPts, catScores: catScores };
-  }).sort(function (a, b) { return b.totalPts - a.totalPts; });
-  return withRanks(sorted, function (m) { return m.totalPts; });
- }, [members, cats]);
+   return { owner: m.name, id: m.id, totalPts: totalPts, totalPtsProjected: totalPtsProjected, catScores: catScores, catScoresProjected: catScoresProjected };
+  });
+  return {
+   actual: withRanks(sorted.slice().sort(function (a, b) { return b.totalPts - a.totalPts; }), function (m) { return m.totalPts; }),
+   projected: withRanks(sorted.slice().sort(function (a, b) { return b.totalPtsProjected - a.totalPtsProjected; }), function (m) { return m.totalPtsProjected; }),
+  };
+ }, [members, cats, projectionsByCategory]);
 
- var catMembers = selCat
-  ? withRanks([].concat(cats[selCat] || []).sort(function (a, b) { return b.total - a.total; }), function (m) { return m.total; })
+ var catMembersRaw = selCat ? (cats[selCat] || []).map(function (entry) {
+  var proj = projectedEntryFor(selCat, entry.owner);
+  return Object.assign({}, entry, {
+   projectedTotal: proj ? proj.projectedTotal : entry.total,
+   projectedBase: proj ? proj.projectedBase : entry.base,
+   projectedBonus: proj ? proj.projectedBonusEv : entry.bonus,
+   projectionConfidence: proj ? proj.confidence : null,
+   projectionNote: proj ? proj.note : null,
+  });
+ }) : null;
+ var catMembers = catMembersRaw
+  ? withRanks(catMembersRaw.slice().sort(function (a, b) {
+     return showProjected ? (b.projectedTotal - a.projectedTotal) : (b.total - a.total);
+    }), function (m) { return showProjected ? m.projectedTotal : m.total; })
   : null;
  var detailArr = selCat ? detail[selCat] : null;
 
@@ -260,6 +313,17 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      <LockIndicator note="Some values locked by commissioner" />
     )}
     {bonusNoteDisplay(d)}
+    {typeof m.projectedTotal === "number" && (
+     <div style={{ marginTop: 4, fontSize: 10, color: theme.dim }}>
+      Projected final: <b style={{ color: "#f8fafc" }}>{Math.round(m.projectedTotal)} pts</b>
+      {m.projectionConfidence ? " (" + m.projectionConfidence.replace(/_/g, " ") + " confidence)" : ""}
+     </div>
+    )}
+    {m.projectionNote && (
+     <div style={{ marginTop: 2, fontSize: 10, color: "#38bdf8", fontStyle: "italic" }}>
+      {m.projectionNote}
+     </div>
+    )}
    </div>
   );
  
@@ -398,11 +462,22 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
        <LockIndicator note="Some values locked by commissioner" />
       )}
       {bonusNoteDisplay(d)}
+      {typeof m.projectedTotal === "number" && (
+       <div style={{ marginTop: 4, fontSize: 10, color: theme.dim }}>
+        Projected final: <b style={{ color: "#f8fafc" }}>{Math.round(m.projectedTotal)} pts</b>
+        {m.projectionConfidence ? " (" + m.projectionConfidence.replace(/_/g, " ") + " confidence)" : ""}
+       </div>
+      )}
+      {m.projectionNote && (
+       <div style={{ marginTop: 2, fontSize: 10, color: "#38bdf8", fontStyle: "italic" }}>
+        {m.projectionNote}
+       </div>
+      )}
      </div>
     </div>
    );
   }
- 
+
   // MUSIC
   if (isMusic) {
    return (
@@ -647,10 +722,38 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
    </div>
    </ScrollFadeEdges>
 
+   {/* PROJECTED FINAL toggle — degrades to nothing if no projections data
+       has loaded for this season (never shows a toggle with nothing behind it). */}
+   {hasProjections && (
+    <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+     <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${theme.bdr}`, overflow: "hidden" }}>
+      <button onClick={function () { if (showProjected) toggleProjected(); }}
+       style={{
+        padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
+        background: !showProjected ? theme.acc : "transparent", color: !showProjected ? "#1a1300" : theme.dim,
+       }}>Current</button>
+      <button onClick={function () { if (!showProjected) toggleProjected(); }}
+       style={{
+        padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
+        background: showProjected ? theme.acc : "transparent", color: showProjected ? "#1a1300" : theme.dim,
+       }}>Projected Final</button>
+     </div>
+    </div>
+   )}
+   {hasProjections && showProjected && (
+    <div style={{ textAlign: "center", fontSize: 10, color: theme.dim, marginBottom: 10, marginTop: -4 }}>
+     Monte Carlo simulation of where the season could land. Based on current Vegas, Kalshi, Polymarket, etc.
+     odds, where available. If future odds aren't available, current scores are shown instead.
+     Categories carry different confidence: sports are medium confidence given the data available on them,
+     movies and music are low confidence guesses, and stock/country are a current snapshot with no projection.
+     See the category view for more detail.
+    </div>
+   )}
+
    {/* OVERALL VIEW */}
    {!selCat && (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-     {overallStandings.map(function (m) {
+     {(showProjected ? overallStandings.projected : overallStandings.actual).map(function (m) {
       var isExp = expRow === m.owner;
       var memberPaywalled = isPaywalled(seasonData, m.id);
       return (
@@ -673,7 +776,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
            {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
            <span style={Object.assign({ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" },
-            memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.totalPts}</span>
+            memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{showProjected ? Math.round(m.totalPtsProjected) : m.totalPts}</span>
           </span>
           {isExp ? <ChevronDown size={14} color={theme.dim} /> : <ChevronRight size={14} color={theme.dim} />}
          </div>
@@ -681,9 +784,10 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
              desktop-width preview. Uses real per-row catScores already
              computed above. Remove this comment once it's real. */}
          {!isMobile && !memberPaywalled && (function () {
+          var scores = showProjected ? m.catScoresProjected : m.catScores;
           var ticks = CATEGORY_ORDER.map(function (k) {
            var hasEntry = Object.prototype.hasOwnProperty.call(m.catScores, k);
-           var pts = m.catScores[k] || 0;
+           var pts = scores[k] || 0;
            var status = !hasEntry ? "none" : pts >= 15 ? "high" : pts <= 3 ? "low" : "mid";
            return { key: k, pts: pts, hasEntry: hasEntry, status: status };
           });
@@ -723,7 +827,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
             gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)",
             gap: 4 }}>
             {CATEGORY_ORDER.map(function (k) {
-             var pts = m.catScores[k] || 0;
+             var pts = (showProjected ? m.catScoresProjected : m.catScores)[k] || 0;
              var pickEntry = (cats[k] || []).find(function (x) { return x.owner === m.owner; });
              var pickName = pickEntry ? pickEntry.pick : "";
              return (
@@ -803,31 +907,36 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
            <div style={{ fontSize: isMobile ? 10 : 11, color: theme.dim,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.pick}</div>
           </div>
-          {isMobile ? (
-           <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={Object.assign({ fontSize: 17, fontWeight: 800, color: "#f8fafc" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.total}</div>
-            <div style={Object.assign({ fontSize: 9, color: "#64748b" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>
-             {m.base}b {m.bonus > 0 ? "+" + m.bonus + "bn" : ""}
-            </div>
-           </div>
-          ) : (
-           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <div style={{ textAlign: "center" }}>
-             <div style={{ fontSize: 9, color: "#64748b" }}>Base</div>
-             <div style={Object.assign({ fontSize: 13, fontWeight: 700, color: "#94a3b8" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.base}</div>
-            </div>
-            <div style={{ textAlign: "center" }}>
-             <div style={{ fontSize: 9, color: "#64748b" }}>Bonus</div>
-             <div style={Object.assign({ fontSize: 13, fontWeight: 700, color: m.bonus > 0 ? "#22c55e" : "#475569" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>
-              {m.bonus > 0 ? "+" + m.bonus : "0"}
+          {(function () {
+            var dispTotal = showProjected ? Math.round(m.projectedTotal) : m.total;
+            var dispBase = showProjected ? m.projectedBase : m.base;
+            var dispBonus = showProjected ? m.projectedBonus : m.bonus;
+            return isMobile ? (
+             <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={Object.assign({ fontSize: 17, fontWeight: 800, color: "#f8fafc" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{dispTotal}</div>
+              <div style={Object.assign({ fontSize: 9, color: "#64748b" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>
+               {dispBase}b {dispBonus > 0 ? "+" + dispBonus + "bn" : ""}
+              </div>
              </div>
-            </div>
-            <div style={{ textAlign: "center" }}>
-             <div style={{ fontSize: 9, color: "#64748b" }}>Total</div>
-             <div style={Object.assign({ fontSize: 17, fontWeight: 800, color: "#f8fafc" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{m.total}</div>
-            </div>
-           </div>
-          )}
+            ) : (
+             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <div style={{ textAlign: "center" }}>
+               <div style={{ fontSize: 9, color: "#64748b" }}>{showProjected ? "Proj. Base" : "Base"}</div>
+               <div style={Object.assign({ fontSize: 13, fontWeight: 700, color: "#94a3b8" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{dispBase}</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+               <div style={{ fontSize: 9, color: "#64748b" }}>{showProjected ? "Proj. Bonus" : "Bonus"}</div>
+               <div style={Object.assign({ fontSize: 13, fontWeight: 700, color: dispBonus > 0 ? "#22c55e" : "#475569" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>
+                {dispBonus > 0 ? "+" + dispBonus : "0"}
+               </div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+               <div style={{ fontSize: 9, color: "#64748b" }}>{showProjected ? "Proj. Total" : "Total"}</div>
+               <div style={Object.assign({ fontSize: 17, fontWeight: 800, color: "#f8fafc" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{dispTotal}</div>
+              </div>
+             </div>
+            );
+          })()}
          </div>
          {isExp && renderExpanded(m, m.rank)}
         </div>

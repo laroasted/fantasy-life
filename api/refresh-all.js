@@ -3,9 +3,18 @@
  *
  * Triggered by the Refresh button in the header. Runs every data-updating
  * cron job (sports, college, stocks, entertainment, billboard, events,
- * country) concurrently, then snapshot-scores once they're done, so a
- * visitor can force a live update instead of waiting for the next
- * scheduled run.
+ * country) concurrently, then snapshot-scores, so a visitor can force a
+ * live update instead of waiting for the next scheduled run.
+ *
+ * update-projections is DELIBERATELY NOT chained in here. It was, briefly
+ * (see PR #16 history) — caught via a live timeout against a real deploy:
+ * this function already runs close to its own maxDuration just on the 7
+ * data jobs (Billboard scraping and the per-film TMDB/OMDB calls in
+ * entertainment are both documented as able to run long), and stacking
+ * projections' own up-to-40s external-call budget on top of that blew
+ * straight through the ceiling. Projections stays on its own independent
+ * daily cron schedule (vercel.json), where it gets the full function
+ * timeout to itself instead of sharing it with 8 other jobs.
  *
  * Calls each cron module's handler directly in-process (no HTTP hop) with
  * a fake req/res pair, reusing the same CRON_SECRET auth each job already
@@ -25,6 +34,16 @@
  * whole function is killed rather than silently snapshotting half-updated
  * data.
  *
+ * maxDuration is 120s (vercel.json), not Vercel's old 60s-ish ceiling —
+ * confirmed live (PR #16): this file's own dynamic-require() bug (fixed
+ * above) meant every job here had ALWAYS failed instantly with "Cannot
+ * find module" on production, which masked whether 60s was actually
+ * enough for genuine execution. The very first real run after that fix
+ * landed hit a 504 FUNCTION_INVOCATION_TIMEOUT at 60s — Billboard's
+ * retry/backoff (see update-billboard.js) can genuinely run long. Per
+ * Vercel's own current docs, Hobby already allows up to 300s, so 120s
+ * is a conservative bump with real headroom, not a plan-tier risk.
+ *
  * Open to anyone, with a cooldown instead of an auth gate: a repeat-click
  * or a bot hammering this endpoint would otherwise re-trigger every
  * external API call and Supabase write on every request. claimRefreshSlot()
@@ -36,6 +55,23 @@
  */
 
 const { createClient } = require('@supabase/supabase-js');
+
+// Required statically, by literal path, not via a runtime variable passed
+// to require(). Vercel's build-time bundler (@vercel/nft) traces literal
+// require() calls to decide which files get packaged into this function's
+// deployment — it can't trace `require(someVariable)`, so a dynamic path
+// here silently produces a function bundle missing api/cron/*.js entirely
+// ("Cannot find module './cron/update-sports'" at runtime). This bit
+// every job here, not just new ones, until it was caught against a real
+// deploy — see PR #16.
+const updateSports = require('./cron/update-sports');
+const updateCollege = require('./cron/update-college');
+const updateStocks = require('./cron/update-stocks');
+const updateEntertainment = require('./cron/update-entertainment');
+const updateBillboard = require('./cron/update-billboard');
+const updateEvents = require('./cron/update-events');
+const updateCountry = require('./cron/update-country');
+const snapshotScores = require('./cron/snapshot-scores');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -67,10 +103,9 @@ async function claimRefreshSlot() {
   }
 }
 
-async function runJob(name, modulePath) {
+async function runJob(name, jobHandler) {
   var startedAt = Date.now();
   try {
-    var jobHandler = require(modulePath);
     var fakeReq = { method: 'POST', headers: { authorization: 'Bearer ' + (CRON_SECRET || '') } };
     var captured = { statusCode: 200, body: null };
     var fakeRes = {
@@ -85,13 +120,13 @@ async function runJob(name, modulePath) {
 }
 
 const DATA_JOBS = [
-  ['sports', './cron/update-sports'],
-  ['college', './cron/update-college'],
-  ['stocks', './cron/update-stocks'],
-  ['entertainment', './cron/update-entertainment'],
-  ['billboard', './cron/update-billboard'],
-  ['events', './cron/update-events'],
-  ['country', './cron/update-country'],
+  ['sports', updateSports],
+  ['college', updateCollege],
+  ['stocks', updateStocks],
+  ['entertainment', updateEntertainment],
+  ['billboard', updateBillboard],
+  ['events', updateEvents],
+  ['country', updateCountry],
 ];
 
 module.exports = async function handler(req, res) {
@@ -117,7 +152,7 @@ module.exports = async function handler(req, res) {
   var dataResults = await Promise.all(
     DATA_JOBS.map(function (job) { return runJob(job[0], job[1]); })
   );
-  var snapshotResult = await runJob('snapshot-scores', './cron/snapshot-scores');
+  var snapshotResult = await runJob('snapshot-scores', snapshotScores);
 
   var jobs = dataResults.concat([snapshotResult]);
   var allOk = jobs.every(function (j) { return j.ok; });

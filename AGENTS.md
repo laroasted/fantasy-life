@@ -106,6 +106,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `season_loaded` | app | `data_source`, `year`, `is_refresh` |
 | `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms`, `is_skipped` |
 | `overall_category_tile_clicked` | scoreboard | `category` |
+| `projections_toggled` | scoreboard | `surface`, `is_enabled`, `season_year` |
 | `trends_view_toggled` | trends | `view` |
 | `trends_series_toggled` | trends | `member_name`, `is_hidden` |
 | `trends_series_focused` | trends | `member_name`, `is_focused` |
@@ -163,6 +164,30 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   Anonymous visitors have no other write access to `seasons` — don't widen
   that without re-checking the RLS policies in `supabase/phase1_commissioner_auth.sql`.
 - Toll amount/currency: `src/constants/paywall.js`.
+
+## Projections
+
+- Full design + category-by-category automation methodology + confidence
+  tiers: `docs/projections-feature-plan.md`. Read it before touching
+  anything in this section — in particular, this league's scoring is
+  **relative rank among the 12 picks per category**, not additive
+  fantasy-football-style points, which is the single fact that shapes the
+  whole engine.
+- `api/cron/update-projections.js` runs a Monte Carlo simulation per
+  category and writes to `projections`/`projection_runs`
+  (`supabase/phase5_projections.sql`). Read-only with respect to `picks` —
+  never mutates a real score.
+- Free data sources only (no paid odds API) — Kalshi/Polymarket public
+  endpoints for championship/major/awards bonus EV, ESPN power-index for
+  sports base projection, TMDB upcoming-release discovery for
+  Actor/Actress (reuses `TMDB_API_KEY`), and the league's own cached
+  `billboard_weeks`/`music_songs` history for Musician. Country and Stock
+  are deliberately NOT simulated — see the design doc for why.
+- Frontend: `src/utils/storage.js`'s `fetchProjectionsFromSupabase()` →
+  `seasonData.projections`, consumed by the "Current / Projected Final"
+  toggle in `src/components/Scoreboard.jsx`. Degrades to hiding the toggle
+  entirely if no projections have loaded for the season — never blocks or
+  errors the real scoreboard.
 
 ## Governance
 
