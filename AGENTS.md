@@ -108,6 +108,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `overall_category_tile_clicked` | scoreboard | `category` |
 | `trends_view_toggled` | trends | `view` |
 | `trends_series_toggled` | trends | `member_name`, `is_hidden` |
+| `trends_series_focused` | trends | `member_name`, `is_focused` |
 | `trends_table_expanded` | trends | `total_snapshots` |
 | `trends_load_failed` | trends | `error_message` |
 | `calendar_filter_changed` | calendar | `filter` |

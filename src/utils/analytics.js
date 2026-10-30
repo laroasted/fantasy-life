@@ -124,6 +124,7 @@ export const EVENTS = {
   // Trends
   TRENDS_VIEW_TOGGLED: "trends_view_toggled",
   TRENDS_SERIES_TOGGLED: "trends_series_toggled",
+  TRENDS_SERIES_FOCUSED: "trends_series_focused",
   TRENDS_TABLE_EXPANDED: "trends_table_expanded",
   TRENDS_LOAD_FAILED: "trends_load_failed",
 

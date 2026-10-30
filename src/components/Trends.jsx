@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { TrendingUp, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
-import { theme, cardStyle } from "../constants/theme";
+import { theme, cardStyle, radius } from "../constants/theme";
 import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
@@ -28,13 +28,68 @@ function fmtLong(str) {
   return pD(str).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
+// One member's whole trajectory at a glance — scaled to *their own* min/max,
+// not the shared axis, so the shape of a tight race and a blowout both read
+// clearly. The small-multiples alternative to the single combined chart:
+// trades "who was ahead of whom on date X" for "is each line's shape obvious
+// without untangling it from ten others" — see choosing-a-form.md's guidance
+// that past ~4 converging series, small multiples is usually the right call.
+function SparkTile({ sr, firstDateLabel, isMobile, onClick }) {
+  const n = sr.values.length;
+  const first = sr.values[0];
+  const last = sr.values[n - 1];
+  const delta = Math.round((last - first) * 100) / 100;
+  const isUp = delta >= 0;
+
+  let lo = Infinity, hi = -Infinity;
+  sr.values.forEach((v) => { if (v < lo) lo = v; if (v > hi) hi = v; });
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.12 || 1;
+  lo -= pad; hi += pad;
+
+  const w = 100, h = 34;
+  const xFor = (i) => (n <= 1 ? w / 2 : (i / (n - 1)) * w);
+  const yFor = (v) => h - ((v - lo) / (hi - lo)) * h;
+  const path = sr.values.map((v, i) => (i === 0 ? "M" : "L") + xFor(i).toFixed(1) + "," + yFor(v).toFixed(1)).join(" ");
+  const areaPath = path + ` L${xFor(n - 1).toFixed(1)},${h} L0,${h} Z`;
+
+  return (
+    <button onClick={onClick} style={{
+      display: "flex", flexDirection: "column", gap: 6, textAlign: "left",
+      background: s.srf, border: "1px solid " + s.bdr, borderRadius: radius.sm,
+      padding: 10, cursor: "pointer", minWidth: 0,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: sr.color, minWidth: 0 }}>
+          <Dot color={sr.color} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sr.name}</span>
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 800, color: s.txt, flexShrink: 0 }}>{last}</span>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+        style={{ width: "100%", height: isMobile ? 36 : 42, display: "block" }}>
+        <path d={areaPath} fill={sr.color} opacity={0.1} stroke="none" />
+        <path d={path} fill="none" stroke={sr.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={xFor(n - 1)} cy={yFor(last)} r={2.5} fill={sr.color} />
+      </svg>
+      <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600,
+        color: isUp ? theme.grn : theme.red }}>
+        {isUp ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+        {isUp && delta > 0 ? "+" : ""}{delta} since {firstDateLabel}
+      </span>
+    </button>
+  );
+}
+
 export default function Trends({ seasonData }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isStale, setIsStale] = useState(false);
   const [viewCat, setViewCat] = useState("ALL");
+  const [chartMode, setChartMode] = useState("lines");
   const [hidden, setHidden] = useState(() => new Set());
+  const [focusId, setFocusId] = useState(null);
   const [hoverIdx, setHoverIdx] = useState(null);
   const [showTable, setShowTable] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
@@ -50,6 +105,14 @@ export default function Trends({ seasonData }) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  // A focused member hidden via the legend, or a switch to a category/season
+  // they have no history in, would otherwise leave every other line dimmed
+  // with nothing highlighted to show for it.
+  useEffect(() => {
+    if (focusId && hidden.has(focusId)) setFocusId(null);
+  }, [focusId, hidden]);
+  useEffect(() => { setFocusId(null); }, [viewCat, seasonYear]);
 
   // A request abandoned by a year switch (or a stale manual retry) must
   // skip its own setState calls when it finally resolves. This used to be
@@ -182,11 +245,32 @@ export default function Trends({ seasonData }) {
 
   const visibleSeries = series.filter((sr) => !hidden.has(sr.id));
 
-  const maxVal = useMemo(() => {
-    let max = 0;
-    visibleSeries.forEach((sr) => sr.values.forEach((v) => { if (v > max) max = v; }));
-    return max || 1;
-  }, [visibleSeries]);
+  // Dynamic Y axis: zoom to the actual spread of the visible series instead of
+  // always anchoring at 0. Standings over a season tend to cluster in a narrow
+  // band relative to their absolute size (e.g. 410-460), so a zero-anchored
+  // axis flattens every line into a near-overlapping cluster — exactly what
+  // makes it hard to tell members apart at a glance, especially on a small
+  // mobile screen. Rounds the domain to clean tick steps (1/2/5 x 10^n) so the
+  // gridlines still read as real numbers, not an arbitrary crop.
+  const yScale = useMemo(() => {
+    let lo = Infinity, hi = -Infinity;
+    visibleSeries.forEach((sr) => sr.values.forEach((v) => {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }));
+    if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+    if (lo === hi) { lo -= 1; hi += 1; }
+    const targetTicks = isMobile ? 7 : 8;
+    const rawStep = (hi - lo) / targetTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const norm = rawStep / mag;
+    const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+    const min = Math.floor(lo / step) * step;
+    const max = Math.ceil(hi / step) * step;
+    const ticks = [];
+    for (let v = min; v <= max + step / 2; v += step) ticks.push(Math.round(v * 100) / 100);
+    return { min, max, ticks };
+  }, [visibleSeries, isMobile]);
 
   function toggleMember(mid) {
     const nowHidden = !hidden.has(mid);
@@ -198,40 +282,61 @@ export default function Trends({ seasonData }) {
     });
   }
 
-  // ── chart geometry ──
-  const W = 720, H = isMobile ? 240 : 300;
-  const padL = 34, padR = 12, padT = 14, padB = 26;
+  // Tap a member's name (end label or legend chip) to spotlight just their
+  // line — the real fix for "too many crossing lines to tell apart" on a
+  // crowded roster, versus hiding members one at a time.
+  function toggleFocus(mid) {
+    const nowFocused = focusId !== mid;
+    track(EVENTS.TRENDS_SERIES_FOCUSED, { member_name: memberMeta[mid]?.name || mid, is_focused: nowFocused });
+    setFocusId(nowFocused ? mid : null);
+  }
+
+  // ── chart geometry ── bigger overall, and extra right-hand room for the
+  // per-series end labels that replace the single "leader" label. Members
+  // can be added with arbitrary names (not just the fixed roster), so size
+  // the right margin off the longest *visible* name instead of a fixed guess.
+  // H is deliberately much taller than W: the plot's pixel height tracks H
+  // directly (height:auto keeps the render aspect-locked to viewBox W:H, so
+  // this is real vertical room, not a stretch/distortion trick), which is
+  // what actually separates 11 similarly-hued lines on a narrow phone.
+  const W = 720, H = isMobile ? 1040 : 620;
+  const labelCharW = isMobile ? 6.2 : 6.8;
+  const maxNameLen = visibleSeries.reduce((m, sr) => Math.max(m, sr.name.length), 4);
+  const padL = 36, padR = Math.min(110, Math.max(isMobile ? 42 : 52, maxNameLen * labelCharW + 13));
+  const padT = 16, padB = 28;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const n = dates.length;
   const xFor = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const yFor = (v) => padT + plotH - (v / maxVal) * plotH;
+  const yFor = (v) => padT + plotH - ((v - yScale.min) / (yScale.max - yScale.min)) * plotH;
 
   function pathFor(values) {
     return values.map((v, i) => (i === 0 ? "M" : "L") + xFor(i).toFixed(2) + "," + yFor(v).toFixed(2)).join(" ");
   }
 
-  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
-    y: padT + plotH - f * plotH,
-    val: Math.round(maxVal * f),
+  const gridLines = yScale.ticks.map((val) => ({
+    y: yFor(val),
+    val,
   }));
 
-  const leader = useMemo(() => {
-    if (visibleSeries.length === 0 || n === 0) return null;
-    let best = null;
-    visibleSeries.forEach((sr) => {
-      const v = sr.values[n - 1];
-      if (!best || v > best.v) best = { id: sr.id, name: sr.name, color: sr.color, v };
-    });
-    return best;
-  }, [visibleSeries, n]);
-
-  function handleMove(e) {
+  function handlePointerX(clientX) {
     if (n === 0 || !svgWrapRef.current) return;
     const rect = svgWrapRef.current.getBoundingClientRect();
-    const relX = ((e.clientX - rect.left) / rect.width) * W;
+    const relX = ((clientX - rect.left) / rect.width) * W;
     let idx = Math.round(((relX - padL) / plotW) * (n - 1));
     idx = Math.max(0, Math.min(n - 1, idx));
     setHoverIdx(idx);
+  }
+  function handleMove(e) {
+    handlePointerX(e.clientX);
+  }
+  // Touch never had a crosshair at all before — only onMouseMove was wired
+  // up, so a finger drag did nothing. Now that the chart is tall enough to
+  // fill most of a phone screen, that gap matters more: touchAction "none"
+  // was blocking the page's vertical scroll over the chart for no benefit.
+  // "pan-y" lets a vertical swipe scroll the page normally; a touchmove
+  // that isn't purely vertical still reaches this handler for the crosshair.
+  function handleTouchMove(e) {
+    if (e.touches && e.touches.length) handlePointerX(e.touches[0].clientX);
   }
 
   const tableDates = useMemo(() => [...dates].reverse().slice(0, showTable === "all" ? dates.length : 21), [dates, showTable]);
@@ -283,6 +388,32 @@ export default function Trends({ seasonData }) {
     : [];
   const hoverX = hoverIdx !== null ? xFor(hoverIdx) : null;
 
+  // Per-series end-of-line labels — every visible member gets their name
+  // pinned to where their line ends, not just the current leader. This is
+  // the main fix for "hard to tell the lines apart": color alone doesn't
+  // carry across 11 similarly-hued lines on a phone screen, but a name does.
+  // Labels are nudged apart (keeping their top-to-bottom order) so they never
+  // overlap when two members are tied or close together.
+  const labelFontSize = isMobile ? 10 : 11;
+  const minLabelGap = labelFontSize + 4;
+  const endLabels = (() => {
+    if (!visibleSeries.length) return [];
+    const items = visibleSeries
+      .map((sr) => ({ id: sr.id, name: sr.name, color: sr.color, actualY: yFor(sr.values[n - 1]) }))
+      .sort((a, b) => a.actualY - b.actualY);
+    items.forEach((it) => { it.y = it.actualY; });
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].y - items[i - 1].y < minLabelGap) {
+        items[i].y = items[i - 1].y + minLabelGap;
+      }
+    }
+    const overflow = items[items.length - 1].y - (padT + plotH);
+    if (overflow > 0) {
+      for (let i = items.length - 1; i >= 0; i--) items[i].y -= overflow;
+    }
+    return items;
+  })();
+
   return (
     <div style={{ maxWidth: 800, margin: "0 auto" }}>
       {/* Category pills */}
@@ -325,7 +456,7 @@ export default function Trends({ seasonData }) {
       )}
 
       <div style={cardStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4, flexWrap: "wrap", gap: 6 }}>
           <h3 style={{ margin: 0, fontSize: 16 }}>
             {viewCat === "ALL" ? "Overall Standings" : CATEGORY_LABELS[viewCat]} Over Time
           </h3>
@@ -334,16 +465,73 @@ export default function Trends({ seasonData }) {
           </span>
         </div>
 
+        {/* Lines vs. grid: the combined chart is best for "who was ahead of
+            whom on date X"; the grid is best for scanning everyone's shape
+            (rising/falling/flat) at once without untangling crossing lines. */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+          {[{ key: "lines", label: "Compare" }, { key: "grid", label: "By Member" }].map((opt) => (
+            <button key={opt.key} onClick={() => {
+                if (chartMode !== opt.key) {
+                  track(EVENTS.TRENDS_VIEW_TOGGLED, { view: opt.key });
+                  setChartMode(opt.key);
+                }
+              }}
+              style={{
+                background: chartMode === opt.key ? s.accSoft : "none",
+                border: "1px solid " + (chartMode === opt.key ? s.acc : s.bdr),
+                borderRadius: 8, padding: "5px 12px", fontSize: 11, fontWeight: 700,
+                color: chartMode === opt.key ? s.acc : s.mut, cursor: "pointer",
+              }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {chartMode === "lines" && (focusId ? (
+          <div style={{ marginBottom: 8, fontSize: 11, color: s.dim }}>
+            Spotlighting <strong style={{ color: MEMBER_COLORS[focusId] || FALLBACK_COLOR }}>
+              {memberMeta[focusId]?.name || focusId}
+            </strong> —{" "}
+            <button onClick={() => setFocusId(null)} style={{ background: "none", border: "none",
+              color: s.acc, fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+              show everyone
+            </button>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 8, fontSize: 10.5, color: s.dim }}>
+            Tap a name to spotlight that line.
+          </div>
+        ))}
+
+        {/* Grid view — each member's own trajectory, independently scaled.
+            Tapping a tile jumps to the lines view with that member spotlit,
+            for a closer side-by-side look. */}
+        {chartMode === "grid" && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(auto-fill, minmax(180px, 1fr))",
+            gap: 10,
+          }}>
+            {visibleSeries.map((sr) => (
+              <SparkTile key={sr.id} sr={sr} firstDateLabel={fmtShort(dates[0])} isMobile={isMobile}
+                onClick={() => { toggleFocus(sr.id); setChartMode("lines"); }} />
+            ))}
+          </div>
+        )}
+
         {/* Chart */}
-        <div ref={svgWrapRef} style={{ position: "relative", width: "100%", touchAction: "none" }}
+        {chartMode === "lines" && (
+        <div ref={svgWrapRef} style={{ position: "relative", width: "100%", touchAction: "pan-y" }}
           onMouseMove={handleMove}
-          onMouseLeave={() => setHoverIdx(null)}>
+          onMouseLeave={() => setHoverIdx(null)}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={() => setHoverIdx(null)}>
           <svg viewBox={"0 0 " + W + " " + H} style={{ width: "100%", height: "auto", display: "block" }}>
             {/* Gridlines */}
             {gridLines.map((g, i) => (
               <g key={i}>
                 <line x1={padL} y1={g.y} x2={W - padR} y2={g.y} stroke="#334155" strokeWidth={1} opacity={0.4} />
-                <text x={padL - 6} y={g.y + 3} textAnchor="end" fontSize={9} fill={s.dim}>{g.val}</text>
+                <text x={padL - 7} y={g.y + 3} textAnchor="end" fontSize={10} fill={s.dim}>{g.val}</text>
               </g>
             ))}
 
@@ -352,38 +540,69 @@ export default function Trends({ seasonData }) {
               const step = Math.max(1, Math.ceil(n / (isMobile ? 4 : 7)));
               if (i % step !== 0 && i !== n - 1) return null;
               return (
-                <text key={d} x={xFor(i)} y={H - 6} textAnchor="middle" fontSize={9} fill={s.dim}>
+                <text key={d} x={xFor(i)} y={H - 8} textAnchor="middle" fontSize={10} fill={s.dim}>
                   {fmtShort(d)}
                 </text>
               );
             })}
 
-            {/* Lines */}
-            {visibleSeries.map((sr) => (
-              <path key={sr.id} d={pathFor(sr.values)} fill="none" stroke={sr.color} strokeWidth={2}
-                strokeLinecap="round" strokeLinejoin="round" />
-            ))}
+            {/* Lines — focused series draws last (on top) and full-strength;
+                everyone else fades back so the one line the user picked
+                reads clearly through the rest of the pack. */}
+            {(focusId
+              ? [...visibleSeries.filter((sr) => sr.id !== focusId), ...visibleSeries.filter((sr) => sr.id === focusId)]
+              : visibleSeries
+            ).map((sr) => {
+              const isFocused = focusId === sr.id;
+              const dimmed = focusId && !isFocused;
+              return (
+                <path key={sr.id} d={pathFor(sr.values)} fill="none" stroke={sr.color}
+                  strokeWidth={isFocused ? 4.5 : dimmed ? 1.5 : 3} opacity={dimmed ? 0.16 : 1}
+                  strokeLinecap="round" strokeLinejoin="round" />
+              );
+            })}
 
             {/* Last-point markers */}
-            {visibleSeries.map((sr) => (
-              <circle key={sr.id} cx={xFor(n - 1)} cy={yFor(sr.values[n - 1])} r={3} fill={sr.color} />
-            ))}
+            {visibleSeries.map((sr) => {
+              const isFocused = focusId === sr.id;
+              const dimmed = focusId && !isFocused;
+              return (
+                <circle key={sr.id} cx={xFor(n - 1)} cy={yFor(sr.values[n - 1])} r={isFocused ? 5.5 : 4}
+                  fill={sr.color} stroke={s.card} strokeWidth={2} opacity={dimmed ? 0.3 : 1} />
+              );
+            })}
 
-            {/* Leader direct label */}
-            {leader && (
-              <text x={Math.min(W - padR - 2, xFor(n - 1) + 4)} y={yFor(leader.v) - 6}
-                fontSize={10} fontWeight={700} fill={leader.color} textAnchor="end">
-                {leader.name}
-              </text>
-            )}
+            {/* Per-series end labels, nudged apart so ties/close scores don't
+                overlap. Tap one to spotlight that member's line — the hit
+                target (the transparent rect) is taller than the text itself
+                so it's comfortably tappable on a phone. */}
+            {endLabels.map((lb) => {
+              const shifted = Math.abs(lb.y - lb.actualY) > 2;
+              const isFocused = focusId === lb.id;
+              const dimmed = focusId && !isFocused;
+              return (
+                <g key={"lbl" + lb.id} onClick={() => toggleFocus(lb.id)} style={{ cursor: "pointer" }}>
+                  <rect x={xFor(n - 1)} y={lb.y - 12} width={padR} height={24} fill="transparent" />
+                  {shifted && (
+                    <line x1={xFor(n - 1) + 2} y1={lb.actualY} x2={xFor(n - 1) + 7} y2={lb.y}
+                      stroke={lb.color} strokeWidth={1} opacity={dimmed ? 0.2 : 0.5} />
+                  )}
+                  <text x={xFor(n - 1) + (shifted ? 9 : 7)} y={lb.y + labelFontSize / 3}
+                    fontSize={isFocused ? labelFontSize + 1.5 : labelFontSize} fontWeight={isFocused ? 800 : 700}
+                    fill={dimmed ? s.mut : lb.color} opacity={dimmed ? 0.55 : 1} textAnchor="start">
+                    {lb.name}
+                  </text>
+                </g>
+              );
+            })}
 
             {/* Crosshair */}
             {hoverX !== null && (
               <line x1={hoverX} y1={padT} x2={hoverX} y2={padT + plotH} stroke="#94a3b8" strokeWidth={1} strokeDasharray="3,3" opacity={0.6} />
             )}
             {hoverX !== null && visibleSeries.map((sr) => (
-              <circle key={"h" + sr.id} cx={hoverX} cy={yFor(sr.values[hoverIdx])} r={3.5}
-                fill={s.card} stroke={sr.color} strokeWidth={2} />
+              <circle key={"h" + sr.id} cx={hoverX} cy={yFor(sr.values[hoverIdx])} r={4.5}
+                fill={s.card} stroke={sr.color} strokeWidth={2.5} />
             ))}
           </svg>
 
@@ -412,6 +631,7 @@ export default function Trends({ seasonData }) {
             </div>
           )}
         </div>
+        )}
 
         {/* Legend (toggleable) */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12, justifyContent: "center" }}>
