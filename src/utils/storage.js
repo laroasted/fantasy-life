@@ -56,6 +56,7 @@ ARCHIVED_SEASONS: "archived-seasons",
 // Per-year prefixes — build the real key as `${PREFIX}-${year}` so a cache
 // from one season never gets served while viewing another.
 TRENDS_HISTORY_PREFIX: "trends-history",
+ACTIVITY_FEED_PREFIX: "activity-feed",
 DRAFT_RECAP_PREFIX: "draft-recap",
 SETTINGS_CHANGELOG_PREFIX: "settings-changelog",
 };
