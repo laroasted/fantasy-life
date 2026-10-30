@@ -261,11 +261,18 @@ async function fetchJsonDiagnostic(url, ms) {
  *     "Connecticut" at all, a distinct mismatch from the State/St.
  *     pattern (not an abbreviation of "Connecticut", a different name
  *     entirely).
- * Not a comprehensive team-alias table — these are the three mismatches
+ *   - NYCFC's real market says "Will New York City FC win the 2026 MLS
+ *     Cup?" — same brand-initialism pattern as LAFC. (Other MLS brand
+ *     abbreviations in this league's picks — e.g. "Red Bull", "Sounders",
+ *     "Atlanta", "Vancouver" — are already substrings of their real
+ *     market text, so they match via the plain includes() check below
+ *     with no alias needed; only initialisms that DON'T appear inside
+ *     the spelled-out name, like LAFC/NYCFC, require one.)
+ * Not a comprehensive team-alias table — these are the four mismatches
  * actually found and confirmed so far, not a guess at others that might
  * exist. A no-op for any name that doesn't match one of these patterns.
  */
-const VERIFIED_NAME_ALIASES = { 'LAFC': 'Los Angeles FC', 'Connecticut': 'UConn' };
+const VERIFIED_NAME_ALIASES = { 'LAFC': 'Los Angeles FC', 'NYCFC': 'New York City FC', 'Connecticut': 'UConn' };
 function nameVariants(name) {
   const variants = [name];
   if (/\bState\b/i.test(name)) variants.push(name.replace(/\bState\b/i, 'St.'));

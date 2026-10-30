@@ -389,3 +389,31 @@ the same way if/when they do — this technique (search live via
 Alexandria for the exact pick name, read back the real question text)
 is now the established way to resolve a stuck "none_matched_outcome"
 diagnostic rather than guessing blind.
+
+## Eighth iteration — one more MLS alias, same pattern as LAFC
+
+A live run after the seventh-iteration fix confirmed NCAAF and NCAAB
+now matching (Ohio St. and UConn aliases both worked). MLS still
+failed, but on a different team: `1_events_31_markets_none_matched_
+outcome(NYCFC)` — LAFC's own alias didn't help a different club's
+initialism.
+
+Same technique: queried Polymarket live via Alexandria for "MLS Cup"
+and read the real market list (31 markets, one per club). The real
+market says **"New York City FC"** — same brand-initialism pattern as
+LAFC, a second MLS club whose pick is stored as a bare initialism that
+doesn't appear as a substring of its spelled-out market name.
+
+Also checked, while the full 31-market MLS list was in hand, whether
+any *other* MLS picks in this league have the same problem — the
+matching is a plain lowercase substring check, so a pick only needs an
+alias when the pick string literally cannot be found inside the real
+market question. Every other MLS pick seen so far (Inter Miami, LA
+Galaxy, Red Bull → "New York Red Bulls", Sounders → "Seattle Sounders
+FC", Atlanta → "Atlanta United FC", Columbus Crew, Philadelphia Union,
+San Diego FC, Vancouver → "Vancouver Whitecaps FC") is already a
+substring of its real market name, so none of those need an alias —
+only bare initialisms like LAFC/NYCFC do. Added `'NYCFC': 'New York
+City FC'` to `VERIFIED_NAME_ALIASES`. Still not a comprehensive
+alias table — just the fourth confirmed mismatch. The same
+read-the-diagnostic-then-verify-live loop applies to any future one.
