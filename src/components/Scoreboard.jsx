@@ -194,6 +194,17 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  var hasProjections = Object.keys(projectionsByCategory).length > 0;
  var _sp = useState(false), showProjected = _sp[0], setShowProjected = _sp[1];
 
+ // Switching to a past season with no projections (the toggle itself
+ // disappears below, since it's gated on hasProjections) left
+ // showProjected stuck true from whatever season you were on before —
+ // the "Proj. Base/Bonus/Total" labels and the Monte Carlo disclaimer
+ // banner kept showing even though there was nothing projected to
+ // explain. Reset it back to the real Current view whenever the season
+ // being viewed has no projections.
+ useEffect(function () {
+  if (!hasProjections && showProjected) setShowProjected(false);
+ }, [hasProjections, showProjected]);
+
  function projectedEntryFor(category, ownerName) {
   var byOwner = projectionsByCategory[category];
   return byOwner ? byOwner[ownerName] : null;
@@ -729,7 +740,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      </div>
     </div>
    )}
-   {showProjected && (
+   {hasProjections && showProjected && (
     <div style={{ textAlign: "center", fontSize: 10, color: theme.dim, marginBottom: 10, marginTop: -4 }}>
      Monte Carlo simulation of where the season could land. Based on current Vegas, Kalshi, Polymarket, etc.
      odds, where available. If future odds aren't available, current scores are shown instead.
