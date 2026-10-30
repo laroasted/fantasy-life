@@ -747,3 +747,45 @@ wired through `fetchProjectionsFromSupabase` → `projectedEntryFor` →
 (no bonus modeled for the category, or no live match found) — same
 degradation behavior as every other projected field, no placeholder
 text invented to fill the gap.
+
+## Thirteenth iteration — refresh-all's 60s timeout was never actually
+tested until today, and wasn't enough
+
+Final end-to-end pass before merge: user clicked the real Refresh
+button's underlying endpoint (`/api/refresh-all`) and hit a 504
+`FUNCTION_INVOCATION_TIMEOUT`.
+
+Root-caused before touching anything, since this file (`api/refresh-
+all.js`) has a documented history of a previous fix in the exact same
+spot getting reverted for being wrong (see its own header comment: an
+earlier version raced each job against a per-job timeout and "moved
+on" regardless, which let a slow job's write land AFTER snapshot-
+scores had already read stale data — that fix was deliberately
+backed out in favor of waiting for genuine completion, with Vercel's
+own `maxDuration` as the only timeout). Reintroducing a "give up and
+move on" timeout would have resurrected that exact bug, so that was
+off the table from the start.
+
+Checked whether this was a regression from this PR's own changes:
+confirmed against `origin/main` directly — `api/refresh-all.js`,
+`vercel.json`'s `maxDuration: 60`, and the whole 7-job dispatcher
+already existed on production, untouched by the projections work
+except for the `require(modulePath)` bug fix (PR #16, ninth commit)
+that made every job there fail INSTANTLY with "Cannot find module" —
+meaning **on production right now, the Refresh button's jobs have
+never actually run for real at all**, only failed fast. That bug fix
+is what exposed the 60s ceiling as a problem for the first time: once
+the jobs could genuinely execute, Billboard's retry/backoff (see
+update-billboard.js — multiple attempts with 3–5s backoff each) pushed
+real wall-clock time past 60s.
+
+Checked Vercel's own current docs (not assumed from training data,
+since this number changes across Vercel's pricing eras): Hobby plan
+now allows function `maxDuration` up to 300s (not the old 10s/60s
+figures), Pro up to 800s. A 504 here is literally
+`FUNCTION_INVOCATION_TIMEOUT`, tied directly to the configured
+`maxDuration`, not some separate fixed gateway cap. Bumped
+`api/refresh-all.js`'s `maxDuration` from 60 to 120 in `vercel.json` —
+comfortably within Hobby's own ceiling, no plan upgrade needed, real
+headroom over Billboard's worst case, and the job-completion-ordering
+logic (the thing already fixed once before) is untouched.

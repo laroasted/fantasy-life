@@ -34,6 +34,16 @@
  * whole function is killed rather than silently snapshotting half-updated
  * data.
  *
+ * maxDuration is 120s (vercel.json), not Vercel's old 60s-ish ceiling —
+ * confirmed live (PR #16): this file's own dynamic-require() bug (fixed
+ * above) meant every job here had ALWAYS failed instantly with "Cannot
+ * find module" on production, which masked whether 60s was actually
+ * enough for genuine execution. The very first real run after that fix
+ * landed hit a 504 FUNCTION_INVOCATION_TIMEOUT at 60s — Billboard's
+ * retry/backoff (see update-billboard.js) can genuinely run long. Per
+ * Vercel's own current docs, Hobby already allows up to 300s, so 120s
+ * is a conservative bump with real headroom, not a plan-tier risk.
+ *
  * Open to anyone, with a cooldown instead of an auth gate: a repeat-click
  * or a bot hammering this endpoint would otherwise re-trigger every
  * external API call and Supabase write on every request. claimRefreshSlot()

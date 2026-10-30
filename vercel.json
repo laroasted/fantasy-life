@@ -7,7 +7,7 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
-    "api/refresh-all.js": { "maxDuration": 60 },
+    "api/refresh-all.js": { "maxDuration": 120 },
     "api/cron/update-projections.js": { "maxDuration": 60 }
   },
   "crons": [
