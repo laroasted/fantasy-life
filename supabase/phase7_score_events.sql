@@ -1,4 +1,11 @@
--- Phase 5: score change events (sidebar activity feed)
+-- Phase 7: score change events (sidebar activity feed)
+--
+-- Numbered 7, not 5, because phase5/phase6 were taken by the Projections
+-- feature (supabase/phase5_projections.sql, supabase/phase6_projection_notes.sql)
+-- merged to main while this branch was in flight — this file was applied
+-- to Supabase under its original "phase5_score_events.sql" name before
+-- that collision was caught; only the filename changed here, not the
+-- table/column names, so nothing already applied needs to be re-run.
 --
 -- Feeds the Scoreboard sidebar's Activity card. Unlike score_history (one
 -- row per member per category per DAY, a full snapshot), this is an

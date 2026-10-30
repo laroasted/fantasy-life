@@ -1,8 +1,16 @@
-# Score events phase 5
+# Score events phase 7
 
 Adds a sidebar "Activity" feed to the Scoreboard tab — a short list of
 recent individual score changes with a reason attached ("Jordan +3.5 NFL —
 Chiefs (11-2)"), distinct from the Trends tab's daily standings snapshot.
+
+Numbered 7, not 5: this was developed in parallel with the Projections
+feature, which merged to main first and took phase5/phase6
+(`supabase/phase5_projections.sql`, `supabase/phase6_projection_notes.sql`).
+The migration below was actually applied to Supabase under its original
+`phase5_score_events.sql` filename before the collision was caught —
+only the file's name changed, not the table or any column, so nothing
+already run against Supabase needs to be redone.
 
 ## What changed
 
@@ -37,11 +45,14 @@ is future work, one cron at a time, not a blocker for shipping this.
 
 Same process as `phase2_score_history.sql`: Vercel's build only runs
 `npm run build`, it does not execute SQL files in this repo, so
-`supabase/phase5_score_events.sql` must be run manually in the Supabase
-SQL editor **before** `update-sports`'s next scheduled run (6am UTC).
-Until you do, `update-sports` will log a "Failed to write score_events"
-line and otherwise run exactly as before — picks still update normally,
-nothing breaks, the Activity card just shows its empty state.
+`supabase/phase7_score_events.sql` must be run manually in the Supabase
+SQL editor **before** `update-sports`'s next scheduled run (6am UTC) —
+or already has been, if you applied it under its original
+`phase5_score_events.sql` name; the table it creates is identical.
+Until it's applied, `update-sports` will log a "Failed to write
+score_events" line and otherwise run exactly as before — picks still
+update normally, nothing breaks, the Activity card just shows its empty
+state.
 
 ### 2. No new environment variables
 

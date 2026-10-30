@@ -107,6 +107,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms`, `is_skipped` |
 | `overall_category_tile_clicked` | scoreboard | `category` |
 | `activity_feed_load_failed` | scoreboard | `error_message` |
+| `projections_toggled` | scoreboard | `surface`, `is_enabled`, `season_year` |
 | `trends_view_toggled` | trends | `view` |
 | `trends_series_toggled` | trends | `member_name`, `is_hidden` |
 | `trends_series_focused` | trends | `member_name`, `is_focused` |
@@ -167,16 +168,18 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 
 ## Activity feed (Scoreboard sidebar)
 
-- `score_events` (`supabase/phase5_score_events.sql`) is an append-only log
-  of individual nonzero score changes, distinct from `score_history`
-  (phase 2's one-row-per-member-per-category-per-day snapshot that powers
-  Trends). Each row has a `cause` string and a `source` naming which cron
-  wrote it.
+- `score_events` (`supabase/phase7_score_events.sql` — numbered 7 because
+  main had already taken phase5/phase6 for Projections by the time this
+  merged; the table and column names are unaffected by the filename) is
+  an append-only log of individual nonzero score changes, distinct from
+  `score_history` (phase 2's one-row-per-member-per-category-per-day
+  snapshot that powers Trends). Each row has a `cause` string and a
+  `source` naming which cron wrote it.
 - Only `api/cron/update-sports.js` (NFL/NBA/NHL/MLB/MLS) writes here —
   diffing each pick's old vs. new total at write time, reusing the matched
   ESPN team/record it already has in memory for the `cause` text. The
   other `update-*.js` crons don't write to `score_events` yet; see
-  `docs/score-events-phase5.md` for why that's deliberate, not missing.
+  `docs/score-events-phase7.md` for why that's deliberate, not missing.
 - Rendered by `src/components/ActivityFeed.jsx` in `Scoreboard.jsx`'s
   sidebar. A paywalled member's entries still show (name, category,
   cause) but the delta number is blurred with the same
@@ -188,6 +191,30 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 - Clicking an entry filters the scoreboard to that category via the
   existing `EVENTS.CATEGORY_FILTER_CHANGED` with `surface: "scoreboard"`
   — reused, not a new event, per this file's own naming convention.
+
+## Projections
+
+- Full design + category-by-category automation methodology + confidence
+  tiers: `docs/projections-feature-plan.md`. Read it before touching
+  anything in this section — in particular, this league's scoring is
+  **relative rank among the 12 picks per category**, not additive
+  fantasy-football-style points, which is the single fact that shapes the
+  whole engine.
+- `api/cron/update-projections.js` runs a Monte Carlo simulation per
+  category and writes to `projections`/`projection_runs`
+  (`supabase/phase5_projections.sql`). Read-only with respect to `picks` —
+  never mutates a real score.
+- Free data sources only (no paid odds API) — Kalshi/Polymarket public
+  endpoints for championship/major/awards bonus EV, ESPN power-index for
+  sports base projection, TMDB upcoming-release discovery for
+  Actor/Actress (reuses `TMDB_API_KEY`), and the league's own cached
+  `billboard_weeks`/`music_songs` history for Musician. Country and Stock
+  are deliberately NOT simulated — see the design doc for why.
+- Frontend: `src/utils/storage.js`'s `fetchProjectionsFromSupabase()` →
+  `seasonData.projections`, consumed by the "Current / Projected Final"
+  toggle in `src/components/Scoreboard.jsx`. Degrades to hiding the toggle
+  entirely if no projections have loaded for the season — never blocks or
+  errors the real scoreboard.
 
 ## Governance
 

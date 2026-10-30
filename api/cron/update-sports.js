@@ -397,7 +397,7 @@ module.exports = async function handler(req, res) {
   if (scoreEvents.length > 0) {
     const { error: eventsErr } = await supabase.from('score_events').insert(scoreEvents);
     // Logged, not surfaced in the response or returned as a failure: the
-    // activity feed is additive. If supabase/phase5_score_events.sql
+    // activity feed is additive. If supabase/phase7_score_events.sql
     // hasn't been applied yet, this just fails quietly on every run until
     // it is — same as snapshot-scores.js's relationship to score_history.
     if (eventsErr) console.error(`Failed to write score_events: ${eventsErr.message}`);
