@@ -457,7 +457,7 @@ export default function Trends({ seasonData }) {
             whom on date X"; the grid is best for scanning everyone's shape
             (rising/falling/flat) at once without untangling crossing lines. */}
         <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-          {[{ key: "lines", label: "Lines" }, { key: "grid", label: "Grid" }].map((opt) => (
+          {[{ key: "lines", label: "Compare" }, { key: "grid", label: "By Member" }].map((opt) => (
             <button key={opt.key} onClick={() => {
                 if (chartMode !== opt.key) {
                   track(EVENTS.TRENDS_VIEW_TOGGLED, { view: opt.key });
