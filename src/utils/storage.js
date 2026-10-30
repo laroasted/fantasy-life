@@ -516,6 +516,7 @@ try {
   method: proj.method,
   confidence: proj.confidence,
   sourceDetail: proj.source_detail,
+  note: proj.note || null,
   computedAt: proj.computed_at,
  };
  });

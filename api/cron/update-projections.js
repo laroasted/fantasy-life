@@ -883,18 +883,32 @@ async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVarian
  * projects BELOW what a pick has already banked — max() keeps a pick's
  * real earned points even if it now ranks outside the modeled tiers
  * (e.g. already mathematically eliminated).
+ *
+ * tierLabels, when given, is a parallel array to tierValues (same rank
+ * index) — a human-readable explanation of that tier ("Projected to win
+ * the Super Bowl") stored on m.bonusNote, surfaced on the Scoreboard
+ * next to the projected total. Only set when the computed tier is what
+ * actually determined the projection (tier > the already-banked floor)
+ * — a pick whose real actualBonus already exceeds every modeled tier
+ * keeps whatever note (if any) it already had, since the tier ladder
+ * isn't what's driving their number.
  */
-function rankIntoTierBonus(models, probs, tierValues) {
+function rankIntoTierBonus(models, probs, tierValues, tierLabels) {
   const contenders = models
     .filter((m) => typeof probs[m.id] === 'number')
     .slice()
     .sort((a, b) => probs[b.id] - probs[a.id]);
   const tierByPickId = {};
-  contenders.forEach((m, idx) => { tierByPickId[m.id] = tierValues[idx] !== undefined ? tierValues[idx] : 0; });
+  const labelByPickId = {};
+  contenders.forEach((m, idx) => {
+    tierByPickId[m.id] = tierValues[idx] !== undefined ? tierValues[idx] : 0;
+    if (tierLabels && tierLabels[idx]) labelByPickId[m.id] = tierLabels[idx];
+  });
   return models.map((m) => {
     const tier = tierByPickId[m.id] !== undefined ? tierByPickId[m.id] : 0;
     const projected = Math.max(m.actualBonus, tier);
-    return Object.assign({}, m, { bonusSampler: () => projected });
+    const note = (tier > m.actualBonus && labelByPickId[m.id]) ? labelByPickId[m.id] : m.bonusNote;
+    return Object.assign({}, m, { bonusSampler: () => projected, bonusNote: note });
   });
 }
 
@@ -913,18 +927,30 @@ function rankIntoTierBonus(models, probs, tierValues) {
  * same run. bonusSampler() always reflects whatever the previous call
  * in the chain (or the actualBonus-flat default, on the first call)
  * last set it to.
+ *
+ * tierLabels (parallel to tierValues, same rank index) accumulates onto
+ * m.bonusNote across calls — comma-joined, since this function models a
+ * bonus that can be earned more than once in the same run (a driver on
+ * the podium in two different featured races, an artist winning two
+ * Grammy categories), unlike rankIntoTierBonus's single note.
  */
-function addTierBonus(models, probs, tierValues) {
+function addTierBonus(models, probs, tierValues, tierLabels) {
   const contenders = models
     .filter((m) => typeof probs[m.id] === 'number')
     .slice()
     .sort((a, b) => probs[b.id] - probs[a.id]);
   const tierByPickId = {};
-  contenders.forEach((m, idx) => { tierByPickId[m.id] = tierValues[idx] !== undefined ? tierValues[idx] : 0; });
+  const labelByPickId = {};
+  contenders.forEach((m, idx) => {
+    tierByPickId[m.id] = tierValues[idx] !== undefined ? tierValues[idx] : 0;
+    if (tierLabels && tierLabels[idx]) labelByPickId[m.id] = tierLabels[idx];
+  });
   return models.map((m) => {
     const addition = tierByPickId[m.id] !== undefined ? tierByPickId[m.id] : 0;
     const projected = m.bonusSampler() + addition;
-    return Object.assign({}, m, { bonusSampler: () => projected });
+    let note = m.bonusNote;
+    if (addition > 0 && labelByPickId[m.id]) note = note ? (note + ', ' + labelByPickId[m.id]) : labelByPickId[m.id];
+    return Object.assign({}, m, { bonusSampler: () => projected, bonusNote: note });
   });
 }
 
@@ -932,8 +958,8 @@ function addTierBonus(models, probs, tierValues) {
  * likely pick in this market gets credit (no 2nd/3rd place tier) — for
  * an award category that has exactly one winner and no partial-credit
  * placement, like a Grammy category. */
-function addSingleWinnerTier(models, probs, tier) {
-  return addTierBonus(models, probs, [tier]);
+function addSingleWinnerTier(models, probs, tier, label) {
+  return addTierBonus(models, probs, [tier], label ? [label] : undefined);
 }
 
 /**
@@ -945,7 +971,7 @@ function addSingleWinnerTier(models, probs, tier) {
  * supersedes its own category's nomination tier), and a pick can't earn
  * a nomination-without-a-win AND a win in the same category at once.
  */
-function combinedAwardTierBonus(models, winProbs, winTier, nomProbs, nomTier, nomineeCount) {
+function combinedAwardTierBonus(models, winProbs, winTier, winLabel, nomProbs, nomTier, nomLabel, nomineeCount) {
   const winContenders = models.filter((m) => typeof winProbs[m.id] === 'number').slice().sort((a, b) => winProbs[b.id] - winProbs[a.id]);
   const winnerPickId = winContenders.length > 0 ? winContenders[0].id : null;
 
@@ -956,7 +982,10 @@ function combinedAwardTierBonus(models, winProbs, winTier, nomProbs, nomTier, no
     const winValue = m.id === winnerPickId ? winTier : 0;
     const nomValue = nominatedIds.has(m.id) ? nomTier : 0;
     const projected = Math.max(m.actualBonus, winValue, nomValue);
-    return Object.assign({}, m, { bonusSampler: () => projected });
+    let note = m.bonusNote;
+    if (winValue > m.actualBonus && winValue >= nomValue) note = winLabel;
+    else if (nomValue > m.actualBonus) note = nomLabel;
+    return Object.assign({}, m, { bonusSampler: () => projected, bonusNote: note });
   });
 }
 
@@ -994,7 +1023,12 @@ async function applyOscarBonus(models, pastDeadline, awardLabel) {
     } catch (e) { nomReason = 'exception:' + e.message; }
   }
 
-  const updated = combinedAwardTierBonus(models, winProbs, 10, nomProbs, 3, 5);
+  const updated = combinedAwardTierBonus(
+    models,
+    winProbs, 10, 'Projected to win ' + awardLabel,
+    nomProbs, 3, 'Projected ' + awardLabel + ' nominee',
+    5
+  );
   return { models: updated, sourceNoteSuffix: 'oscar_bonus(win:' + winReason + '|nom:' + nomReason + ')' };
 }
 
@@ -1029,7 +1063,7 @@ async function applyGrammyBonus(models, pastDeadline) {
     let lookup;
     try { lookup = await findMarketProbabilitiesForPicks(market.title, picksWithVariants); }
     catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
-    current = addSingleWinnerTier(current, lookup.probs, market.tier);
+    current = addSingleWinnerTier(current, lookup.probs, market.tier, 'Projected to win ' + market.title.replace(/ Winner$/, ''));
     reasonParts.push(market.title + ':' + (lookup.reason || 'matched'));
     await delay(150);
   }
@@ -1074,7 +1108,8 @@ async function applyF1FeaturedRaceBonus(models, pastDeadline) {
     catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
     const matchedAny = Object.keys(lookup.probs).some((id) => lookup.probs[id] !== null);
     if (matchedAny) {
-      current = addTierBonus(current, lookup.probs, race.tierValues);
+      const tierLabels = ['Projected 1st at the ' + race.title, 'Projected 2nd at the ' + race.title, 'Projected 3rd at the ' + race.title];
+      current = addTierBonus(current, lookup.probs, race.tierValues, tierLabels);
       anyOpenRace = true;
       lastNote = race.key + ':matched';
     } else {
@@ -1109,6 +1144,7 @@ async function upsertProjections(supabase, seasonYear, category, rows) {
     p10: r.p10, p50: r.p50, p90: r.p90,
     method: r.method, confidence: r.confidence,
     source_detail: r.sourceDetail || null,
+    note: r.note || null,
     simulations: r.simulations || 0,
     computed_at: new Date().toISOString(),
   }));
@@ -1219,6 +1255,12 @@ module.exports = async function handler(req, res) {
           // pick has already earned. Only replaced below when a live
           // odds match for the remaining top prize is found.
           bonusSampler: () => actualBonus,
+          // Plain-English explanation of the projected bonus, surfaced on
+          // the Scoreboard (projections.note) — set by whichever bonus
+          // path below actually determines this pick's number; null when
+          // nothing does (no bonus mechanism modeled for this category,
+          // or no live match found).
+          bonusNote: m.bonusNote || null,
         });
       });
 
@@ -1234,8 +1276,8 @@ module.exports = async function handler(req, res) {
             catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
           }
           models = bonusConfig.mode === 'add'
-            ? addTierBonus(models, lookup.probs, bonusConfig.tierValues)
-            : rankIntoTierBonus(models, lookup.probs, bonusConfig.tierValues);
+            ? addTierBonus(models, lookup.probs, bonusConfig.tierValues, bonusConfig.tierLabels)
+            : rankIntoTierBonus(models, lookup.probs, bonusConfig.tierValues, bonusConfig.tierLabels);
           models = models.map((m) => Object.assign({}, m, {
             sourceNote: m.sourceNote + '|bonus_tier_ladder(' + bonusConfig.tierValues.join('/') + ')|odds_lookup:' + (lookup.reason || 'matched'),
           }));
@@ -1269,9 +1311,16 @@ module.exports = async function handler(req, res) {
             await delay(150);
           }
           models = attachBonusSampler(models, bonusProbByOwner, bonusConfig.bonusPointsIfWin);
-          models = models.map((m) => Object.assign({}, m, {
-            sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only|odds_lookup:' + (bonusDiagnostic || 'matched'),
-          }));
+          models = models.map((m) => {
+            const prob = bonusProbByOwner[m.ownerName];
+            const note = (typeof prob === 'number' && prob > 0.01)
+              ? Math.round(prob * 100) + '% projected to win ' + bonusConfig.titleKeyword
+              : m.bonusNote;
+            return Object.assign({}, m, {
+              sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only|odds_lookup:' + (bonusDiagnostic || 'matched'),
+              bonusNote: note,
+            });
+          });
         }
       }
 
@@ -1286,7 +1335,7 @@ module.exports = async function handler(req, res) {
         return Object.assign({}, r, {
           projectedMetric: round2(model.currentMetric), // the metric itself isn't simulated forward as a single number; base/total are
           method: 'monte_carlo', confidence: model.confidence || (anyLowConfidence ? 'low' : 'medium'),
-          sourceDetail: model.sourceNote, simulations: N_SIMS,
+          sourceDetail: model.sourceNote, note: model.bonusNote || null, simulations: N_SIMS,
         });
       });
 
@@ -1300,7 +1349,7 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  async function runStatic(category, method, confidence, sourceDetail) {
+  async function runStatic(category, method, confidence, sourceDetail, note) {
     const startedAt = new Date().toISOString();
     const picks = picksByCategory[category] || [];
     if (picks.length === 0) { results[category] = { status: 'skipped', reason: 'no picks' }; await logRun(supabase, seasonYear, category, 'skipped', {}, startedAt); return; }
@@ -1313,6 +1362,7 @@ module.exports = async function handler(req, res) {
       p10: null, p50: null, p90: null,
       method, confidence,
       sourceDetail: sourceDetail || (method === 'trend_only' ? 'stock_price_not_modeled_see_design_doc' : 'gdp_forecast_is_already_static'),
+      note: note || null,
       simulations: 0,
     }));
     const written = await upsertProjections(supabase, seasonYear, category, rows);
@@ -1328,7 +1378,7 @@ module.exports = async function handler(req, res) {
       // is over, nothing left to simulate. Hold the real actual values
       // flat rather than keep Monte-Carlo-projecting movement that cron
       // would never actually write.
-      await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen');
+      await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen', 'Season complete — locked');
       continue;
     }
     const bonusConfig = bonusConfigFor(league);
@@ -1336,24 +1386,40 @@ module.exports = async function handler(req, res) {
       const models = await buildWinPctModel(picks, league, seasonYear, locks, ownerNameById, pastDeadline);
       // NBA: bonusConfigFor returns null here because the bonus-deciding
       // event already happened (see bonusConfigFor's own comment) — note
-      // that explicitly in source_detail rather than leaving it silent.
-      return bonusConfig ? models : models.map((m) => Object.assign({}, m, {
-        sourceNote: m.sourceNote + '|bonus_locked:prior_season_already_decided',
-      }));
+      // that explicitly in source_detail, and give the Scoreboard a
+      // plain-English note too (reverse-matched against the real
+      // actualBonus value, since it's already decided rather than
+      // projected — picks[idx].bonus is available here, m.actualBonus
+      // isn't set yet at this point in the pipeline).
+      return bonusConfig ? models : models.map((m, idx) => {
+        const actualBonus = Number(picks[idx].bonus) || 0;
+        const tierIdx = [10, 7, 5, 3, 2].indexOf(actualBonus);
+        const lockedNote = tierIdx >= 0 ? (SPORT_TIER_LABELS_LOCKED[league] || [])[tierIdx] : null;
+        return Object.assign({}, m, {
+          sourceNote: m.sourceNote + '|bonus_locked:prior_season_already_decided',
+          bonusNote: lockedNote,
+        });
+      });
     }, bonusConfig);
   }
   // ── Points-based sports ──
   for (const league of ['NHL', 'MLS']) {
     if (!isSportBaseActive(league)) {
-      await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen');
+      await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen', 'Season complete — locked');
       continue;
     }
     const bonusConfig = bonusConfigFor(league);
     await runCategory(league, 'desc', async (picks) => {
       const models = await buildPointsRateModel(picks, league, ownerNameById);
-      return bonusConfig ? models : models.map((m) => Object.assign({}, m, {
-        sourceNote: m.sourceNote + '|bonus_locked:prior_season_already_decided',
-      }));
+      return bonusConfig ? models : models.map((m, idx) => {
+        const actualBonus = Number(picks[idx].bonus) || 0;
+        const tierIdx = [10, 7, 5, 3, 2].indexOf(actualBonus);
+        const lockedNote = tierIdx >= 0 ? (SPORT_TIER_LABELS_LOCKED[league] || [])[tierIdx] : null;
+        return Object.assign({}, m, {
+          sourceNote: m.sourceNote + '|bonus_locked:prior_season_already_decided',
+          bonusNote: lockedNote,
+        });
+      });
     }, bonusConfig);
   }
   // ── College (AP poll, not the same accumulation shape as pro sports) ──
@@ -1379,7 +1445,9 @@ module.exports = async function handler(req, res) {
   // Bracket-ranked the same as the pro sports' championships, using this
   // category's own real bonus ladder (CATEGORY_BONUS_RULES.Tennis).
   await runCategory('Tennis', 'desc', (picks) => buildRankingPointsModel(picks, 'Tennis', ownerNameById),
-    { kind: 'tierLadder', titleKeyword: 'Australian Open', tierValues: [5, 3, 2], mode: 'replace' });
+    { kind: 'tierLadder', titleKeyword: 'Australian Open', tierValues: [5, 3, 2],
+      tierLabels: ['Projected to win the Australian Open', 'Projected to lose the Australian Open Final', 'Projected to lose in the Australian Open Semifinal'],
+      mode: 'replace' });
   await runCategory('Golf', 'asc', (picks) => buildRankingPointsModel(picks, 'Golf', ownerNameById), null);
   // F1's real bonus rule (CATEGORY_BONUS_RULES.F1) is per-podium across 4
   // SPECIFIC featured races (AUS/MIA/ATX/LV) — modeled properly now via
@@ -1415,6 +1483,28 @@ module.exports = async function handler(req, res) {
   });
 };
 
+// Human-readable version of each league's real bracket ladder
+// (CATEGORY_BONUS_RULES in src/constants/categories.js), parallel to
+// TIER_VALUES = [10, 7, 5, 3, 2] by rank index — surfaced on the
+// Scoreboard as projections.note, not just the internal source_detail
+// diagnostic string.
+const SPORT_TIER_LABELS = {
+  NFL: ['Projected to win the Super Bowl', 'Projected to lose the Super Bowl', 'Projected to lose the Conference Championship', 'Projected to lose in the Divisional Round', 'Projected to lose in the Wild Card Round'],
+  MLB: ['Projected to win the World Series', 'Projected to lose the World Series', 'Projected to lose the LCS', 'Projected to lose the LDS', 'Projected to lose the Wild Card round'],
+  NBA: ['Projected to win the NBA Finals', 'Projected to lose the NBA Finals', 'Projected to lose the Conference Finals', 'Projected to lose in Round 2', 'Projected to lose in Round 1'],
+  NHL: ['Projected to win the Stanley Cup', 'Projected to lose the Stanley Cup Final', 'Projected to lose the Conference Finals', 'Projected to lose in Round 2', 'Projected to lose in Round 1'],
+  MLS: ['Projected to win the MLS Cup', 'Projected to lose the MLS Cup Final', 'Projected to lose the Conference Final', 'Projected to lose in the Semifinal', 'Projected to lose in Round 1'],
+};
+
+// Same ladder, past tense — for NBA/NHL's bonus-locked case, where the
+// real outcome (from the PRECEDING season) is already known rather than
+// projected. Reverse-matched against a pick's actualBonus value in the
+// handler below (isSportBaseActive(league) branch).
+const SPORT_TIER_LABELS_LOCKED = {
+  NBA: ['Won the NBA Finals (already decided)', 'Lost the NBA Finals (already decided)', 'Lost the Conference Finals (already decided)', 'Lost in Round 2 (already decided)', 'Lost in Round 1 (already decided)'],
+  NHL: ['Won the Stanley Cup (already decided)', 'Lost the Stanley Cup Final (already decided)', 'Lost the Conference Finals (already decided)', 'Lost in Round 2 (already decided)', 'Lost in Round 1 (already decided)'],
+};
+
 function bonusConfigFor(league) {
   // Each of these is a single-elimination bracket (CATEGORY_BONUS_RULES in
   // src/constants/categories.js): ONE champion (10), ONE runner-up (7),
@@ -1437,7 +1527,7 @@ function bonusConfigFor(league) {
   if ((league === 'NBA' || league === 'NHL') && isSportBaseActive(league)) return null;
   const title = CHAMPIONSHIP_TITLE[league];
   if (!title) return null;
-  return { kind: 'tierLadder', titleKeyword: title, tierValues: TIER_VALUES, mode: 'replace' };
+  return { kind: 'tierLadder', titleKeyword: title, tierValues: TIER_VALUES, tierLabels: SPORT_TIER_LABELS[league], mode: 'replace' };
 }
 
 // Exported for local unit testing of the pure math core (see

@@ -235,6 +235,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
    projectedBase: proj ? proj.projectedBase : entry.base,
    projectedBonus: proj ? proj.projectedBonusEv : entry.bonus,
    projectionConfidence: proj ? proj.confidence : null,
+   projectionNote: proj ? proj.note : null,
   });
  }) : null;
  var catMembers = catMembersRaw
@@ -305,6 +306,11 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      <div style={{ marginTop: 4, fontSize: 10, color: theme.dim }}>
       Projected final: <b style={{ color: "#f8fafc" }}>{Math.round(m.projectedTotal)} pts</b>
       {m.projectionConfidence ? " (" + m.projectionConfidence.replace(/_/g, " ") + " confidence)" : ""}
+     </div>
+    )}
+    {m.projectionNote && (
+     <div style={{ marginTop: 2, fontSize: 10, color: "#38bdf8", fontStyle: "italic" }}>
+      {m.projectionNote}
      </div>
     )}
    </div>

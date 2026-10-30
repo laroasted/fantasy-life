@@ -697,3 +697,53 @@ chaining) didn't need the same fix.
   live run's `source_detail` shows `none_matched_any_pick` for a
   particular actor/artist whose stored name doesn't exactly match how
   Polymarket spells it.
+
+## Twelfth iteration — plain-English notes, not just numbers
+
+User feedback after reviewing live output across every category: the
+numbers alone don't explain themselves — "there is a big opportunity to
+add notes to explain how the projections are coming, i.e. projected to
+win superbowl, etc." `source_detail` already carries this same
+reasoning, but as an internal diagnostic string meant for debugging a
+live run (`bonus_tier_ladder(10/7/5/3/2)|odds_lookup:matched`), not for
+a league member reading the Scoreboard.
+
+Added `projections.note` (`supabase/phase6_projection_notes.sql`) — a
+plain-English sentence describing WHY a pick's bonus is what it is,
+set at the exact point in the code that already decided the tier, so it
+can never drift out of sync with the number next to it:
+
+- **Sports brackets** (`rankIntoTierBonus`): `SPORT_TIER_LABELS`, parallel
+  to each league's `TIER_VALUES` by rank index, pulled straight from
+  `CATEGORY_BONUS_RULES` — "Projected to win the Super Bowl", "Projected
+  to lose the Conference Championship", etc. Only attached when the
+  computed tier is actually what's driving the number (not when a pick's
+  real banked bonus already exceeds every modeled tier).
+- **NBA/NHL locked bonus**: `SPORT_TIER_LABELS_LOCKED`, same ladder,
+  past tense — "Won the NBA Finals (already decided)" — reverse-matched
+  against the pick's real `actualBonus` value, since this case has
+  nothing to project, only to explain.
+- **Tennis**: same mechanism, Australian Open ladder.
+- **F1** (`addTierBonus`, accumulates across calls since this bonus pays
+  out more than once): "Projected 1st at the Las Vegas Grand Prix",
+  comma-joined if more than one race's market is open and matched in the
+  same run.
+- **Oscars** (`combinedAwardTierBonus`): "Projected to win Best Actor" /
+  "Projected Best Actress nominee".
+- **Grammys** (`addSingleWinnerTier`, also accumulates): "Projected to
+  win Album of the Year", joined across however many of the 5 markets
+  this pick tops.
+- **NCAAF/NCAAB** (still on the legacy EV path): a probability-stated
+  note — "34% projected to win College Football Playoff" — since this
+  path doesn't compute a discrete tier the way the others do.
+- **MLB/frozen NHL/MLS** (`runStatic`): "Season complete — locked".
+
+Surfaced on the Scoreboard in the same expanded-detail spot the
+"Projected final: X pts (confidence)" line already lives
+(`src/components/Scoreboard.jsx`), right below it, in blue italic —
+wired through `fetchProjectionsFromSupabase` → `projectedEntryFor` →
+`catMembersRaw.projectionNote`, same plumbing pattern as
+`projectionConfidence`. Null when no bonus mechanism applies to a pick
+(no bonus modeled for the category, or no live match found) — same
+degradation behavior as every other projected field, no placeholder
+text invented to fill the gap.
