@@ -82,7 +82,12 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
   setIsStale(false);
   storageSet(cacheKey, JSON.stringify(allRows)).catch(function () {});
   setLoading(false);
- }, [seasonYear]);
+ // Depending on the seasonData reference, not just seasonYear, matters
+ // because the Refresh button (App.jsx's handleRefresh) runs the crons
+ // and reloads seasonData without changing the year — loadSeason() always
+ // calls setActiveSeason() with a freshly fetched object, so this only
+ // re-fires on an actual reload, not every unrelated re-render.
+ }, [seasonYear, seasonData]);
 
  useEffect(function () { load(); }, [load]);
 
