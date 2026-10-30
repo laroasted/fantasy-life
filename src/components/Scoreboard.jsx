@@ -731,8 +731,11 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
    )}
    {showProjected && (
     <div style={{ textAlign: "center", fontSize: 10, color: theme.dim, marginBottom: 10, marginTop: -4 }}>
-     Monte Carlo simulation of where the season could land — not a guarantee.
-     Some categories (movies, music, awards) are low-confidence guesses; see the category view for detail.
+     Monte Carlo simulation of where the season could land. Based on current Vegas/Kalshi/Polymarket odds
+     where available — if future odds aren't available, current scores are shown instead.
+     Categories carry different confidence: sports are medium confidence given the data available on them,
+     movies and music are low-confidence guesses, and stock/country are a current snapshot with no projection.
+     See the category view for more detail.
     </div>
    )}
 
