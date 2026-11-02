@@ -255,6 +255,12 @@ function assignBasePointsWithTies(matched, totalMembers) {
 // One push per run, not one per event — this cron runs once daily
 // (vercel.json), so there's no spam risk, but 12 people don't need 7
 // separate notifications when 7 picks moved overnight.
+//
+// title carries the actual message, not the app name: Safari/iOS already
+// shows "from Fantasy Life" as a platform-level second line on every web
+// push notification (not something the Notification API can suppress),
+// so a literal "Fantasy Life" title just duplicated it. Putting the real
+// content in title instead removes that redundancy and is more useful.
 function buildScoreDigest(scoreEvents, memberNameById) {
   if (scoreEvents.length === 0) return null;
   if (scoreEvents.length === 1) {
@@ -262,13 +268,13 @@ function buildScoreDigest(scoreEvents, memberNameById) {
     const name = memberNameById[e.member_id] || e.member_id;
     const sign = e.delta > 0 ? '+' : '';
     return {
-      title: 'Fantasy Life',
-      body: `${name} ${sign}${e.delta} in ${e.category}${e.cause ? ' — ' + e.cause : ''}`,
+      title: `${name} ${sign}${e.delta} in ${e.category}`,
+      body: e.cause || 'Scoreboard updated',
     };
   }
   return {
-    title: 'Fantasy Life',
-    body: `${scoreEvents.length} score updates overnight — tap to see what changed.`,
+    title: `${scoreEvents.length} score updates`,
+    body: 'Tap to see what changed.',
   };
 }
 

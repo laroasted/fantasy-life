@@ -59,9 +59,13 @@ async function handleUnsubscribe(req, res, supabase) {
 }
 
 async function handleTest(req, res, supabase) {
+  // title carries the real content, not the app name — Safari/iOS already
+  // shows "from Fantasy Life" as its own platform-level second line on
+  // every web push notification, so a literal "Fantasy Life" title here
+  // would just duplicate it.
   const result = await sendPushToAllSubscribers(supabase, {
-    title: 'Fantasy Life',
-    body: 'Test notification — if you can see this, push is working.',
+    title: 'Test notification',
+    body: 'If you can see this, push is working.',
   });
   return res.status(200).json(result);
 }
