@@ -425,7 +425,17 @@ module.exports = async function handler(req, res) {
     else console.log(`Wrote ${scoreEvents.length} score_events rows`);
 
     const digest = buildScoreDigest(scoreEvents, memberNameById);
-    if (digest) await sendPushToAllSubscribers(supabase, digest);
+    if (digest) {
+      // Belt-and-suspenders on top of sendPushToAllSubscribers()'s own
+      // internal error handling: scores and score_events have already been
+      // written above, so nothing past this point may ever fail the cron's
+      // response, whatever goes wrong sending the digest.
+      try {
+        await sendPushToAllSubscribers(supabase, digest);
+      } catch (pushErr) {
+        console.error('Push: digest send failed:', pushErr.message);
+      }
+    }
   }
 
   console.log('\nDone!');

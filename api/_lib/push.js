@@ -42,7 +42,17 @@ function ensureConfigured() {
     console.warn('Push: VAPID env vars not fully set, skipping send.');
     return false;
   }
-  webpush.setVapidDetails(subject, publicKey, privateKey);
+  // setVapidDetails throws synchronously on a malformed value (e.g.
+  // VAPID_SUBJECT missing its required mailto:/https: prefix) — a
+  // misconfigured env var must degrade to "no push sent", never bubble up
+  // and fail whatever cron called sendPushToAllSubscribers() after it had
+  // already done its real work.
+  try {
+    webpush.setVapidDetails(subject, publicKey, privateKey);
+  } catch (err) {
+    console.error('Push: invalid VAPID configuration, skipping send:', err.message);
+    return false;
+  }
   configured = true;
   return true;
 }
