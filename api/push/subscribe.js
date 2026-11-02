@@ -3,6 +3,7 @@
 // endpoint itself — same stance as api/refresh-all.js: regular visitors
 // are expected to call it directly.
 const { createClient } = require('@supabase/supabase-js');
+const { isAllowedPushEndpoint } = require('../_lib/push');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -18,6 +19,9 @@ module.exports = async function handler(req, res) {
   const { endpoint, keys } = req.body || {};
   if (!endpoint || !keys || !keys.p256dh || !keys.auth) {
     return res.status(400).json({ error: 'Invalid subscription payload' });
+  }
+  if (!isAllowedPushEndpoint(endpoint)) {
+    return res.status(400).json({ error: 'Unrecognized push endpoint' });
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);

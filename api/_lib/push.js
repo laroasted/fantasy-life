@@ -5,6 +5,33 @@
 // endpoint.
 const webpush = require('web-push');
 
+// Known Web Push service hosts (Chrome/Edge/Samsung via FCM, Firefox,
+// Safari, legacy Edge/WNS). api/push/subscribe.js is unauthenticated by
+// design (see its own comment), so without this allowlist anyone could
+// POST an arbitrary endpoint URL and have it stored — then
+// sendPushToAllSubscribers() would dutifully make an outbound request to
+// that attacker-chosen URL on every cron run. Restricting to real push
+// services closes that off.
+const ALLOWED_PUSH_HOSTS = [
+  'fcm.googleapis.com',
+  'android.googleapis.com',
+  'updates.push.services.mozilla.com',
+  'web.push.apple.com',
+  'notify.windows.com',
+];
+
+function isAllowedPushEndpoint(endpoint) {
+  try {
+    const url = new URL(endpoint);
+    if (url.protocol !== 'https:') return false;
+    return ALLOWED_PUSH_HOSTS.some(
+      (host) => url.hostname === host || url.hostname.endsWith('.' + host)
+    );
+  } catch {
+    return false;
+  }
+}
+
 let configured = false;
 function ensureConfigured() {
   if (configured) return true;
@@ -69,4 +96,4 @@ async function sendPushToAllSubscribers(supabase, { title, body, url = '/' }) {
   return { sent, failed };
 }
 
-module.exports = { sendPushToAllSubscribers };
+module.exports = { sendPushToAllSubscribers, isAllowedPushEndpoint };
