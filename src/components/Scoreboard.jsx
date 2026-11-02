@@ -1,14 +1,15 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, memo } from "react";
 import { Lock, ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle } from "../constants/theme";
 import { rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
 import { track, EVENTS } from "../utils/analytics";
+import { useViewport } from "../utils/useViewport";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
 import PayPalButton from "./PayPalButton";
 import ScrollFadeEdges from "./ScrollFadeEdges";
-import { Badge, CategoryPill } from "./Badges";
+import { Badge, CategoryPill, Avatar } from "./Badges";
 import ActivityFeed from "./ActivityFeed";
 
 var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
@@ -39,7 +40,9 @@ var RANK_TEXT_COLORS = {
 // ─── Rank badge — replaces the old medal emoji, which rendered small and
 // hard to read on some platforms. Shows the actual rank NUMBER always (so
 // two members tied for 2nd both clearly read "2", not a mismatched medal).
-function RankBadge({ rank, size }) {
+// Memoized: one of these renders per roster row, and its only inputs are
+// `rank`/`size` — no reason for it to re-render on, say, a toast timer.
+var RankBadge = memo(function RankBadge({ rank, size }) {
  var dim = size <= 13 ? 22 : 25;
  if (rank === 1) {
   return <Badge color={theme.acc} shape="circle" size={dim} bgAlpha="26" borderAlpha="">{rank}</Badge>;
@@ -52,10 +55,10 @@ function RankBadge({ rank, size }) {
    fontSize: size, fontWeight: 800,
   }}>{rank}</span>
  );
-}
+});
 
 // ─── Small lock indicator that players see on the scoreboard ───
-function LockIndicator({ note }) {
+var LockIndicator = memo(function LockIndicator({ note }) {
  var _h = useState(false), hover = _h[0], setHover = _h[1];
  return (
   <span style={{ position: "relative", display: "inline-flex", alignItems: "center", marginLeft: 4 }}
@@ -73,7 +76,7 @@ function LockIndicator({ note }) {
    )}
   </span>
  );
-}
+});
  
 export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
  var surfaceName = surface || "scoreboard";
@@ -87,20 +90,11 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
   return fromUrl && CATEGORY_ORDER.includes(fromUrl) ? fromUrl : null;
  }), selCat = _s[0], setSelCat = _s[1];
  var _e = useState(null), expRow = _e[0], setExpRow = _e[1];
- var _m = useState(window.innerWidth < 640), isMobile = _m[0], setIsMobile = _m[1];
- // MOCK ONLY — "wide" breakpoint for the page-level sidebar layout preview.
- var _w = useState(window.innerWidth >= 1024), isWide = _w[0], setIsWide = _w[1];
+ // Shared with App.jsx via useViewport() — see that hook for why this used
+ // to be two independently-maintained resize listeners.
+ var _vp = useViewport(), isMobile = _vp.isMobile, isWide = _vp.isWide;
  var _t = useState(null), toast = _t[0], setToast = _t[1];
  var pillsRef = useRef(null);
-
- useEffect(function () {
-  var onResize = function () {
-   setIsMobile(window.innerWidth < 640);
-   setIsWide(window.innerWidth >= 1024);
-  };
-  window.addEventListener("resize", onResize);
-  return function () { window.removeEventListener("resize", onResize); };
- }, []);
 
  useEffect(function () {
   if (surfaceName !== "scoreboard") return;
@@ -759,7 +753,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
       var memberPaywalled = isPaywalled(seasonData, m.id);
       return (
        <div key={m.owner}>
-        <div onClick={function () {
+        <div className="interactive" onClick={function () {
            if (!isExp) track(EVENTS.MEMBER_ROW_EXPANDED, { surface: surfaceName, category: "overall", member_name: m.owner });
            setExpRow(isExp ? null : m.owner);
           }}
@@ -772,8 +766,11 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           gridTemplateColumns: isMobile ? "28px 1fr 50px 16px" : "32px 1fr 60px 20px",
           alignItems: "center", gap: 4 }}>
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
-          <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
-           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 8, minWidth: 0 }}>
+           <Avatar name={m.owner} color={MEMBER_COLORS[m.id]} size={isMobile ? 20 : 24} />
+           <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
+          </span>
           <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
            {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
            <span style={Object.assign({ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" },
@@ -832,7 +829,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
              var pickEntry = (cats[k] || []).find(function (x) { return x.owner === m.owner; });
              var pickName = pickEntry ? pickEntry.pick : "";
              return (
-              <div key={k}
+              <div key={k} className="interactive"
                onClick={function (e) {
                  e.stopPropagation();
                  track(EVENTS.OVERALL_CATEGORY_TILE_CLICKED, { category: k });
@@ -872,7 +869,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
        var memberPaywalled = isPaywalled(seasonData, mid);
        return (
         <div key={m.owner}>
-         <div onClick={function () {
+         <div className="interactive" onClick={function () {
             if (!isExp) track(EVENTS.MEMBER_ROW_EXPANDED, { surface: surfaceName, category: selCat, member_name: m.owner });
             setExpRow(isExp ? null : m.owner);
            }}
@@ -886,7 +883,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           }}>
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
           <div style={{ minWidth: 0 }}>
-           <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <Avatar name={m.owner} color={MEMBER_COLORS[mid]} size={isMobile ? 18 : 20} />
             <span style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: MEMBER_COLORS[mid] || "#f1f5f9",
              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
              {m.owner}
@@ -985,7 +983,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
          return isPaywalled(seasonData, id);
         });
         return (
-         <div key={cl.key} onClick={function () {
+         <div key={cl.key} className="interactive" onClick={function () {
             track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surfaceName, category: cl.key, previous_category: selCat || "overall" });
             setSelCat(cl.key); setExpRow(null);
            }}

@@ -103,7 +103,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `member_row_expanded` | scoreboard | `surface`, `category`, `member_name` |
 | `data_fallback_used` | season, calendar, trends, activity_feed | `surface`, `fallback_level`, `reason` |
 | `app_loaded` | app | `data_source`, `is_mobile`, `archived_season_count` |
-| `season_loaded` | app | `data_source`, `year`, `is_refresh` |
+| `season_loaded` | app | `data_source`, `year`, `is_refresh`, `trigger` (`initial`\|`manual_refresh`\|`realtime`) |
 | `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms`, `is_skipped` |
 | `overall_category_tile_clicked` | scoreboard | `category` |
 | `activity_feed_load_failed` | scoreboard | `error_message` |

@@ -5,6 +5,7 @@ import { CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
 import { isPaywalled } from "../utils/helpers";
+import { Avatar, Skeleton } from "./Badges";
 
 var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
 var FEED_LIMIT = 15;
@@ -95,7 +96,19 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
   return (
    <div style={Object.assign({}, cardStyle, { padding: 16 })}>
     <div style={titleStyle}>Activity</div>
-    <div style={{ fontSize: 11, color: theme.dim }}>Loading…</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+     {Array.from({ length: 4 }).map(function (_, i) {
+      return (
+       <div key={i} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+         <Skeleton width={70} height={11} />
+         <Skeleton width={28} height={11} />
+        </div>
+        <Skeleton width="80%" height={9} />
+       </div>
+      );
+     })}
+    </div>
    </div>
   );
  }
@@ -135,15 +148,19 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
      var clickable = !!onCategorySelect;
      return (
       <div key={idx}
+       className={clickable ? "interactive" : undefined}
        onClick={clickable ? function () {
          track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surface || "scoreboard", category: ev.category, previous_category: "activity_feed" });
          onCategorySelect(ev.category);
         } : undefined}
        style={{ cursor: clickable ? "pointer" : "default" }}>
-       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: MEMBER_COLORS[ev.member_id] || theme.txt,
-         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-         {memberName}
+       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+         <Avatar name={memberName} color={MEMBER_COLORS[ev.member_id]} size={18} />
+         <span style={{ fontSize: 12, fontWeight: 700, color: MEMBER_COLORS[ev.member_id] || theme.txt,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {memberName}
+         </span>
         </span>
         <span style={Object.assign(
           { fontSize: 12, fontWeight: 800, color: positive ? theme.grn : theme.red, flexShrink: 0 },

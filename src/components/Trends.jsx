@@ -6,7 +6,7 @@ import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
 import ScrollFadeEdges from "./ScrollFadeEdges";
-import { Dot, CategoryPill } from "./Badges";
+import { Dot, CategoryPill, Avatar, Skeleton } from "./Badges";
 
 // ══════════════════════════════════════════════════════
 //  TRENDS — standings-over-time chart, backed by the
@@ -60,8 +60,8 @@ function SparkTile({ sr, firstDateLabel, isMobile, onClick }) {
       padding: 10, cursor: "pointer", minWidth: 0,
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: sr.color, minWidth: 0 }}>
-          <Dot color={sr.color} />
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: sr.color, minWidth: 0 }}>
+          <Avatar name={sr.name} color={sr.color} size={18} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sr.name}</span>
         </span>
         <span style={{ fontSize: 13, fontWeight: 800, color: s.txt, flexShrink: 0 }}>{last}</span>
@@ -343,9 +343,22 @@ export default function Trends({ seasonData }) {
 
   if (loading) {
     return (
-      <div style={{ maxWidth: 800, margin: "0 auto", textAlign: "center", padding: 60, color: s.dim }}>
-        <TrendingUp size={24} style={{ marginBottom: 8 }} />
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Loading trends...</div>
+      <div style={{ maxWidth: 800, margin: "0 auto" }}>
+        <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 16, flexWrap: "wrap" }}>
+          {[48, 60, 56, 64, 52].map((w, i) => <Skeleton key={i} width={w} height={24} radius={20} />)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} style={{ background: s.srf, border: "1px solid " + s.bdr, borderRadius: radius.sm,
+              padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <Skeleton width={60} height={12} />
+                <Skeleton width={24} height={12} />
+              </div>
+              <Skeleton height={34} radius={4} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -581,7 +594,7 @@ export default function Trends({ seasonData }) {
               const isFocused = focusId === lb.id;
               const dimmed = focusId && !isFocused;
               return (
-                <g key={"lbl" + lb.id} onClick={() => toggleFocus(lb.id)} style={{ cursor: "pointer" }}>
+                <g key={"lbl" + lb.id} className="interactive" onClick={() => toggleFocus(lb.id)} style={{ cursor: "pointer" }}>
                   <rect x={xFor(n - 1)} y={lb.y - 12} width={padR} height={24} fill="transparent" />
                   {shifted && (
                     <line x1={xFor(n - 1) + 2} y1={lb.actualY} x2={xFor(n - 1) + 7} y2={lb.y}

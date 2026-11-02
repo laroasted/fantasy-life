@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, Component } from "react";
 import {
   Trophy,
   BarChart3,
@@ -12,6 +12,7 @@ import {
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
 import { withTimeout } from "./utils/helpers";
+import { useViewport } from "./utils/useViewport";
 import {
   supabase,
   storageGet,
@@ -28,14 +29,21 @@ import {
   getConfiguredCommissionerEmails,
 } from "./utils/storage";
 import Scoreboard from "./components/Scoreboard";
-import DraftTool from "./components/DraftTool";
-import SeasonSettings from "./components/SeasonSettings";
-import Calendar from "./components/Calendar";
-import DraftRecap from "./components/DraftRecap";
-import Trends from "./components/Trends";
-import PrivacyPolicy from "./components/PrivacyPolicy";
 import AdUnit from "./components/AdUnit";
 import ScrollFadeEdges from "./components/ScrollFadeEdges";
+import { Skeleton } from "./components/Badges";
+
+// Scoreboard (above) is the default tab and the one every link/share
+// lands on, so it stays an eager import — everything below only costs a
+// visitor anything the moment they actually click that tab. These six
+// cover every non-Scoreboard destination in App.jsx's TABS array plus
+// Settings/Privacy, which aren't in TABS but are still reachable.
+const DraftTool = lazy(() => import("./components/DraftTool"));
+const SeasonSettings = lazy(() => import("./components/SeasonSettings"));
+const Calendar = lazy(() => import("./components/Calendar"));
+const DraftRecap = lazy(() => import("./components/DraftRecap"));
+const Trends = lazy(() => import("./components/Trends"));
+const PrivacyPolicy = lazy(() => import("./components/PrivacyPolicy"));
 import {
   track,
   EVENTS,
@@ -60,6 +68,57 @@ const TAB_IDS = TABS.map(function (t) { return t.id; }).concat(["privacy", "sett
 
 // Lets a link like "?tab=draft" land directly on that tab instead of
 // always opening to Scoreboard, so a tab is actually shareable.
+// Suspense fallback while a lazy-loaded tab's chunk downloads — distinct
+// from (and much shorter-lived than) that tab's own internal data-loading
+// skeleton, which only shows once the component itself has mounted.
+function TabFallback() {
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
+      <Skeleton height={16} width="35%" />
+      <Skeleton height={70} radius={12} />
+      <Skeleton height={70} radius={12} />
+    </div>
+  );
+}
+
+// Catches a lazy tab chunk failing to load (transient network/CDN blip, or
+// a stale client holding a chunk hash a new deploy no longer serves).
+// Suspense alone only covers the *pending* state — a rejected dynamic
+// import throws, and without a boundary that escapes all the way past
+// this component, taking the eagerly-mounted Scoreboard/header down with
+// it instead of just the one optional tab. Resets automatically on the
+// next tab switch because it lives inside the activeTab-keyed div below,
+// which remounts it.
+class TabErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.error("Tab failed to load:", error);
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>
+          <div style={{ marginBottom: 12, fontSize: 14 }}>
+            This tab couldn't load — probably a network blip.
+          </div>
+          <button onClick={() => window.location.reload()}
+            style={{ background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
+              padding: "7px 16px", color: theme.txt, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function tabFromUrl() {
   var params = new URLSearchParams(window.location.search);
   var fromUrl = params.get("tab");
@@ -87,11 +146,10 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [dataSource, setDataSource] = useState("loading");
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
-  // MOCK ONLY — mirrors Scoreboard.jsx's own "wide" breakpoint so the
-  // header can widen in lockstep with Scoreboard's sidebar instead of
-  // staying a fixed 900px while Scoreboard goes to 1080px.
-  const [isWide, setIsWide] = useState(window.innerWidth >= 1024);
+  // Shared with Scoreboard.jsx via useViewport() so the header widens in
+  // lockstep with Scoreboard's sidebar instead of the two hand-copying the
+  // same breakpoint numbers (see useViewport.js).
+  const { isMobile, isWide } = useViewport();
   const [authReady, setAuthReady] = useState(false);
   const [commissionerSession, setCommissionerSession] = useState(null);
   const [commissionerRole, setCommissionerRole] = useState(null);
@@ -104,16 +162,6 @@ export default function App() {
   const configuredCommissioners = getConfiguredCommissionerEmails();
   const isCommissioner = commissionerRole === "commissioner" || commissionerRole === "admin";
  
-  // Track viewport width
-  useEffect(() => {
-    const onResize = () => {
-      setIsMobile(window.innerWidth < 640);
-      setIsWide(window.innerWidth >= 1024);
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
   useEffect(() => { setDeviceTypeSuperProperty(isMobile); }, [isMobile]);
 
   // Keep the URL in sync with the active tab so a tab is a link someone can
@@ -212,7 +260,8 @@ export default function App() {
   }, [authReady, commissionerRole, commissionerSession]);
  
   const lastSourceRef = useRef(null);
-  const loadSeason = useCallback(async (showRefreshing = false) => {
+  const loadSeason = useCallback(async (showRefreshing = false, trigger) => {
+    var resolvedTrigger = trigger || (showRefreshing ? "manual_refresh" : "initial");
     if (showRefreshing) setRefreshing(true);
     // 10s timeout: a signed-in Supabase client can internally hang while
     // resolving the session before firing this request (SDK quirk) — fall
@@ -245,7 +294,7 @@ export default function App() {
     setDataSource(source);
     setLastUpdated(new Date());
     setSeasonSuperProperties({ year: active?.year, dataSource: source });
-    track(EVENTS.SEASON_LOADED, { data_source: source, year: active?.year, is_refresh: showRefreshing });
+    track(EVENTS.SEASON_LOADED, { data_source: source, year: active?.year, is_refresh: showRefreshing, trigger: resolvedTrigger });
     lastSourceRef.current = source;
     if (showRefreshing) setRefreshing(false);
     return active;
@@ -554,6 +603,59 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeSeason]);
 
+  // ── Live scores via Supabase Realtime ──
+  // The crons in vercel.json (update-sports, update-stocks, etc.) run on
+  // their own daily schedule whether or not anyone has the app open — see
+  // supabase/phase8_realtime.sql. Without this subscription, a league
+  // member only ever sees a cron's result after clicking Refresh (which
+  // also re-fetches) or reloading the page. This augments that button,
+  // it doesn't replace it: Refresh still hits /api/refresh-all to run the
+  // crons on demand, which realtime can't do — this just picks up
+  // whatever a cron already wrote, for whoever's looking at the live
+  // season, without them lifting a finger.
+  const [realtimeLive, setRealtimeLive] = useState(false);
+  const [justSynced, setJustSynced] = useState(false);
+  const activeYear = activeSeason ? activeSeason.year : null;
+  useEffect(() => {
+    if (!isViewingActive || !activeYear) {
+      setRealtimeLive(false);
+      return;
+    }
+    let cancelled = false;
+    let debounceTimer = null;
+
+    // A single cron run touches many `picks` rows (plus several
+    // `score_events` inserts) in one burst — debounce so that burst
+    // becomes one quiet reload, not a dozen.
+    function scheduleReload() {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        if (cancelled) return;
+        await loadSeason(false, "realtime");
+        if (cancelled) return;
+        setJustSynced(true);
+        setTimeout(() => { if (!cancelled) setJustSynced(false); }, 2500);
+      }, 1200);
+    }
+
+    const channel = supabase
+      .channel("season-" + activeYear + "-live")
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "picks", filter: "season_year=eq." + activeYear },
+        scheduleReload)
+      .on("postgres_changes",
+        { event: "INSERT", schema: "public", table: "score_events", filter: "season_year=eq." + activeYear },
+        scheduleReload)
+      .subscribe((status) => { if (!cancelled) setRealtimeLive(status === "SUBSCRIBED"); });
+
+    return () => {
+      cancelled = true;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      setRealtimeLive(false);
+      supabase.removeChannel(channel);
+    };
+  }, [activeYear, isViewingActive, loadSeason]);
+
   if (!loaded) {
     return (
       <div style={{ background: theme.bg, minHeight: "100vh", display: "flex", flexDirection: "column",
@@ -736,7 +838,7 @@ export default function App() {
       </div>
 
       {/* ── Tab Content ── */}
-      <div style={{ padding: isMobile ? "12px 8px" : "20px 16px" }}>
+      <div key={activeTab} style={{ padding: isMobile ? "12px 8px" : "20px 16px", animation: "fadeSlideIn 0.2s ease" }}>
         {["scoreboard", "trends", "calendar", "recap"].includes(activeTab) && availableSeasons.length > 1 && (
           <div style={{ maxWidth: 760, margin: "0 auto 14px", display: "flex", alignItems: "center",
             justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
@@ -767,11 +869,13 @@ export default function App() {
                 <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
                   <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
-                    background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red }} />
-                  {dataSource === "supabase" ? "Live" : dataSource === "local" ? "Cached" : "Offline"}
-                  {" "}· Updated {lastUpdated.toLocaleTimeString()}
+                    background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red,
+                    animation: justSynced ? "livePulse 0.6s ease" : "none" }} />
+                  {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live") : dataSource === "local" ? "Cached" : "Offline"}
+                  {" "}· {justSynced ? "Updated just now" : "Updated " + lastUpdated.toLocaleTimeString()}
                 </p>
               )}
+              <style>{`@keyframes livePulse { 0% { transform: scale(1); } 45% { transform: scale(2.2); } 100% { transform: scale(1); } }`}</style>
               {isViewingActive && (biggestRiser || biggestFaller || nextEvent) && (
                 <div style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -818,30 +922,56 @@ export default function App() {
           </div>
         )}
         {activeTab === "trends" && (
-          <Trends seasonData={viewingSeasonData} />
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <Trends seasonData={viewingSeasonData} />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "calendar" && (
-          <Calendar seasonYear={viewingYear} />
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <Calendar seasonYear={viewingYear} />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "recap" && (
-          <DraftRecap seasonYear={viewingYear} />
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <DraftRecap seasonYear={viewingYear} />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "draft" && (
-          <DraftTool
-            onFinalize={handleFinalize}
-            isCommissioner={isCommissioner}
-            commissionerEmail={commissionerSession?.user?.email || ""}
-          />
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <DraftTool
+                onFinalize={handleFinalize}
+                isCommissioner={isCommissioner}
+                commissionerEmail={commissionerSession?.user?.email || ""}
+              />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "settings" && (
-          <SeasonSettings
-            seasonData={activeSeason}
-            onSave={handleSettingsSave}
-            isCommissioner={isCommissioner}
-            commissionerEmail={commissionerSession?.user?.email || ""}
-          />
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <SeasonSettings
+                seasonData={activeSeason}
+                onSave={handleSettingsSave}
+                isCommissioner={isCommissioner}
+                commissionerEmail={commissionerSession?.user?.email || ""}
+              />
+            </Suspense>
+          </TabErrorBoundary>
         )}
-        {activeTab === "privacy" && <PrivacyPolicy />}
+        {activeTab === "privacy" && (
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <PrivacyPolicy />
+            </Suspense>
+          </TabErrorBoundary>
+        )}
       </div>
 
       {/* ── Footer ── */}
