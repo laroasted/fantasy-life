@@ -1,14 +1,14 @@
 // Browser-side half of Web Push notifications. Requests permission,
 // subscribes via the service worker's PushManager, and syncs the
-// subscription to Supabase through api/push/subscribe.js — api/_lib/push.js
-// reads push_subscriptions back out to actually send. See
-// src/service-worker.js for the receiving half (push/notificationclick
-// handlers) and AGENTS.md's "Push notifications" section for the full
-// picture. Every export stays a silent, typed failure rather than a thrown
-// error — same defensive stance as src/utils/analytics.js, since this must
-// never be able to break the app for visitors on browsers/OSes without
-// push support (notably iOS Safari unless the site's been added to the
-// home screen).
+// subscription to Supabase through api/push.js (?action=subscribe /
+// ?action=unsubscribe) — api/_lib/push.js reads push_subscriptions back
+// out to actually send. See src/service-worker.js for the receiving half
+// (push/notificationclick handlers) and AGENTS.md's "Push notifications"
+// section for the full picture. Every export stays a silent, typed
+// failure rather than a thrown error — same defensive stance as
+// src/utils/analytics.js, since this must never be able to break the app
+// for visitors on browsers/OSes without push support (notably iOS Safari
+// unless the site's been added to the home screen).
 
 const VAPID_PUBLIC_KEY = process.env.REACT_APP_VAPID_PUBLIC_KEY;
 
@@ -57,7 +57,7 @@ export async function subscribeToPush() {
     }
 
     const { endpoint, keys } = subscription.toJSON();
-    const res = await fetch("/api/push/subscribe", {
+    const res = await fetch("/api/push?action=subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpoint, keys }),
@@ -79,7 +79,7 @@ export async function unsubscribeFromPush() {
 
     const endpoint = subscription.endpoint;
     await subscription.unsubscribe();
-    await fetch("/api/push/unsubscribe", {
+    await fetch("/api/push?action=unsubscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpoint }),
