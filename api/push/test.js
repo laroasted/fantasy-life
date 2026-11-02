@@ -6,6 +6,12 @@
 // the real send path). Gated behind CRON_SECRET, same as the crons —
 // unlike subscribe.js/unsubscribe.js this isn't meant for regular
 // visitors to hit.
+//
+// Unlike the crons' own auth check, this fails closed if CRON_SECRET
+// isn't set: the crons running unauthenticated when unconfigured is an
+// existing tradeoff for a different endpoint shape, but this one sends
+// real pushes to every subscriber on request, so a missing secret must
+// never silently mean "open to anyone."
 const { createClient } = require('@supabase/supabase-js');
 const { sendPushToAllSubscribers } = require('../_lib/push');
 
@@ -15,7 +21,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 module.exports = async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   if (!SUPABASE_SERVICE_KEY) {
