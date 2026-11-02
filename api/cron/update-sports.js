@@ -47,7 +47,8 @@
  */
  
 const { createClient } = require('@supabase/supabase-js');
- 
+const { sendPushToAllSubscribers } = require('../_lib/push');
+
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
  
@@ -250,7 +251,27 @@ function assignBasePointsWithTies(matched, totalMembers) {
   }
   return result;
 }
- 
+
+// One push per run, not one per event — this cron runs once daily
+// (vercel.json), so there's no spam risk, but 12 people don't need 7
+// separate notifications when 7 picks moved overnight.
+function buildScoreDigest(scoreEvents, memberNameById) {
+  if (scoreEvents.length === 0) return null;
+  if (scoreEvents.length === 1) {
+    const e = scoreEvents[0];
+    const name = memberNameById[e.member_id] || e.member_id;
+    const sign = e.delta > 0 ? '+' : '';
+    return {
+      title: 'Fantasy Life',
+      body: `${name} ${sign}${e.delta} in ${e.category}${e.cause ? ' — ' + e.cause : ''}`,
+    };
+  }
+  return {
+    title: 'Fantasy Life',
+    body: `${scoreEvents.length} score updates overnight — tap to see what changed.`,
+  };
+}
+
 module.exports = async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   const cronSecret = process.env.CRON_SECRET;
@@ -402,6 +423,9 @@ module.exports = async function handler(req, res) {
     // it is — same as snapshot-scores.js's relationship to score_history.
     if (eventsErr) console.error(`Failed to write score_events: ${eventsErr.message}`);
     else console.log(`Wrote ${scoreEvents.length} score_events rows`);
+
+    const digest = buildScoreDigest(scoreEvents, memberNameById);
+    if (digest) await sendPushToAllSubscribers(supabase, digest);
   }
 
   console.log('\nDone!');

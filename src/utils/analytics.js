@@ -112,6 +112,7 @@ export const EVENTS = {
   CATEGORY_FILTER_CHANGED: "category_filter_changed",
   MEMBER_ROW_EXPANDED: "member_row_expanded",
   DATA_FALLBACK_USED: "data_fallback_used",
+  PUSH_NOTIFICATIONS_TOGGLED: "push_notifications_toggled",
 
   // App lifecycle
   APP_LOADED: "app_loaded",
