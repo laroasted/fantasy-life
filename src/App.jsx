@@ -591,8 +591,12 @@ export default function App() {
           if (delta < 0 && (!faller || delta < faller.delta)) faller = { memberId: mid, delta: delta };
         });
         if (cancelled) return;
-        if (riser) setBiggestRiser({ name: memberNameById[riser.memberId] || riser.memberId, delta: riser.delta });
-        if (faller) setBiggestFaller({ name: memberNameById[faller.memberId] || faller.memberId, delta: faller.delta });
+        // Explicitly null out a side with no mover this cycle (not just
+        // "leave whatever was there") — this is a genuine, successful
+        // result, not an error or an inconclusive fetch, so a stale mover
+        // from a previous week must not linger once it's no longer true.
+        setBiggestRiser(riser ? { name: memberNameById[riser.memberId] || riser.memberId, delta: riser.delta } : null);
+        setBiggestFaller(faller ? { name: memberNameById[faller.memberId] || faller.memberId, delta: faller.delta } : null);
       } catch (e) {
         console.warn("Orientation strip: score_history fetch failed, omitting riser/faller:", e);
       }
@@ -609,7 +613,8 @@ export default function App() {
           .order("event_date")
           .order("sort_order")
           .limit(1);
-        if (cancelled || error || !data || data.length === 0) return;
+        if (cancelled || error) return; // fetch failed — leave whatever was already shown
+        if (!data || data.length === 0) { setNextEvent(null); return; } // succeeded: genuinely nothing upcoming (e.g. past the season's last event)
         setNextEvent({ title: data[0].title, date: data[0].event_date });
       } catch (e) {
         console.warn("Orientation strip: calendar_events fetch failed, omitting next event:", e);
