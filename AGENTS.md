@@ -232,16 +232,27 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   `src/utils/push.js` holds the browser-side logic: `subscribeToPush()`
   requests `Notification` permission, subscribes via
   `registration.pushManager.subscribe()` with the VAPID public key, and
-  POSTs the resulting `{endpoint, keys}` to `api/push/subscribe.js`;
+  POSTs the resulting `{endpoint, keys}` to `api/push.js?action=subscribe`;
   `unsubscribeFromPush()` is the mirror image, through
-  `api/push/unsubscribe.js`.
+  `api/push.js?action=unsubscribe`. All three actions (`subscribe`,
+  `unsubscribe`, the manual `test` trigger) live in the one file
+  `api/push.js`, dispatched by the `?action=` query param rather than a
+  separate file per route or a `[action].js` dynamic path segment — a
+  separate file per route would push this app's Serverless Function
+  count over the Vercel Hobby plan's 12-per-deployment cap (this repo
+  sits at exactly 11; every file directly under `api/` not prefixed `_`
+  is its own function), and the bracket-segment version specifically
+  does not route correctly on this project's Vercel config — a request
+  to it 404/405s through the static SPA fallback instead of reaching
+  the function. A flat, non-nested filename is what every other route
+  in this app already uses successfully, so this mirrors that.
 - **Storage:** `supabase/phase9_push_subscriptions.sql`'s
   `push_subscriptions` table — one row per browser subscription (not per
   person; there's no regular-member identity to key on). `endpoint` is
   unique and is itself the authorization check (unguessable bearer
   token), so the table has **no anon/authenticated RLS policies at all**
-  — `api/push/subscribe.js`/`unsubscribe.js` write with the service role
-  key, same pattern as every other write in this app.
+  — `api/push.js` writes with the service role key, same pattern as
+  every other write in this app.
 - **Sending:** `api/_lib/push.js`'s `sendPushToAllSubscribers()`, via the
   `web-push` package and three env vars (`REACT_APP_VAPID_PUBLIC_KEY`,
   server-only `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`). A subscription the

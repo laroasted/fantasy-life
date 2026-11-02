@@ -1,17 +1,25 @@
 // Consolidated push endpoint — handles subscribe, unsubscribe, and the
-// manual test trigger as ONE Vercel Serverless Function instead of three,
-// via Vercel's [action] dynamic route segment (req.query.action).
+// manual test trigger as ONE Vercel Serverless Function instead of
+// three, dispatched by an ?action= query param (req.query.action)
+// rather than a URL path segment.
 //
-// Why: the Hobby plan caps a deployment at 12 Serverless Functions total.
-// This repo was already at exactly 12 (api/refresh-all.js + the 9
-// api/cron/*.js jobs + two push routes) before a third push file
-// (api/push/test.js, added as its own function) pushed it to 13 and
-// broke every deployment. Collapsing the three into this one file drops
-// the total back to 11. The URLs are unchanged (/api/push/subscribe,
-// /api/push/unsubscribe, /api/push/test), so nothing calling them —
-// src/utils/push.js, or a manual curl — needs to change.
+// Why one function: the Hobby plan caps a deployment at 12 Serverless
+// Functions total. This repo was already at exactly 12 (api/refresh-all.js
+// + the 9 api/cron/*.js jobs + two push routes) before a third push file
+// pushed it to 13 and broke every deployment.
+//
+// Why a flat file + query param, not api/push/[action].js: tried that
+// first — it builds fine (still just one function) but never actually
+// routes in production here. A request to /api/push/test fell through
+// to the static SPA catch-all instead of reaching this file, 405'ing as
+// a GET/POST against index.html. api/refresh-all.js and every
+// api/cron/*.js file are flat, non-nested, bracket-free names and all
+// route correctly, so this mirrors that proven pattern instead of
+// relying on dynamic-segment routing this project's config doesn't
+// seem to support. Callers now hit /api/push?action=subscribe,
+// ?action=unsubscribe, ?action=test.
 const { createClient } = require('@supabase/supabase-js');
-const { sendPushToAllSubscribers, isAllowedPushEndpoint } = require('../_lib/push');
+const { sendPushToAllSubscribers, isAllowedPushEndpoint } = require('./_lib/push');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
