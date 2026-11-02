@@ -99,6 +99,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | Event | Surface(s) | Key properties |
 | --- | --- | --- |
 | `tab_viewed` | app-wide | `tab_name`, `previous_tab`, `is_mobile` |
+| `push_notifications_toggled` | app-wide | `is_enabled`, `reason` (on failure) |
 | `category_filter_changed` | scoreboard, trends, settings, recap | `surface`, `category`, `previous_category` |
 | `member_row_expanded` | scoreboard | `surface`, `category`, `member_name` |
 | `data_fallback_used` | season, calendar, trends, activity_feed | `surface`, `fallback_level`, `reason` |
@@ -215,6 +216,49 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   toggle in `src/components/Scoreboard.jsx`. Degrades to hiding the toggle
   entirely if no projections have loaded for the season — never blocks or
   errors the real scoreboard.
+
+## Push notifications (Web Push via the PWA)
+
+- Builds on the PWA setup (`public/manifest.json`, `src/service-worker.js`
+  — see that file's `push`/`notificationclick` handlers). Browser-native
+  push, not a third-party service. On iOS this only fires for a site
+  that's been Added to Home Screen (Safari doesn't deliver web push to an
+  ordinary browser tab); desktop and Android work from any tab, open or
+  closed.
+- **Opt-in UI:** the bell icon in `App.jsx`'s header, visible on every tab
+  whenever `isPushSupported()` is true (requires `serviceWorker`,
+  `PushManager`, `Notification`, and `REACT_APP_VAPID_PUBLIC_KEY` all
+  present — silently hidden otherwise, never a broken button).
+  `src/utils/push.js` holds the browser-side logic: `subscribeToPush()`
+  requests `Notification` permission, subscribes via
+  `registration.pushManager.subscribe()` with the VAPID public key, and
+  POSTs the resulting `{endpoint, keys}` to `api/push/subscribe.js`;
+  `unsubscribeFromPush()` is the mirror image, through
+  `api/push/unsubscribe.js`.
+- **Storage:** `supabase/phase9_push_subscriptions.sql`'s
+  `push_subscriptions` table — one row per browser subscription (not per
+  person; there's no regular-member identity to key on). `endpoint` is
+  unique and is itself the authorization check (unguessable bearer
+  token), so the table has **no anon/authenticated RLS policies at all**
+  — `api/push/subscribe.js`/`unsubscribe.js` write with the service role
+  key, same pattern as every other write in this app.
+- **Sending:** `api/_lib/push.js`'s `sendPushToAllSubscribers()`, via the
+  `web-push` package and three env vars (`REACT_APP_VAPID_PUBLIC_KEY`,
+  server-only `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`). A subscription the
+  push service reports as gone (404/410) is deleted automatically on
+  send, so the table self-cleans.
+- **The only current caller** is `api/cron/update-sports.js`, right after
+  it writes `score_events` — one digest per run via `buildScoreDigest()`
+  (single event → a specific message using the same `cause` text the
+  Activity Feed shows; multiple → a generic count). This cron runs once
+  daily (`vercel.json`), so there's no spam risk from this call site.
+  Every other cron stays silent for now — wiring in
+  college/stocks/entertainment/etc. is a deliberate future follow-up,
+  same reasoning as `score_events` itself only covering sports so far
+  (see phase7's own note).
+- No per-member targeting (e.g. "only notify me about my own score") —
+  every subscriber gets every digest. Revisit if that's annoying in
+  practice; not worth the complexity for a 12-person league up front.
 
 ## Governance
 

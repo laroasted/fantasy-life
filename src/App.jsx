@@ -8,6 +8,8 @@ import {
   ClipboardList,
   Target,
   Settings as SettingsIcon,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
@@ -52,6 +54,12 @@ import {
   setDeviceTypeSuperProperty,
   setSeasonSuperProperties,
 } from "./utils/analytics";
+import {
+  isPushSupported,
+  getExistingPushSubscription,
+  subscribeToPush,
+  unsubscribeFromPush,
+} from "./utils/push";
 
 const TABS = [
   { id: "scoreboard", label: "Scoreboard", Icon: BarChart3 },
@@ -158,7 +166,30 @@ export default function App() {
   const [biggestRiser, setBiggestRiser] = useState(null);
   const [biggestFaller, setBiggestFaller] = useState(null);
   const [nextEvent, setNextEvent] = useState(null);
- 
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!isPushSupported()) return;
+    setPushSupported(true);
+    getExistingPushSubscription().then((sub) => setPushEnabled(!!sub));
+  }, []);
+
+  const handlePushToggle = useCallback(async () => {
+    if (pushEnabled) {
+      await unsubscribeFromPush();
+      setPushEnabled(false);
+      track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, { is_enabled: false });
+    } else {
+      const result = await subscribeToPush();
+      setPushEnabled(result.ok);
+      track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, {
+        is_enabled: result.ok,
+        ...(!result.ok && { reason: result.reason }),
+      });
+    }
+  }, [pushEnabled]);
+
   const configuredCommissioners = getConfiguredCommissionerEmails();
   const isCommissioner = commissionerRole === "commissioner" || commissionerRole === "admin";
  
@@ -716,6 +747,24 @@ export default function App() {
                 fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0, color: "#FAFAFA",
               }}>Fantasy Life</h1>
             </div>
+            {pushSupported && (
+              <button
+                onClick={handlePushToggle}
+                title={pushEnabled ? "Turn off notifications" : "Get notified about score updates"}
+                style={{
+                  background: "none",
+                  border: "1px solid " + theme.bdr,
+                  borderRadius: 8,
+                  padding: isMobile ? "6px" : "6px 8px",
+                  color: pushEnabled ? theme.acc : theme.dim,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  flexShrink: 0,
+                }}>
+                {pushEnabled ? <Bell size={16} /> : <BellOff size={16} />}
+              </button>
+            )}
             {/* Commissioner auth only matters on Draft/Settings — keeping it off the
                 header on every other tab gives the primary surfaces (Scoreboard
                 especially) back the width this was eating on mobile. */}

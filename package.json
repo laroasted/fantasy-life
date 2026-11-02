@@ -9,7 +9,13 @@
     "mixpanel-browser": "^2.84.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1"
+    "react-scripts": "5.0.1",
+    "web-push": "^3.6.7",
+    "workbox-core": "^6.4.1",
+    "workbox-expiration": "^6.4.1",
+    "workbox-precaching": "^6.4.1",
+    "workbox-routing": "^6.4.1",
+    "workbox-strategies": "^6.4.1"
   },
   "scripts": {
     "start": "react-scripts start",
