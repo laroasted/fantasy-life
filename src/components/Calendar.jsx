@@ -3,6 +3,7 @@ import { Clock, CalendarDays } from "lucide-react";
 import { supabase } from "../utils/storage";
 import { theme } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
+import { Skeleton } from "./Badges";
  
 // ══════════════════════════════════════════════════════
 //  FANTASY LIFE CALENDAR
@@ -249,9 +250,21 @@ export default function Calendar({ seasonYear }) {
  
   if (loading) {
     return (
-      <div style={{ maxWidth:760, margin:"0 auto", textAlign:"center", padding:60, color:s.dim }}>
-        <CalendarDays size={24} style={{ marginBottom:8 }} />
-        <div style={{ fontSize:14, fontWeight:600 }}>Loading calendar...</div>
+      <div style={{ maxWidth: 760, margin: "0 auto" }}>
+        <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 18, flexWrap: "wrap" }}>
+          {[52, 64, 58, 70].map((w, i) => <Skeleton key={i} width={w} height={26} radius={20} />)}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Skeleton width={34} height={34} radius={10} />
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                <Skeleton width="55%" height={13} />
+                <Skeleton width="30%" height={10} />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -324,6 +337,7 @@ export default function Calendar({ seasonYear }) {
                   </div>
                 )}
                 <div ref={isFirst ? activeRef : null}
+                  className="interactive"
                   onClick={() => {
                     if (!isExp) {
                       track(EVENTS.CALENDAR_EVENT_EXPANDED, {

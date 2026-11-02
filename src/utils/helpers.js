@@ -99,6 +99,7 @@ export function expandedWrapperStyle(rank) {
   border: `1px solid ${rowBorder(rank)}`,
   borderTop: `1px solid ${theme.bdr}`,
   overflow: "hidden",
+  animation: "expandIn 0.18s ease",
  };
 }
 

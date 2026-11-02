@@ -7,6 +7,7 @@ import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { generateSnakeOrder } from "../utils/helpers";
 import { supabase } from "../utils/storage";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
+import { Avatar } from "./Badges";
  
 const TIMER_DURATION = 120;
  
@@ -648,9 +649,13 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               letterSpacing: 1, marginBottom: isMobile ? 4 : 8 }}>
               On The Clock · Pick #{currentPick + 1}
             </div>
-            <div style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800,
-              color: MEMBER_COLORS[member ? member.id : ""], marginBottom: isMobile ? 8 : 12 }}>
-              {member ? member.name : ""}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              marginBottom: isMobile ? 8 : 12 }}>
+              {member && <Avatar name={member.name} color={MEMBER_COLORS[member.id]} size={isMobile ? 28 : 34} />}
+              <span style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800,
+                color: MEMBER_COLORS[member ? member.id : ""] }}>
+                {member ? member.name : ""}
+              </span>
             </div>
             <div style={{ fontSize: isMobile ? 36 : 48, fontWeight: 800, fontFamily: "monospace",
               color: timer <= 15 ? theme.red : timer <= 30 ? theme.yel : theme.txt, marginBottom: 8 }}>

@@ -911,7 +911,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          background: isExp ? "rgba(59,130,246,0.05)" : "rgba(51,65,85,0.2)",
          overflow: "hidden",
         }}>
-         <div onClick={function () { setExpandedMember(isExp ? null : entry.owner); }}
+         <div className="interactive" onClick={function () { setExpandedMember(isExp ? null : entry.owner); }}
           style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
            padding: "10px 14px", cursor: "pointer" }}>
           <div>

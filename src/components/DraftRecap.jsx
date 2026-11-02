@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ClipboardList, AlertTriangle, ScrollText, IdCard, BarChart3, Gem, ChevronDown, ChevronRight } from "lucide-react";
-import { Badge } from "./Badges";
+import { Badge, Skeleton } from "./Badges";
 import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
@@ -400,9 +400,19 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   // ── Loading / Error / No data ──
   if (loading) {
     return (
-      <div style={{ textAlign: "center", padding: 60, color: theme.dim }}>
-        <ClipboardList size={28} style={{ marginBottom: 8 }} />
-        <div style={{ fontSize: 14 }}>Loading draft data...</div>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
+          {[110, 100, 120, 90].map((w, i) => <Skeleton key={i} width={w} height={30} radius={20} />)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i} style={{ ...cardStyle, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              <Skeleton width="60%" height={11} />
+              <Skeleton width="85%" height={15} />
+              <Skeleton width="40%" height={10} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

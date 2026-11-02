@@ -48,6 +48,53 @@
       button {
         font-family: inherit;
       }
+      /* One shared motion language for every clickable control (tabs,
+         pills, icon buttons, settings/draft actions) instead of each
+         component hand-rolling its own hover/press feel — see AGENTS.md's
+         sibling conventions for why this lives in one place. Scoped to
+         button/select, not `a`/div-as-button spots, which opt in per
+         element with the `.interactive` class below. */
+      button, select, .interactive {
+        transition: background-color .15s ease, border-color .15s ease,
+          color .15s ease, opacity .15s ease, transform .08s ease,
+          box-shadow .15s ease;
+      }
+      button:hover:not(:disabled), .interactive:hover {
+        filter: brightness(1.12);
+      }
+      button:active:not(:disabled), .interactive:active {
+        transform: scale(0.96);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        button, select, .interactive, button:active:not(:disabled), .interactive:active {
+          transition: none;
+          transform: none;
+        }
+      }
+      /* Shared entrance animation for expanding panels (scoreboard row
+         detail, settings member detail) and newly-mounted tab content —
+         see expandedWrapperStyle() in src/utils/helpers.js and the tab
+         switch in src/App.jsx. */
+      @keyframes expandIn {
+        from { opacity: 0; transform: translateY(-3px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes fadeSlideIn {
+        from { opacity: 0; transform: translateY(5px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        @keyframes expandIn { from { opacity: 1; } to { opacity: 1; } }
+        @keyframes fadeSlideIn { from { opacity: 1; } to { opacity: 1; } }
+      }
+      /* Skeleton-loader shimmer — see Skeleton in src/components/Badges.jsx */
+      @keyframes skeletonShimmer {
+        0% { background-position: 100% 50%; }
+        100% { background-position: 0 50%; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        @keyframes skeletonShimmer { from { background-position: 50% 50%; } to { background-position: 50% 50%; } }
+      }
       /* Remove number input spinners */
       input[type="number"]::-webkit-inner-spin-button,
       input[type="number"]::-webkit-outer-spin-button {
