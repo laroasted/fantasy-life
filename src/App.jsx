@@ -495,18 +495,34 @@ export default function App() {
     return archivedSeasons.find((s) => s && s.year === selectedYear) || activeSeason;
   }, [activeSeason, archivedSeasons, selectedYear, isViewingActive]);
 
+  // Derived once and reused below (the orientation strip's clear-effect,
+  // and the Realtime subscription further down) instead of each computing
+  // its own ternary — same value, same reasoning either place.
+  const activeYear = activeSeason ? activeSeason.year : null;
+
   // "This Week" orientation strip data — the biggest score_history mover
   // over the last ~7 days, and the next calendar_events entry. Both are
   // best-effort glances, not core data: any fetch problem just leaves that
   // half of the strip empty rather than showing an error.
+  //
+  // Clearing and fetching are deliberately two separate effects. Clearing
+  // used to happen at the top of the fetch effect itself, keyed on the
+  // whole `activeSeason` object — but `loadSeason()` hands back a new
+  // object on every call, including the quiet reloads Realtime triggers
+  // (see below), so every auto-update blanked this strip for the ~1-2s the
+  // refetch took, then popped it back in: a visible flash and layout
+  // shift, on a loop, for anyone with the tab open. Keying the clear on
+  // just the year means it still resets on a genuine season change (new
+  // draft finalized) — the scenario the clear exists for — but a same-
+  // season realtime refresh now just replaces the numbers in place once
+  // the new fetch resolves, with the strip staying put in between.
   useEffect(() => {
-    // Clear any previous season's values immediately — otherwise, if the
-    // active season changes (a new draft gets finalized) and the new
-    // season's fetch comes back empty or errors, the strip would keep
-    // showing the old season's mover/event as if it were current.
     setBiggestRiser(null);
     setBiggestFaller(null);
     setNextEvent(null);
+  }, [activeYear]);
+
+  useEffect(() => {
     if (!activeSeason || !activeSeason.year) return;
     let cancelled = false;
     const yr = activeSeason.year;
@@ -615,7 +631,6 @@ export default function App() {
   // season, without them lifting a finger.
   const [realtimeLive, setRealtimeLive] = useState(false);
   const [justSynced, setJustSynced] = useState(false);
-  const activeYear = activeSeason ? activeSeason.year : null;
   useEffect(() => {
     if (!isViewingActive || !activeYear) {
       setRealtimeLive(false);
