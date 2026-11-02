@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, Component } from "react";
 import {
   Trophy,
   BarChart3,
@@ -79,6 +79,44 @@ function TabFallback() {
       <Skeleton height={70} radius={12} />
     </div>
   );
+}
+
+// Catches a lazy tab chunk failing to load (transient network/CDN blip, or
+// a stale client holding a chunk hash a new deploy no longer serves).
+// Suspense alone only covers the *pending* state — a rejected dynamic
+// import throws, and without a boundary that escapes all the way past
+// this component, taking the eagerly-mounted Scoreboard/header down with
+// it instead of just the one optional tab. Resets automatically on the
+// next tab switch because it lives inside the activeTab-keyed div below,
+// which remounts it.
+class TabErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.error("Tab failed to load:", error);
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>
+          <div style={{ marginBottom: 12, fontSize: 14 }}>
+            This tab couldn't load — probably a network blip.
+          </div>
+          <button onClick={() => window.location.reload()}
+            style={{ background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
+              padding: "7px 16px", color: theme.txt, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function tabFromUrl() {
@@ -884,43 +922,55 @@ export default function App() {
           </div>
         )}
         {activeTab === "trends" && (
-          <Suspense fallback={<TabFallback />}>
-            <Trends seasonData={viewingSeasonData} />
-          </Suspense>
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <Trends seasonData={viewingSeasonData} />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "calendar" && (
-          <Suspense fallback={<TabFallback />}>
-            <Calendar seasonYear={viewingYear} />
-          </Suspense>
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <Calendar seasonYear={viewingYear} />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "recap" && (
-          <Suspense fallback={<TabFallback />}>
-            <DraftRecap seasonYear={viewingYear} />
-          </Suspense>
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <DraftRecap seasonYear={viewingYear} />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "draft" && (
-          <Suspense fallback={<TabFallback />}>
-            <DraftTool
-              onFinalize={handleFinalize}
-              isCommissioner={isCommissioner}
-              commissionerEmail={commissionerSession?.user?.email || ""}
-            />
-          </Suspense>
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <DraftTool
+                onFinalize={handleFinalize}
+                isCommissioner={isCommissioner}
+                commissionerEmail={commissionerSession?.user?.email || ""}
+              />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "settings" && (
-          <Suspense fallback={<TabFallback />}>
-            <SeasonSettings
-              seasonData={activeSeason}
-              onSave={handleSettingsSave}
-              isCommissioner={isCommissioner}
-              commissionerEmail={commissionerSession?.user?.email || ""}
-            />
-          </Suspense>
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <SeasonSettings
+                seasonData={activeSeason}
+                onSave={handleSettingsSave}
+                isCommissioner={isCommissioner}
+                commissionerEmail={commissionerSession?.user?.email || ""}
+              />
+            </Suspense>
+          </TabErrorBoundary>
         )}
         {activeTab === "privacy" && (
-          <Suspense fallback={<TabFallback />}>
-            <PrivacyPolicy />
-          </Suspense>
+          <TabErrorBoundary>
+            <Suspense fallback={<TabFallback />}>
+              <PrivacyPolicy />
+            </Suspense>
+          </TabErrorBoundary>
         )}
       </div>
 
