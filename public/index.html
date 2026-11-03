@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0B0E14" />
     <meta name="description" content="Fantasy Life League Hub — Scoreboard, Draft, History, and Settings" />
     <meta name="p:domain_verify" content="b907d3d7e25a838cccba3db9d2535735"/>
@@ -45,6 +45,15 @@
         color: #F2F3F5;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+        /* apple-mobile-web-app-status-bar-style is "black-translucent",
+           which lets the app draw under the iPhone status bar/notch in
+           standalone (Added to Home Screen) mode — real content has to
+           opt back out of that area itself, or it renders invisible
+           underneath the status bar. viewport-fit=cover (above) is what
+           makes these env() values non-zero in the first place; both are
+           0px in an ordinary browser tab, so this has no effect there. */
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
       }
       /* Remove default button styles */
       button {
