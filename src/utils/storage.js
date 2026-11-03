@@ -282,25 +282,31 @@ try {
 */
 export async function fetchSeasonFromSupabase(year = null) {
 try {
- // 1. Fetch season info — by year if provided, otherwise by active status
+ // 1 & 2. Fetch season info and members in parallel — members has no
+ // dependency on the season row (it's the static roster), so there's no
+ // reason to wait for the season query to round-trip before starting
+ // it. (picks genuinely does need season.year, so it can't join this
+ // batch — it has to wait for this Promise.all to settle.) This cuts
+ // one full sequential round-trip off every season load.
  let query = supabase.from('seasons').select('*');
  if (year) {
  query = query.eq('year', year);
  } else {
  query = query.eq('status', 'active');
  }
- const { data: season, error: sErr } = await query.single();
+
+ const [
+ { data: season, error: sErr },
+ { data: members, error: mErr },
+ ] = await Promise.all([
+ query.single(),
+ supabase.from('members').select('*').order('id'),
+ ]);
 
  if (sErr || !season) {
  console.error('Failed to fetch season:', sErr?.message);
  return null;
  }
-
- // 2. Fetch members
- const { data: members, error: mErr } = await supabase
- .from('members')
- .select('*')
- .order('id');
 
  if (mErr) {
  console.error('Failed to fetch members:', mErr.message);
