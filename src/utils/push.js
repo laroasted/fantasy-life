@@ -40,7 +40,7 @@ export async function getExistingPushSubscription() {
   }
 }
 
-export async function subscribeToPush() {
+export async function subscribeToPush(memberId = null) {
   if (!isPushSupported()) return { ok: false, reason: "unsupported" };
 
   const permission = await Notification.requestPermission();
@@ -60,7 +60,7 @@ export async function subscribeToPush() {
     const res = await fetch("/api/push?action=subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpoint, keys }),
+      body: JSON.stringify({ endpoint, keys, memberId }),
     });
     if (!res.ok) return { ok: false, reason: "server_error" };
     return { ok: true };

@@ -278,28 +278,50 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   in this app already uses successfully, so this mirrors that.
 - **Storage:** `supabase/phase9_push_subscriptions.sql`'s
   `push_subscriptions` table — one row per browser subscription (not per
-  person; there's no regular-member identity to key on). `endpoint` is
-  unique and is itself the authorization check (unguessable bearer
-  token), so the table has **no anon/authenticated RLS policies at all**
-  — `api/push.js` writes with the service role key, same pattern as
-  every other write in this app.
-- **Sending:** `api/_lib/push.js`'s `sendPushToAllSubscribers()`, via the
-  `web-push` package and three env vars (`REACT_APP_VAPID_PUBLIC_KEY`,
-  server-only `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`). A subscription the
-  push service reports as gone (404/410) is deleted automatically on
-  send, so the table self-cleans.
+  person; a subscription predates per-member identity entirely, and
+  someone can still have multiple devices subscribed under the same
+  member, or none). `endpoint` is unique and is itself the authorization
+  check (unguessable bearer token), so the table has **no
+  anon/authenticated RLS policies at all** — `api/push.js` writes with
+  the service role key, same pattern as every other write in this app.
+  `supabase/phase12_push_member_targeting.sql` added a nullable
+  `member_id` column (FK to `members`, `on delete set null`):
+  `subscribeToPush(memberId)` (`src/utils/push.js`) sends the browser's
+  current claimed identity (or `null`) on every subscribe call, so the
+  stored row always reflects live state — including clearing it back to
+  `null` if someone ever un-claims. `App.jsx`'s `handleClaimMember` also
+  re-calls `subscribeToPush()` right after a successful claim if push was
+  already on, so a device that enabled push *before* claiming an
+  identity doesn't stay stuck with `member_id: null` forever.
+- **Sending:** `api/_lib/push.js` exports three entry points over one
+  shared `sendPush()` core, via the `web-push` package and three env vars
+  (`REACT_APP_VAPID_PUBLIC_KEY`, server-only `VAPID_PRIVATE_KEY`,
+  `VAPID_SUBJECT`): `sendPushToAllSubscribers()` (literally everyone —
+  used by the manual `?action=test` trigger when called with no
+  `memberId`; pass one in the test request body to exercise
+  `sendPushToMember()` instead, on demand, rather than waiting for a real
+  score change to a claimed member's pick),
+  `sendPushToUnclaimedSubscribers()` (only `member_id is null` rows —
+  the broad digest's actual audience, see below), and
+  `sendPushToMember(memberId, ...)` (one member's device(s) only). A
+  subscription the push service reports as gone (404/410) is deleted
+  automatically on send, so the table self-cleans, regardless of which
+  of the three sent it.
 - **The only current caller** is `api/cron/update-sports.js`, right after
-  it writes `score_events` — one digest per run via `buildScoreDigest()`
-  (single event → a specific message using the same `cause` text the
-  Activity Feed shows; multiple → a generic count). This cron runs once
-  daily (`vercel.json`), so there's no spam risk from this call site.
-  Every other cron stays silent for now — wiring in
-  college/stocks/entertainment/etc. is a deliberate future follow-up,
-  same reasoning as `score_events` itself only covering sports so far
-  (see phase7's own note).
-- No per-member targeting (e.g. "only notify me about my own score") —
-  every subscriber gets every digest. Revisit if that's annoying in
-  practice; not worth the complexity for a 12-person league up front.
+  it writes `score_events`. Per run: the broad "N score updates" digest
+  (`buildScoreDigest()` — single event → a specific message using the
+  same `cause` text the Activity Feed shows; multiple → a generic count)
+  goes only to unclaimed subscribers now; separately, `score_events` for
+  this run are grouped by `member_id` and each member whose own score
+  moved gets one targeted `sendPushToMember()` push via the same
+  `buildScoreDigest()` scoped to just their events — **targeted replaces
+  broad for a claimed member, it doesn't add to it**: if their own score
+  didn't move this run, they get nothing from this run even if other
+  members' scores did. This cron runs once daily (`vercel.json`), so
+  there's no spam risk from either call site. Every other cron stays
+  silent for now — wiring in college/stocks/entertainment/etc. is a
+  deliberate future follow-up, same reasoning as `score_events` itself
+  only covering sports so far (see phase7's own note).
 
 ## Governance
 

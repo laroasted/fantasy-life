@@ -191,14 +191,14 @@ export default function App() {
       setPushEnabled(false);
       track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, { is_enabled: false });
     } else {
-      const result = await subscribeToPush();
+      const result = await subscribeToPush(memberId);
       setPushEnabled(result.ok);
       track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, {
         is_enabled: result.ok,
         ...(!result.ok && { reason: result.reason }),
       });
     }
-  }, [pushEnabled]);
+  }, [pushEnabled, memberId]);
 
   const configuredCommissioners = getConfiguredCommissionerEmails();
   const isCommissioner = commissionerRole === "commissioner" || commissionerRole === "admin";
@@ -228,11 +228,18 @@ export default function App() {
       setMemberId(id);
       track(EVENTS.MEMBER_CLAIMED, { member_id: id });
       setShowAccountMenu(false);
+      // If push was already enabled from before this device had a claimed
+      // identity, re-subscribe so the stored subscription picks up the
+      // member_id — otherwise it stays null until they happen to retoggle
+      // the bell, and this device quietly misses targeted pushes.
+      // subscribeToPush() already fails silently on its own; nothing here
+      // needs to react to the result.
+      if (pushEnabled) subscribeToPush(id);
     } else {
       setClaimError("That name may already be claimed — try again or ask the commissioner.");
     }
     setClaimingId(null);
-  }, []);
+  }, [pushEnabled]);
 
   // Keep the URL in sync with the active tab so a tab is a link someone can
   // actually send to the group chat, not just an in-session click target.
