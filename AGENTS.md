@@ -30,17 +30,29 @@ the long-form version; this file is the in-repo quick reference.
   login" mechanism — `signInWithGoogle()` has no allow-list; what a signed-in
   Google account is *authorized to do* is a separate lookup after the fact
   (see below), same as it always was for the commissioner.
+- **One `mixpanel.identify()` call per person, ever — never two different
+  values in the same session.** The commissioner role and member identity
+  used to identify independently (`identifyCommissioner(userId)` and
+  `identifyMember(memberId)`, each its own effect in `App.jsx`) — fine in
+  isolation, but the commissioner is usually *also* a league member, so
+  both fired for the same real person and Mixpanel has no guarantee of
+  merging a UUID-keyed profile and a member-id-keyed profile into one.
+  Both are now `identifyPerson({ userId, email, memberId })` in
+  `analytics.js`, called from one combined effect in `App.jsx`: it picks
+  **member_id over the Supabase auth UUID whenever both are known** — the
+  UUID is only the distinct_id for a commissioner who hasn't claimed a
+  member identity. Safe to call on every render with a session (a no-op
+  if the id hasn't changed); the one-time-per-sign-in bookkeeping (login
+  counts, `first_commissioner_login`, etc.) lives separately in
+  `markCommissionerLogin(role)`, gated to the actual sign-in transition
+  so it doesn't fire again on every re-render that touches identity.
 - **Commissioner role**: switched from magic-link email after hitting
   Supabase's shared-mailer rate limit and a localStorage session-corruption
-  issue; see `docs/commissioner-auth-phase1.md`. On a successful sign-in
-  with a configured commissioner email, `App.jsx` calls
-  `identifyCommissioner(userId, email, role)`, which:
-  - `mixpanel.identify(userId)` — **the Supabase Auth `session.user.id`
-    (a stable UUID), not the email.** Emails can change; the database ID
-    doesn't. Email goes on the profile via `people.set({ $email })` only.
-  - Sets `role`, `first_commissioner_login` (set_once), `last_commissioner_login`,
-    increments `commissioner_login_count`.
-  - Registers `is_commissioner: true` as a super property.
+  issue; see `docs/commissioner-auth-phase1.md`. `markCommissionerLogin(role)`
+  sets `role`, `first_commissioner_login` (set_once), `last_commissioner_login`,
+  increments `commissioner_login_count`, and registers `is_commissioner: true`
+  as a super property — called once per actual sign-in transition, not
+  on every render.
 - **Member identity**: mostly automatic now. `supabase/phase13_email_member_map.sql`
   maps each real league member's email to their static `DRAFT_MEMBERS`
   id (seeded manually, not committed — see that file's own note, same
@@ -54,15 +66,14 @@ the long-form version; this file is the in-repo quick reference.
   email, someone added after the map was last updated — rather than being
   removed; it's just unreachable in practice for anyone the map already
   covers, since `memberId` resolves before they'd ever open the menu.
-  Either path ends the same way — `App.jsx` calls `identifyMember(memberId)`:
-  - `mixpanel.identify(memberId)` — **the stable member id (e.g. `"adam"`),
-    never a display name or email**, per the rule this file already had
-    for this feature before it was built. Claiming fires `member_claimed`
-    once, with `method: "auto"` or `"manual"`; every later session
-    re-identifies to the same `member_id` automatically (see the
-    `identifyMember`/`memberId` effect in `App.jsx`), so no repeat event
-    is needed for the KPI in "Value Moment" below.
-  - Registers `member_id` as a super property (unregistered on sign-out).
+  Either path lands in the same `identifyPerson()` call above — the
+  stable member id (e.g. `"adam"`), never a display name or email, per
+  the rule this file already had for this feature before it was built.
+  Claiming fires `member_claimed` once, with `method: "auto"` or
+  `"manual"`; every later session re-identifies to the same `member_id`
+  automatically, so no repeat event is needed for the KPI in "Value
+  Moment" below. `member_id` is registered as a super property
+  (unregistered on sign-out).
   - The open-self-claim gap this file used to flag (phase10's own
     migration comment) is closed for anyone in the map — the automatic
     path makes a mismatch physically require signing in as someone
@@ -77,8 +88,21 @@ the long-form version; this file is the in-repo quick reference.
   specifically so that's obvious to see and easy to act on, rather than
   relying on people remembering to log out of a device that isn't theirs.
 - **Never call `identify()` with an email or a league member's display
-  name** — identify with the stable `userId` (commissioner) or `member_id`
-  (member) instead, per above.
+  name** — identify with the stable `userId` (commissioner-only, no
+  claimed member identity) or `member_id` (everyone else) instead, per
+  `identifyPerson()` above.
+- **Known limitation, not yet fixed**: a few foundational events
+  (`app_loaded` in particular) can fire before the async auth check
+  resolves and `identifyPerson()` has run, landing under the anonymous
+  `$device_id` instead of the now-identified profile for a split second
+  of page-load race. Most mixpanel-browser projects' default ID-merge
+  behavior retroactively associates that anonymous activity with the
+  identified profile once `identify()` fires in the same browser session,
+  but that depends on this project's specific Mixpanel ID-merge
+  configuration, which hasn't been verified either way. Low practical
+  impact (it's a handful of the very first events in a session, not
+  ongoing double-counting), but worth knowing if "weekly unique
+  distinct_ids" ever looks inflated relative to the real league size.
 
 ## Naming conventions
 
