@@ -102,14 +102,6 @@ export async function signOutCommissioner() {
  return { ok: !error, error: error?.message || null };
 }
 
-export async function getCommissionerSession() {
- const { data, error } = await supabase.auth.getSession();
- if (error) return { session: null, role: null, memberId: null, error: error.message || 'Unable to load session.' };
- const session = data?.session || null;
- const { role, memberId } = await getCommissionerRole(session);
- return { session, role, memberId, error: null };
-}
-
 /**
 * Returns both the caller's commissioner/admin role (if any) and their
 * claimed member_id (if any) — see phase10_member_accounts.sql. These used
@@ -161,6 +153,27 @@ try {
 } catch (err) {
  console.error('claimMemberIdentityRpc error:', err);
  return false;
+}
+}
+
+/**
+* Automatic, email-mapped version of claimMemberIdentityRpc — see
+* supabase/phase13_email_member_map.sql. Safe to call on every sign-in:
+* a no-op (returns the existing member_id) if already claimed, and
+* returns null (caller falls back to the manual picker) if there's no
+* mapping for this account's email.
+*/
+export async function autoClaimMemberIdentityRpc() {
+try {
+ const { data, error } = await supabase.rpc('auto_claim_member_identity');
+ if (error) {
+ console.warn('autoClaimMemberIdentityRpc failed:', error.message);
+ return null;
+ }
+ return data || null;
+} catch (err) {
+ console.warn('autoClaimMemberIdentityRpc error:', err);
+ return null;
 }
 }
 

@@ -27,10 +27,10 @@ import {
   unlockPaywallRpc,
   signInWithGoogle,
   signOutCommissioner,
-  getCommissionerSession,
   getCommissionerRole,
   getConfiguredCommissionerEmails,
   claimMemberIdentityRpc,
+  autoClaimMemberIdentityRpc,
   fetchClaimedMemberIds,
 } from "./utils/storage";
 import { DRAFT_MEMBERS, MEMBER_COLORS } from "./constants/members";
@@ -226,7 +226,7 @@ export default function App() {
     const ok = await claimMemberIdentityRpc(id);
     if (ok) {
       setMemberId(id);
-      track(EVENTS.MEMBER_CLAIMED, { member_id: id });
+      track(EVENTS.MEMBER_CLAIMED, { member_id: id, method: "manual" });
       setShowAccountMenu(false);
       // If push was already enabled from before this device had a claimed
       // identity, re-subscribe so the stored subscription picks up the
@@ -258,19 +258,30 @@ export default function App() {
     let isMounted = true;
  
     async function loadAuth() {
-      // Timing out and genuinely failing are NOT the same thing, and only
-      // one of them means the stored session is actually bad. A slow/cold
-      // network on a single page load (observed live: gotrue-js's own
-      // "Supabase fetch failed, trying localStorage..." fallback, plus
-      // loadSeason() separately falling back to hardcoded data in the same
-      // load) can make the 10s timeout fire even though the stored session
-      // is perfectly fine — treating that the same as a thrown error and
-      // wiping it is exactly what made a transient blip look like a forced
-      // logout. Only an actual exception (a genuinely corrupted/malformed
-      // stored token making getSession() throw outright) gets purged below.
-      let result;
+      // Only resolves the session object itself here, quickly, and handles
+      // the one case that genuinely means "this stored session is
+      // unusable": getSession() throwing outright on a corrupted/malformed
+      // token. Role and member_id are deliberately NOT fetched here — that
+      // used to happen in both this function AND the onAuthStateChange
+      // listener's first firing, which fixed a real double-query
+      // performance bug but introduced a worse one: when this function's
+      // own fetch timed out, NOTHING ever retried role/memberId for that
+      // load, leaving someone correctly shown as signed in (commissionerSession
+      // set below) but with memberId stuck null — "logged in but the
+      // highlight never shows" until a manual sign-out/in forced a fresh
+      // attempt. Now there is exactly one place that ever fetches
+      // role/memberId — the listener below, on every firing including its
+      // reliable first one — so that fetch is never a single unretried
+      // attempt with no fallback.
+      let session;
       try {
-        result = await withTimeout(getCommissionerSession(), 10000, null);
+        const sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+        if (!sessionResult) {
+          console.warn("loadAuth: getSession timed out — leaving stored session untouched");
+          return;
+        }
+        if (sessionResult.error) throw new Error(sessionResult.error.message || "getSession failed");
+        session = sessionResult.data?.session || null;
       } catch (e) {
         console.error("loadAuth failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
@@ -283,46 +294,27 @@ export default function App() {
         return;
       }
 
-      if (!result) {
-        // Timed out, not corrupted — leave the stored session untouched.
-        // onAuthStateChange's own initial firing (or the next reload) can
-        // still resolve it; a slow network this one time shouldn't cost
-        // anyone their login.
-        console.warn("loadAuth: getCommissionerSession timed out — leaving stored session untouched");
-        if (isMounted) setAuthReady(true);
-        return;
-      }
-
-      const { session, role, memberId: claimedMemberId } = result;
       if (!isMounted) return;
       setCommissionerSession(session);
-      setCommissionerRole(role);
-      setMemberId(claimedMemberId);
-      setAuthReady(true);
+      // Not set here when a session exists — the listener's first firing
+      // (below) owns resolving role/memberId and sets authReady once that
+      // settles, so the UI never flashes "signed out" for a session that's
+      // actually just mid-lookup. A genuinely anonymous visitor (no
+      // session) has nothing left to resolve.
+      if (!session) setAuthReady(true);
     }
 
     loadAuth();
 
-    // onAuthStateChange fires once immediately on subscription, reporting
-    // whatever session already exists — on first page load that's the
-    // exact same session loadAuth() above is independently resolving at
-    // the exact same moment. Without skipping that one redundant firing,
-    // every authenticated page load ran the profiles-table lookup TWICE
-    // for the same user, for no benefit (confirmed root cause of "only
-    // slow when signed in" — an anonymous visitor never hits this at all,
-    // since getCommissionerRole() short-circuits before querying anything
-    // when there's no session). Every firing after this first one is a
-    // real transition (actual sign-in, sign-out, token refresh) and is
-    // handled normally.
-    let isFirstAuthEvent = true;
+    // Fires once immediately on subscription, reliably, with whatever
+    // session already exists — this is now the ONLY place that fetches
+    // role/member_id, on every firing including this first one. (It used
+    // to be skipped here to avoid double-querying profiles alongside
+    // loadAuth's own now-removed role fetch — see that function's comment
+    // for the gap that shortcut left.)
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
       setCommissionerSession(session || null);
-
-      if (isFirstAuthEvent) {
-        isFirstAuthEvent = false;
-        return;
-      }
 
       if (!session) {
         setCommissionerRole(null);
@@ -331,13 +323,11 @@ export default function App() {
         return;
       }
 
-      // Same timeout-vs-genuine-failure distinction as loadAuth above.
+      // Timing out and genuinely failing are NOT the same thing, and only
+      // one of them means the stored session is actually bad — see
+      // loadAuth's own comment on this distinction.
       let result;
       try {
-        // Use the session the event already handed us instead of calling
-        // getCommissionerSession() again here — that would re-fetch via
-        // supabase.auth.getSession(), racing the fetch loadAuth() already
-        // has in flight for gotrue-js's internal cross-tab lock.
         result = await withTimeout(getCommissionerRole(session), 10000, null);
       } catch (e) {
         console.error("Auth state change role lookup failed, clearing local session:", e);
@@ -359,7 +349,25 @@ export default function App() {
       const { role, memberId: claimedMemberId } = result;
       if (!isMounted) return;
       setCommissionerRole(role);
-      setMemberId(claimedMemberId);
+
+      if (claimedMemberId) {
+        setMemberId(claimedMemberId);
+        setAuthReady(true);
+        return;
+      }
+
+      // No identity claimed yet — try the automatic email-mapped claim
+      // (supabase/phase13_email_member_map.sql) before falling back to the
+      // manual picker in the account menu. Safe to attempt every time
+      // memberId comes back null: it's a no-op if there's no mapping.
+      const autoClaimedId = await autoClaimMemberIdentityRpc();
+      if (!isMounted) return;
+      if (autoClaimedId) {
+        setMemberId(autoClaimedId);
+        track(EVENTS.MEMBER_CLAIMED, { member_id: autoClaimedId, method: "auto" });
+      } else {
+        setMemberId(null);
+      }
       setAuthReady(true);
     });
  
