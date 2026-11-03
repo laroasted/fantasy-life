@@ -104,38 +104,87 @@ export async function signOutCommissioner() {
 
 export async function getCommissionerSession() {
  const { data, error } = await supabase.auth.getSession();
- if (error) return { session: null, role: null, error: error.message || 'Unable to load session.' };
+ if (error) return { session: null, role: null, memberId: null, error: error.message || 'Unable to load session.' };
  const session = data?.session || null;
- const role = await getCommissionerRole(session);
- return { session, role, error: null };
+ const { role, memberId } = await getCommissionerRole(session);
+ return { session, role, memberId, error: null };
 }
 
+/**
+* Returns both the caller's commissioner/admin role (if any) and their
+* claimed member_id (if any) — see phase10_member_accounts.sql. These used
+* to be two separate concerns (only the commissioner had a profiles row at
+* all), but any signed-in Google account can now claim a member_id, so one
+* profiles lookup covers both rather than querying the table twice.
+*/
 export async function getCommissionerRole(session) {
  const activeSession = session || (await supabase.auth.getSession()).data?.session || null;
- if (!activeSession?.user) return null;
+ if (!activeSession?.user) return { role: null, memberId: null };
 
  const email = normalizeEmail(activeSession.user.email);
- if (isConfiguredCommissionerEmail(email)) {
- return "commissioner";
- }
+ const configuredRole = isConfiguredCommissionerEmail(email) ? 'commissioner' : null;
 
  try {
  const { data, error } = await supabase
  .from('profiles')
- .select('role')
+ .select('role, member_id')
  .eq('id', activeSession.user.id)
  .maybeSingle();
 
  if (error) {
   console.warn('profiles role lookup failed:', error.message);
-  return null;
+  return { role: configuredRole, memberId: null };
  }
 
- return data?.role || null;
+ return { role: configuredRole || data?.role || null, memberId: data?.member_id || null };
  } catch (err) {
  console.warn('getCommissionerRole error:', err);
- return null;
+ return { role: configuredRole, memberId: null };
  }
+}
+
+/**
+* Self-claim a league-member identity for the signed-in Google account, via
+* the claim_member_identity security-definer RPC (phase10_member_accounts.sql)
+* — same pattern as unlockPaywallRpc below.
+*/
+export async function claimMemberIdentityRpc(memberId) {
+try {
+ const { error } = await supabase.rpc('claim_member_identity', {
+ p_member_id: memberId,
+ });
+ if (error) {
+ console.error('Failed to claim member identity:', error.message);
+ return false;
+ }
+ return true;
+} catch (err) {
+ console.error('claimMemberIdentityRpc error:', err);
+ return false;
+}
+}
+
+/**
+* Member ids already linked to a profile, so the "which of these are you?"
+* picker doesn't offer names someone else already claimed. Readable by any
+* authenticated user under phase1's existing "profiles are readable by
+* authenticated users" policy — no new RLS needed.
+*/
+export async function fetchClaimedMemberIds() {
+try {
+ const { data, error } = await supabase
+ .from('profiles')
+ .select('member_id')
+ .not('member_id', 'is', null);
+ if (error) {
+ console.warn('fetchClaimedMemberIds failed:', error.message);
+ return [];
+ }
+ return (data || []).map((row) => row.member_id);
+} catch (err) {
+ console.warn('fetchClaimedMemberIds error:', err);
+ return [];
+}
 }
 
 // ── Sport categories that have rounds[] ──

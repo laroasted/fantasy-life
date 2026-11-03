@@ -73,10 +73,27 @@ export function identifyCommissioner(userId, email, role) {
   }
 }
 
+// Per the same identity guidance as identifyCommissioner, but using
+// member_id (a stable string like "adam", not an email or display name —
+// see AGENTS.md's identity section) as the distinct_id. Signing in from a
+// second device re-identifies to the same member_id, merging both
+// sessions under one profile, which is the point: one person, one
+// identity, regardless of device.
+export function identifyMember(memberId) {
+  if (!ready || !memberId) return;
+  try {
+    mixpanel.identify(memberId);
+    mixpanel.register({ member_id: memberId });
+  } catch (e) {
+    console.warn("Mixpanel: identifyMember failed.", e);
+  }
+}
+
 export function resetIdentity() {
   if (!ready) return;
   try {
     mixpanel.register({ is_commissioner: false });
+    mixpanel.unregister("member_id");
     mixpanel.reset();
   } catch (e) {
     console.warn("Mixpanel: reset failed.", e);
@@ -166,6 +183,9 @@ export const EVENTS = {
   COMMISSIONER_LOGIN_FAILED: "commissioner_login_failed",
   COMMISSIONER_SIGNED_IN: "commissioner_signed_in",
   COMMISSIONER_SIGNED_OUT: "commissioner_signed_out",
+
+  // Member accounts
+  MEMBER_CLAIMED: "member_claimed",
 
   // Season Settings (commissioner-only)
   SETTINGS_MODE_CHANGED: "settings_mode_changed",
