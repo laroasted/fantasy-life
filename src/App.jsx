@@ -251,34 +251,47 @@ export default function App() {
     let isMounted = true;
  
     async function loadAuth() {
+      // Timing out and genuinely failing are NOT the same thing, and only
+      // one of them means the stored session is actually bad. A slow/cold
+      // network on a single page load (observed live: gotrue-js's own
+      // "Supabase fetch failed, trying localStorage..." fallback, plus
+      // loadSeason() separately falling back to hardcoded data in the same
+      // load) can make the 10s timeout fire even though the stored session
+      // is perfectly fine — treating that the same as a thrown error and
+      // wiping it is exactly what made a transient blip look like a forced
+      // logout. Only an actual exception (a genuinely corrupted/malformed
+      // stored token making getSession() throw outright) gets purged below.
+      let result;
       try {
-        // Same Supabase-hang risk as loadSeason() — a session check that
-        // never settles must not leave authReady stuck false forever.
-        const result = await withTimeout(getCommissionerSession(), 10000, null);
-        if (!result) throw new Error("getCommissionerSession timed out");
-        const { session, role, memberId: claimedMemberId } = result;
-        if (!isMounted) return;
-        setCommissionerSession(session);
-        setCommissionerRole(role);
-        setMemberId(claimedMemberId);
+        result = await withTimeout(getCommissionerSession(), 10000, null);
       } catch (e) {
-        // A stale/corrupted stored session can make getSession() throw
-        // outright rather than return { error }. Resetting React state alone
-        // isn't enough here — the broken token is still sitting in
-        // localStorage and supabase-js will keep trying (and failing) to use
-        // it on every future load, so this looks like a permanent lockout
-        // even though the UI "recovers." Purge it locally (no network
-        // round-trip needed — it's already broken) so the next load starts
-        // clean and a fresh sign-in actually sticks.
         console.error("loadAuth failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
-        if (!isMounted) return;
-        setCommissionerSession(null);
-        setCommissionerRole(null);
-        setMemberId(null);
-      } finally {
-        if (isMounted) setAuthReady(true);
+        if (isMounted) {
+          setCommissionerSession(null);
+          setCommissionerRole(null);
+          setMemberId(null);
+          setAuthReady(true);
+        }
+        return;
       }
+
+      if (!result) {
+        // Timed out, not corrupted — leave the stored session untouched.
+        // onAuthStateChange's own initial firing (or the next reload) can
+        // still resolve it; a slow network this one time shouldn't cost
+        // anyone their login.
+        console.warn("loadAuth: getCommissionerSession timed out — leaving stored session untouched");
+        if (isMounted) setAuthReady(true);
+        return;
+      }
+
+      const { session, role, memberId: claimedMemberId } = result;
+      if (!isMounted) return;
+      setCommissionerSession(session);
+      setCommissionerRole(role);
+      setMemberId(claimedMemberId);
+      setAuthReady(true);
     }
 
     loadAuth();
@@ -292,29 +305,37 @@ export default function App() {
         setAuthReady(true);
         return;
       }
+
+      // Same timeout-vs-genuine-failure distinction as loadAuth above.
+      let result;
       try {
         // Use the session the event already handed us instead of calling
         // getCommissionerSession() again here — that would re-fetch via
         // supabase.auth.getSession(), racing the fetch loadAuth() already
-        // has in flight for gotrue-js's internal cross-tab lock. Losing
-        // that race timed this out and triggered the "wipe local session"
-        // fallback below on a perfectly good session — not a corrupted
-        // one, just a starved redundant request.
-        const result = await withTimeout(getCommissionerRole(session), 10000, null);
-        if (!result) throw new Error("getCommissionerRole timed out");
-        const { role, memberId: claimedMemberId } = result;
-        if (!isMounted) return;
-        setCommissionerRole(role);
-        setMemberId(claimedMemberId);
+        // has in flight for gotrue-js's internal cross-tab lock.
+        result = await withTimeout(getCommissionerRole(session), 10000, null);
       } catch (e) {
         console.error("Auth state change role lookup failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
-        if (!isMounted) return;
-        setCommissionerRole(null);
-        setMemberId(null);
-      } finally {
-        if (isMounted) setAuthReady(true);
+        if (isMounted) {
+          setCommissionerRole(null);
+          setMemberId(null);
+          setAuthReady(true);
+        }
+        return;
       }
+
+      if (!result) {
+        console.warn("Auth state change: getCommissionerRole timed out — leaving role as-is");
+        if (isMounted) setAuthReady(true);
+        return;
+      }
+
+      const { role, memberId: claimedMemberId } = result;
+      if (!isMounted) return;
+      setCommissionerRole(role);
+      setMemberId(claimedMemberId);
+      setAuthReady(true);
     });
  
     return () => {
