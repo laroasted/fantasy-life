@@ -130,6 +130,17 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #333A46;
       }
+      /* AdSense (see src/components/AdUnit.jsx) reserves layout space for
+         its <ins> before it knows whether an ad will actually fill it, to
+         avoid a layout jump if one loads late — normally invisible, but
+         against this app's dark background an UNFILLED reservation just
+         reads as a block of dead space between the Scoreboard and the
+         footer, with nothing on screen to explain it. Google's own fix for
+         this (sets data-ad-status="unfilled" once it gives up on a slot):
+         https://support.google.com/adsense/answer/9183363 */
+      .adsbygoogle[data-ad-status="unfilled"] {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
