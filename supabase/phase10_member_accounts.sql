@@ -17,6 +17,30 @@
 -- allowed to make a pick. A cheap future fix: have the commissioner seed
 -- profiles rows (or a one-time claim token per member) instead of open
 -- self-claim.
+--
+-- Bootstraps `profiles` itself (idempotent, identical to
+-- phase1_commissioner_auth.sql's definition) rather than assuming phase1
+-- already ran: on this project it hadn't — `profiles` didn't exist at all
+-- before this file runs, which is also why the live commissioner flow has
+-- been authorizing purely off the REACT_APP_COMMISSIONER_EMAILS allow-list
+-- with the profiles-table lookup silently failing and falling back. Safe
+-- to run whether or not phase1 was ever applied.
+
+create table if not exists public.profiles (
+  id uuid primary key references auth.users (id) on delete cascade,
+  email text unique,
+  role text not null default 'member' check (role in ('member', 'commissioner', 'admin')),
+  created_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+
+drop policy if exists "profiles are readable by authenticated users" on public.profiles;
+create policy "profiles are readable by authenticated users"
+on public.profiles
+for select
+to authenticated
+using (true);
 
 alter table public.profiles
   add column if not exists member_id text references public.members (id) on delete set null;
