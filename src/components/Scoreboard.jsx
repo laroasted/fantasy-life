@@ -783,7 +783,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           }}
          style={{
           borderRadius: isExp ? "10px 10px 0 0" : 10,
-          background: isMine ? theme.you + "1a" : rowBackground(m.rank),
+          background: isMine ? theme.you + "40" : rowBackground(m.rank),
           // Four explicit sides, never the `border` shorthand mixed with a
           // longhand override — that combination is what silently dropped
           // the "yours" accent the first time a visible rank changed: the
@@ -921,7 +921,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
            gridTemplateColumns: isMobile ? "28px 1fr auto" : "32px 1fr auto",
            alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px", gap: 8,
            borderRadius: isExp ? "10px 10px 0 0" : 10,
-           background: isMine ? theme.you + "1a" : rowBackground(m.rank),
+           background: isMine ? theme.you + "40" : rowBackground(m.rank),
            borderTop: "1px solid " + rowBorderColor,
            borderRight: "1px solid " + rowBorderColor,
            borderBottom: isExp ? "none" : "1px solid " + rowBorderColor,
