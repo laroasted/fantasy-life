@@ -30,6 +30,7 @@ import {
   getCommissionerRole,
   getConfiguredCommissionerEmails,
   claimMemberIdentityRpc,
+  autoClaimMemberIdentityRpc,
   fetchClaimedMemberIds,
 } from "./utils/storage";
 import { DRAFT_MEMBERS, MEMBER_COLORS } from "./constants/members";
@@ -225,7 +226,7 @@ export default function App() {
     const ok = await claimMemberIdentityRpc(id);
     if (ok) {
       setMemberId(id);
-      track(EVENTS.MEMBER_CLAIMED, { member_id: id });
+      track(EVENTS.MEMBER_CLAIMED, { member_id: id, method: "manual" });
       setShowAccountMenu(false);
       // If push was already enabled from before this device had a claimed
       // identity, re-subscribe so the stored subscription picks up the
@@ -348,7 +349,25 @@ export default function App() {
       const { role, memberId: claimedMemberId } = result;
       if (!isMounted) return;
       setCommissionerRole(role);
-      setMemberId(claimedMemberId);
+
+      if (claimedMemberId) {
+        setMemberId(claimedMemberId);
+        setAuthReady(true);
+        return;
+      }
+
+      // No identity claimed yet — try the automatic email-mapped claim
+      // (supabase/phase13_email_member_map.sql) before falling back to the
+      // manual picker in the account menu. Safe to attempt every time
+      // memberId comes back null: it's a no-op if there's no mapping.
+      const autoClaimedId = await autoClaimMemberIdentityRpc();
+      if (!isMounted) return;
+      if (autoClaimedId) {
+        setMemberId(autoClaimedId);
+        track(EVENTS.MEMBER_CLAIMED, { member_id: autoClaimedId, method: "auto" });
+      } else {
+        setMemberId(null);
+      }
       setAuthReady(true);
     });
  

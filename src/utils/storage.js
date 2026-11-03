@@ -157,6 +157,27 @@ try {
 }
 
 /**
+* Automatic, email-mapped version of claimMemberIdentityRpc — see
+* supabase/phase13_email_member_map.sql. Safe to call on every sign-in:
+* a no-op (returns the existing member_id) if already claimed, and
+* returns null (caller falls back to the manual picker) if there's no
+* mapping for this account's email.
+*/
+export async function autoClaimMemberIdentityRpc() {
+try {
+ const { data, error } = await supabase.rpc('auto_claim_member_identity');
+ if (error) {
+ console.warn('autoClaimMemberIdentityRpc failed:', error.message);
+ return null;
+ }
+ return data || null;
+} catch (err) {
+ console.warn('autoClaimMemberIdentityRpc error:', err);
+ return null;
+}
+}
+
+/**
 * Member ids already linked to a profile, so the "which of these are you?"
 * picker doesn't offer names someone else already claimed. Readable by any
 * authenticated user under phase1's existing "profiles are readable by

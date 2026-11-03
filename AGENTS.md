@@ -41,24 +41,35 @@ the long-form version; this file is the in-repo quick reference.
   - Sets `role`, `first_commissioner_login` (set_once), `last_commissioner_login`,
     increments `commissioner_login_count`.
   - Registers `is_commissioner: true` as a super property.
-- **Member identity**: the "who are you?" picker now exists (the account
-  menu in `App.jsx`'s header, visible on every tab, not just
-  Draft/Settings). The first time a signed-in Google account has no
-  `profiles.member_id` yet, it can self-claim one of the static
-  `DRAFT_MEMBERS` ids via the `claim_member_identity` RPC
-  (`supabase/phase10_member_accounts.sql`), then `App.jsx` calls
-  `identifyMember(memberId)`, which:
+- **Member identity**: mostly automatic now. `supabase/phase13_email_member_map.sql`
+  maps each real league member's email to their static `DRAFT_MEMBERS`
+  id (seeded manually, not committed — see that file's own note, same
+  reasoning as `commissioner_emails`). On every sign-in with no
+  `profiles.member_id` yet, `App.jsx`'s auth listener calls
+  `auto_claim_member_identity()` — if the account's email is mapped, it's
+  claimed immediately, no UI interaction needed at all. The manual "who
+  are you?" picker (the account menu in `App.jsx`'s header, visible on
+  every tab, `claim_member_identity` RPC from phase10) still exists as a
+  **fallback** for any email that isn't in the map — a guest, a changed
+  email, someone added after the map was last updated — rather than being
+  removed; it's just unreachable in practice for anyone the map already
+  covers, since `memberId` resolves before they'd ever open the menu.
+  Either path ends the same way — `App.jsx` calls `identifyMember(memberId)`:
   - `mixpanel.identify(memberId)` — **the stable member id (e.g. `"adam"`),
     never a display name or email**, per the rule this file already had
     for this feature before it was built. Claiming fires `member_claimed`
-    once; every later session re-identifies to the same `member_id`
-    automatically (see the `identifyMember`/`memberId` effect in `App.jsx`),
-    so no repeat event is needed for the KPI in "Value Moment" below.
+    once, with `method: "auto"` or `"manual"`; every later session
+    re-identifies to the same `member_id` automatically (see the
+    `identifyMember`/`memberId` effect in `App.jsx`), so no repeat event
+    is needed for the KPI in "Value Moment" below.
   - Registers `member_id` as a super property (unregistered on sign-out).
-  - Deliberately open self-claim for now — no gate on which Google account
-    can claim which member — because claiming only affects push targeting
-    (Phase B) today. Revisit before member_id is ever used to authorize an
-    action (e.g. a live draft pick) — see phase10's own migration comment.
+  - The open-self-claim gap this file used to flag (phase10's own
+    migration comment) is closed for anyone in the map — the automatic
+    path makes a mismatch physically require signing in as someone
+    else's actual Google account, not just picking their name from a
+    list. The manual fallback is still open self-claim for an unmapped
+    email; keep that in mind if member_id is ever used to authorize an
+    action (e.g. a live draft pick) for someone who reached it that way.
 - On sign-out, `resetIdentity()` calls `mixpanel.reset()` (and unregisters
   `member_id`) — breaks the identity link so a later visitor on a shared
   device doesn't inherit the previous signed-in person's profile. The
@@ -167,7 +178,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `commissioner_login_failed` | header | `error_message` |
 | `commissioner_signed_in` | header | `role` (also calls `identify()`) |
 | `commissioner_signed_out` | header | — (also calls `reset()`) |
-| `member_claimed` | header | `member_id` (also calls `identify()`) |
+| `member_claimed` | header | `member_id`, `method` (`auto`\|`manual`) (also calls `identify()`) |
 | `settings_mode_changed` | settings | `mode` |
 | `lock_toggled` | settings | `category`, `field_key`, `is_locked` |
 | `detail_row_added` | settings | `category`, `row_type` |
