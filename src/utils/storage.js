@@ -102,14 +102,6 @@ export async function signOutCommissioner() {
  return { ok: !error, error: error?.message || null };
 }
 
-export async function getCommissionerSession() {
- const { data, error } = await supabase.auth.getSession();
- if (error) return { session: null, role: null, memberId: null, error: error.message || 'Unable to load session.' };
- const session = data?.session || null;
- const { role, memberId } = await getCommissionerRole(session);
- return { session, role, memberId, error: null };
-}
-
 /**
 * Returns both the caller's commissioner/admin role (if any) and their
 * claimed member_id (if any) — see phase10_member_accounts.sql. These used
