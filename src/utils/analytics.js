@@ -55,37 +55,48 @@ export function timeEvent(eventName) {
   }
 }
 
-// Per Mixpanel's identity guidance: identify with a stable database ID,
-// never an email (emails can change or be reused). Supabase Auth's
-// session.user.id is that stable ID here; email is stored as a profile
-// property only, not as the distinct_id.
-export function identifyCommissioner(userId, email, role) {
-  if (!ready || !userId) return;
+// Single entry point for identifying a signed-in person — picks exactly
+// ONE canonical distinct_id, because calling mixpanel.identify() twice in
+// the same session with two DIFFERENT values (which used to happen: a
+// separate identifyCommissioner(userId) and identifyMember(memberId),
+// each firing independently) has no guarantee of merging into one
+// Mixpanel profile. The commissioner is usually also a league member, so
+// that split was a real, not theoretical, risk for exactly that person's
+// own data. member_id wins when known — it's the id a second device
+// re-identifies to as well (see AGENTS.md's identity section) — the
+// Supabase auth UUID is the fallback for a commissioner with no claimed
+// member identity yet. Safe to call on every render where a session
+// exists: mixpanel.identify() with the id it's already using is a no-op,
+// so the one-time-per-sign-in bookkeeping below (login counts etc.) stays
+// in markCommissionerLogin(), gated separately, instead of repeating here.
+export function identifyPerson({ userId, email, memberId }) {
+  if (!ready) return;
+  const distinctId = memberId || userId;
+  if (!distinctId) return;
   try {
-    mixpanel.identify(userId);
-    mixpanel.people.set({ $email: email, role: role || "commissioner" });
+    mixpanel.identify(distinctId);
+    if (email) mixpanel.people.set({ $email: email });
+    if (memberId) mixpanel.register({ member_id: memberId });
+  } catch (e) {
+    console.warn("Mixpanel: identifyPerson failed.", e);
+  }
+}
+
+// One-time-per-sign-in-transition bookkeeping — kept separate from
+// identifyPerson() specifically so that function's safe-to-call-repeatedly
+// nature doesn't also repeat these (they'd otherwise double-count
+// commissioner_login_count on every re-render that touches identity, not
+// just on an actual new sign-in).
+export function markCommissionerLogin(role) {
+  if (!ready) return;
+  try {
+    mixpanel.people.set({ role: role || "commissioner" });
     mixpanel.people.set_once({ first_commissioner_login: new Date().toISOString() });
     mixpanel.people.set({ last_commissioner_login: new Date().toISOString() });
     mixpanel.people.increment("commissioner_login_count", 1);
     mixpanel.register({ is_commissioner: true });
   } catch (e) {
-    console.warn("Mixpanel: identifyCommissioner failed.", e);
-  }
-}
-
-// Per the same identity guidance as identifyCommissioner, but using
-// member_id (a stable string like "adam", not an email or display name —
-// see AGENTS.md's identity section) as the distinct_id. Signing in from a
-// second device re-identifies to the same member_id, merging both
-// sessions under one profile, which is the point: one person, one
-// identity, regardless of device.
-export function identifyMember(memberId) {
-  if (!ready || !memberId) return;
-  try {
-    mixpanel.identify(memberId);
-    mixpanel.register({ member_id: memberId });
-  } catch (e) {
-    console.warn("Mixpanel: identifyMember failed.", e);
+    console.warn("Mixpanel: markCommissionerLogin failed.", e);
   }
 }
 

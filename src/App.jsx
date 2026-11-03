@@ -53,8 +53,8 @@ const PrivacyPolicy = lazy(() => import("./components/PrivacyPolicy"));
 import {
   track,
   EVENTS,
-  identifyCommissioner,
-  identifyMember,
+  identifyPerson,
+  markCommissionerLogin,
   resetIdentity,
   setDeviceTypeSuperProperty,
   setSeasonSuperProperties,
@@ -377,42 +377,48 @@ export default function App() {
     };
   }, []);
 
-  // Fire Commissioner Signed In / Signed Out exactly once per real transition,
-  // not on every re-render or on the initial unauthenticated state.
+  // Identity to Mixpanel + Commissioner Signed In/Out tracking, combined
+  // into one effect so there's a single coordinated decision about which
+  // distinct_id to identify as — these used to be two independent effects
+  // (one per role), which meant someone who is both commissioner and a
+  // claimed member (the common case: the commissioner is usually also a
+  // league member) got mixpanel.identify() called twice with two
+  // different values in the same session. identifyPerson() picks member_id
+  // over the Supabase UUID when both are known and is safe to call on
+  // every render with a session (a no-op if the id hasn't changed);
+  // markCommissionerLogin()'s one-time bookkeeping (login counts etc.)
+  // stays gated to the actual sign-in transition, same as before.
   const prevSignedInRef = useRef(false);
-  useEffect(() => {
-    if (!authReady) return;
-    const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
-    if (signedIn && !prevSignedInRef.current) {
-      const userId = commissionerSession?.user?.id;
-      const email = commissionerSession?.user?.email;
-      identifyCommissioner(userId, email, commissionerRole);
-      track(EVENTS.COMMISSIONER_SIGNED_IN, { role: commissionerRole });
-    } else if (!signedIn && prevSignedInRef.current) {
-      track(EVENTS.COMMISSIONER_SIGNED_OUT);
-      resetIdentity();
-    }
-    prevSignedInRef.current = signedIn;
-  }, [authReady, commissionerRole, commissionerSession]);
-
-  // Separately: identify as the claimed member_id on sign-in (covers both
-  // the moment of claiming and every later session that resumes with one
-  // already set), and break that identity link on ANY sign-out — not just
-  // a commissioner one. Without this, a plain member signing out on a
-  // shared device would leave the Mixpanel identity (and the account menu)
-  // still pointed at them, which is exactly the shared-device leak the
-  // account menu's visible "Sign out" exists to avoid.
   const prevHadSessionRef = useRef(false);
   useEffect(() => {
     if (!authReady) return;
+    const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
     const hasSession = !!commissionerSession;
-    if (hasSession && memberId) {
-      identifyMember(memberId);
-    } else if (!hasSession && prevHadSessionRef.current) {
+
+    if (hasSession) {
+      identifyPerson({
+        userId: commissionerSession?.user?.id,
+        email: commissionerSession?.user?.email,
+        memberId,
+      });
+    }
+
+    if (signedIn && !prevSignedInRef.current) {
+      markCommissionerLogin(commissionerRole);
+      track(EVENTS.COMMISSIONER_SIGNED_IN, { role: commissionerRole });
+    } else if (!signedIn && prevSignedInRef.current) {
+      track(EVENTS.COMMISSIONER_SIGNED_OUT);
+    }
+    prevSignedInRef.current = signedIn;
+
+    // Any sign-out (commissioner or plain member) breaks the identity
+    // link so a later visitor on a shared device doesn't inherit it —
+    // the account menu's visible "Sign out" exists specifically for this.
+    if (!hasSession && prevHadSessionRef.current) {
       resetIdentity();
     }
     prevHadSessionRef.current = hasSession;
-  }, [authReady, commissionerSession, memberId]);
+  }, [authReady, commissionerRole, commissionerSession, memberId]);
 
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false, trigger) => {
