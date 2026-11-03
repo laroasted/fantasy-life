@@ -277,7 +277,20 @@ export default function App() {
       try {
         const sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
         if (!sessionResult) {
+          // Timed out, not corrupted — leave stored session/role state
+          // untouched, but still mark the initial check as done. This used
+          // to skip setAuthReady here, relying entirely on the
+          // onAuthStateChange listener below to set it once it fired —
+          // reliable in every Chromium test this session ran, but NOT in
+          // real-world Safari: confirmed live, a signed-in person's entire
+          // account menu (sign-in button included) rendered as nothing at
+          // all, because authReady never became true. withTimeout is a
+          // plain setTimeout race, not dependent on anything Safari-specific
+          // (unlike gotrue-js's own Web Locks usage elsewhere), so this is a
+          // safe, guaranteed-to-fire path regardless of what the listener
+          // does or how long it takes.
           console.warn("loadAuth: getSession timed out — leaving stored session untouched");
+          if (isMounted) setAuthReady(true);
           return;
         }
         if (sessionResult.error) throw new Error(sessionResult.error.message || "getSession failed");
@@ -296,12 +309,13 @@ export default function App() {
 
       if (!isMounted) return;
       setCommissionerSession(session);
-      // Not set here when a session exists — the listener's first firing
-      // (below) owns resolving role/memberId and sets authReady once that
-      // settles, so the UI never flashes "signed out" for a session that's
-      // actually just mid-lookup. A genuinely anonymous visitor (no
-      // session) has nothing left to resolve.
-      if (!session) setAuthReady(true);
+      // Always set, not just for the anonymous case — authReady means "we
+      // finished checking for a session," not "role/memberId also
+      // resolved." The listener below still independently resolves those
+      // whenever it fires, filling them in moments later if it's slower
+      // than this — but the UI (the whole account menu, sign-in button
+      // included) must never hang waiting on that just to render at all.
+      setAuthReady(true);
     }
 
     loadAuth();
