@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
+import { supabasePublic, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
@@ -45,7 +45,7 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
   setError(null);
   var cacheKey = STORAGE_KEYS.ACTIVITY_FEED_PREFIX + "-" + seasonYear;
 
-  var { data, error: err } = await supabase
+  var { data, error: err } = await supabasePublic
    .from("score_events")
    .select("member_id, category, delta, cause, occurred_at")
    .eq("season_year", seasonYear)

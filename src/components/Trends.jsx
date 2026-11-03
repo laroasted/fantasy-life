@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
-import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
+import { supabasePublic, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle, radius } from "../constants/theme";
 import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
@@ -140,7 +140,7 @@ export default function Trends({ seasonData }) {
     let keepFetching = true;
     let fetchError = null;
     while (keepFetching) {
-      const { data, error: err } = await supabase
+      const { data, error: err } = await supabasePublic
         .from("score_history")
         .select("snapshot_date, member_id, category, total")
         .eq("season_year", seasonYear)

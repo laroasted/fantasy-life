@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Clock, CalendarDays } from "lucide-react";
-import { supabase } from "../utils/storage";
+import { supabasePublic } from "../utils/storage";
 import { theme } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
 import { Skeleton } from "./Badges";
@@ -178,7 +178,7 @@ export default function Calendar({ seasonYear }) {
     async function load() {
       setLoading(true);
       try {
-        const { data, error } = await supabase
+        const { data, error } = await supabasePublic
           .from("calendar_events")
           .select("*")
           .eq("season_year", yr)
