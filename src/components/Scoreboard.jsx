@@ -769,7 +769,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
       var isExp = expRow === m.owner;
       var memberPaywalled = isPaywalled(seasonData, m.id);
       var isMine = !!memberId && m.id === memberId;
-      var myColor = MEMBER_COLORS[m.id] || theme.acc;
+      // Rank 1's gold ring wins over the "this is you" tint for the border
+      // specifically — being in the lead is information every viewer reads
+      // the same way, and you already know it's your own row without the
+      // border telling you twice. The background tint and YOU badge below
+      // still mark it as yours regardless of rank.
+      var rowBorderColor = (isMine && m.rank !== 1) ? theme.you : rowBorder(m.rank);
       return (
        <div key={m.owner}>
         <div className="interactive" onClick={function () {
@@ -778,10 +783,19 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           }}
          style={{
           borderRadius: isExp ? "10px 10px 0 0" : 10,
-          background: isMine ? myColor + "14" : rowBackground(m.rank),
-          border: "1px solid " + rowBorder(m.rank),
-          borderLeft: isMine ? "3px solid " + myColor : undefined,
-          borderBottom: isExp ? "none" : undefined, cursor: "pointer",
+          background: isMine ? theme.you + "1a" : rowBackground(m.rank),
+          // Four explicit sides, never the `border` shorthand mixed with a
+          // longhand override — that combination is what silently dropped
+          // the "yours" accent the first time a visible rank changed: the
+          // shorthand resets every side as a side effect when its OWN value
+          // changes, but React only re-applies a style key when that key's
+          // own value changed, so a same-valued longhand override never got
+          // reasserted after the shorthand quietly stomped it.
+          borderTop: "1px solid " + rowBorderColor,
+          borderRight: "1px solid " + rowBorderColor,
+          borderBottom: isExp ? "none" : "1px solid " + rowBorderColor,
+          borderLeft: "1px solid " + rowBorderColor,
+          cursor: "pointer",
           padding: isMobile ? "8px 10px" : "10px 12px" }}>
          <div style={{ display: "grid",
           gridTemplateColumns: isMobile ? "28px 1fr 50px 16px" : "32px 1fr 60px 20px",
@@ -791,7 +805,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
            <Avatar name={m.owner} color={MEMBER_COLORS[m.id]} size={isMobile ? 20 : 24} />
            <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
-           {isMine && <YouBadge color={myColor} />}
+           {isMine && <YouBadge color={theme.you} />}
           </span>
           <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
            {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
@@ -890,7 +904,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        var memberHasLocks = hasAnyLock(seasonData, selCat, m.owner);
        var memberPaywalled = isPaywalled(seasonData, mid);
        var isMine = !!memberId && mid === memberId;
-       var myColor = MEMBER_COLORS[mid] || theme.acc;
+       // Same reasoning as the overall view: rank 1's gold ring wins over
+       // the "this is you" tint for the border, and four explicit sides
+       // instead of a border shorthand + longhand override — see that
+       // block's comment for why the mix is what broke the left-accent
+       // version in the first place.
+       var rowBorderColor = (isMine && m.rank !== 1) ? theme.you : rowBorder(m.rank);
        return (
         <div key={m.owner}>
          <div className="interactive" onClick={function () {
@@ -902,10 +921,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
            gridTemplateColumns: isMobile ? "28px 1fr auto" : "32px 1fr auto",
            alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px", gap: 8,
            borderRadius: isExp ? "10px 10px 0 0" : 10,
-           background: isMine ? myColor + "14" : rowBackground(m.rank),
-           border: "1px solid " + rowBorder(m.rank),
-           borderLeft: isMine ? "3px solid " + myColor : undefined,
-           borderBottom: isExp ? "none" : undefined, cursor: "pointer",
+           background: isMine ? theme.you + "1a" : rowBackground(m.rank),
+           borderTop: "1px solid " + rowBorderColor,
+           borderRight: "1px solid " + rowBorderColor,
+           borderBottom: isExp ? "none" : "1px solid " + rowBorderColor,
+           borderLeft: "1px solid " + rowBorderColor,
+           cursor: "pointer",
           }}>
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
           <div style={{ minWidth: 0 }}>
@@ -915,7 +936,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
              {m.owner}
             </span>
-            {isMine && <YouBadge color={myColor} />}
+            {isMine && <YouBadge color={theme.you} />}
             {memberHasLocks && <LockIndicator note="Commissioner has locked some values for this entry" />}
             {memberPaywalled && <Lock size={10} color={theme.yel} style={{ marginLeft: 4, flexShrink: 0 }} />}
             <button

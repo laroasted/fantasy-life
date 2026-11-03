@@ -18,6 +18,8 @@ export const theme = {
   grn: "#22c55e",
   red: "#ef4444",
   yel: "#eab308",
+  you: "#3b82f6", // fixed "this is your row" accent — same for every signed-in
+                  // member, independent of their own MEMBER_COLORS entry.
 };
 
 // Radius scale — pick one of these three for anything new instead of a
