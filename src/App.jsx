@@ -296,9 +296,27 @@ export default function App() {
 
     loadAuth();
 
+    // onAuthStateChange fires once immediately on subscription, reporting
+    // whatever session already exists — on first page load that's the
+    // exact same session loadAuth() above is independently resolving at
+    // the exact same moment. Without skipping that one redundant firing,
+    // every authenticated page load ran the profiles-table lookup TWICE
+    // for the same user, for no benefit (confirmed root cause of "only
+    // slow when signed in" — an anonymous visitor never hits this at all,
+    // since getCommissionerRole() short-circuits before querying anything
+    // when there's no session). Every firing after this first one is a
+    // real transition (actual sign-in, sign-out, token refresh) and is
+    // handled normally.
+    let isFirstAuthEvent = true;
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
       setCommissionerSession(session || null);
+
+      if (isFirstAuthEvent) {
+        isFirstAuthEvent = false;
+        return;
+      }
+
       if (!session) {
         setCommissionerRole(null);
         setMemberId(null);
