@@ -17,6 +17,7 @@ import { withTimeout } from "./utils/helpers";
 import { useViewport } from "./utils/useViewport";
 import {
   supabase,
+  supabasePublic,
   storageGet,
   storageSet,
   STORAGE_KEYS,
@@ -482,7 +483,7 @@ export default function App() {
       try {
         // Same hang risk as loadSeason() above — same 10s safety net.
         const archivedResult = await withTimeout(
-          supabase.from('seasons').select('year').eq('status', 'archived').order('year', { ascending: false }),
+          supabasePublic.from('seasons').select('year').eq('status', 'archived').order('year', { ascending: false }),
           10000,
           { data: null }
         );

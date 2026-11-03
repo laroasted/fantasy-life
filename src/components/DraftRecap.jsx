@@ -10,7 +10,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ClipboardList, AlertTriangle, ScrollText, IdCard, BarChart3, Gem, ChevronDown, ChevronRight } from "lucide-react";
 import { Badge, Skeleton } from "./Badges";
-import { supabase, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
+import { supabasePublic, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
@@ -139,9 +139,9 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
         { data: pickData, error: pErr },
         { data: memberData, error: mErr },
       ] = await Promise.all([
-        supabase.from("seasons").select("draft_board").eq("year", seasonYear).single(),
-        supabase.from("picks").select("member_id, category, pick, total").eq("season_year", seasonYear),
-        supabase.from("members").select("id, name, color"),
+        supabasePublic.from("seasons").select("draft_board").eq("year", seasonYear).single(),
+        supabasePublic.from("picks").select("member_id, category, pick, total").eq("season_year", seasonYear),
+        supabasePublic.from("members").select("id, name, color"),
       ]);
       if (sErr) console.warn("DraftRecap: couldn't load draft_board, using hardcoded fallback if available:", sErr.message);
       const board = seasonData?.draft_board || FALLBACK_BOARDS[seasonYear] || null;

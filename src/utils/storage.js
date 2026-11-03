@@ -11,6 +11,28 @@ const SUPABASE_ANON_KEY = 'sb_publishable_9lGdGZ1EEifhWZlPRQa-WA_QVbPD6O6';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Second client, deliberately session-less, for the public reads (season,
+// projections, draft recap, trends, calendar — anything covered by the
+// "public can read ..." RLS policies in phase1_commissioner_auth.sql) that
+// have no reason to depend on whoever is or isn't signed in. The default
+// `supabase` client above attaches the current user's access token to every
+// request via its GoTrueClient, which means EVERY query — even a plain
+// public SELECT — has to wait on that client's internal session lock
+// (`navigator.locks`-backed on browsers that support it) before it can fire.
+// That lock is the same one `supabase.auth.getSession()` takes when
+// restoring a persisted session on page load — on a refresh with an
+// existing session (not a fresh sign-in, where there's nothing to restore
+// and no lock contention), the two can collide and the query sits blocked
+// for the full timeout, which is what was landing people on the
+// `build2025()`/hardcoded fallback and a stuck-at-2025 season after a
+// refresh. `persistSession`/`autoRefreshToken` are both off here so this
+// client never touches that lock at all — it always just sends the plain
+// anon key, which these public policies already accept from anyone,
+// signed in or not.
+export const supabasePublic = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+ auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+});
+
 const COMMISSIONER_EMAILS = (process.env.REACT_APP_COMMISSIONER_EMAILS || '')
   .split(',')
   .map((email) => email.trim().toLowerCase())
@@ -301,7 +323,7 @@ try {
  // it. (picks genuinely does need season.year, so it can't join this
  // batch — it has to wait for this Promise.all to settle.) This cuts
  // one full sequential round-trip off every season load.
- let query = supabase.from('seasons').select('*');
+ let query = supabasePublic.from('seasons').select('*');
  if (year) {
  query = query.eq('year', year);
  } else {
@@ -313,7 +335,7 @@ try {
  { data: members, error: mErr },
  ] = await Promise.all([
  query.single(),
- supabase.from('members').select('*').order('id'),
+ supabasePublic.from('members').select('*').order('id'),
  ]);
 
  if (sErr || !season) {
@@ -327,7 +349,7 @@ try {
  }
 
  // 3. Fetch ALL picks for this season
- const { data: picks, error: pErr } = await supabase
+ const { data: picks, error: pErr } = await supabasePublic
  .from('picks')
  .select('*')
  .eq('season_year', season.year);
@@ -349,13 +371,13 @@ try {
  { data: countryOlympics },
  { data: stockPrices },
  ] = await Promise.all([
- supabase.from('sport_rounds').select('*').in('pick_id', pickIds).order('round_order'),
- supabase.from('film_entries').select('*').in('pick_id', pickIds),
- supabase.from('music_songs').select('*').in('pick_id', pickIds),
- supabase.from('music_grammys').select('*').in('pick_id', pickIds),
- supabase.from('event_majors').select('*').in('pick_id', pickIds).order('event_order'),
- supabase.from('country_olympics').select('*').in('pick_id', pickIds),
- supabase.from('stock_prices').select('*').in('pick_id', pickIds),
+ supabasePublic.from('sport_rounds').select('*').in('pick_id', pickIds).order('round_order'),
+ supabasePublic.from('film_entries').select('*').in('pick_id', pickIds),
+ supabasePublic.from('music_songs').select('*').in('pick_id', pickIds),
+ supabasePublic.from('music_grammys').select('*').in('pick_id', pickIds),
+ supabasePublic.from('event_majors').select('*').in('pick_id', pickIds).order('event_order'),
+ supabasePublic.from('country_olympics').select('*').in('pick_id', pickIds),
+ supabasePublic.from('stock_prices').select('*').in('pick_id', pickIds),
  ]);
 
  // 5. Index detail data by pick_id for fast lookup
@@ -555,11 +577,11 @@ try {
 */
 export async function fetchProjectionsFromSupabase(year, members) {
 try {
- const { data: picks, error: pErr } = await supabase
+ const { data: picks, error: pErr } = await supabasePublic
  .from('picks').select('id, member_id, category').eq('season_year', year);
  if (pErr || !picks) return {};
 
- const { data: projections, error: projErr } = await supabase
+ const { data: projections, error: projErr } = await supabasePublic
  .from('projections').select('*').eq('season_year', year);
  if (projErr || !projections || projections.length === 0) return {};
 
