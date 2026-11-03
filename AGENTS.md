@@ -19,13 +19,21 @@ the long-form version; this file is the in-repo quick reference.
 
 ## Identity
 
-- No login for regular viewers — the app is open to anyone with the URL.
-  Anonymous visitors are tracked by Mixpanel's auto-generated `$device_id`,
-  never identified.
-- The only authenticated role is **commissioner** (Supabase Google OAuth,
-  small email allow-list — switched from magic-link email after hitting
+- The app itself still requires no login to view — anyone with the URL can
+  browse every tab. Login is for *identity* (which league member this
+  device belongs to), not access. An un-signed-in visitor is tracked by
+  Mixpanel's auto-generated `$device_id`, never identified.
+- Login uses Supabase Google OAuth for everyone — both the commissioner
+  role and regular member identity share the same sign-in flow and the
+  same `profiles` table (`supabase/phase1_commissioner_auth.sql`,
+  `supabase/phase10_member_accounts.sql`). There's no separate "member
+  login" mechanism — `signInWithGoogle()` has no allow-list; what a signed-in
+  Google account is *authorized to do* is a separate lookup after the fact
+  (see below), same as it always was for the commissioner.
+- **Commissioner role**: switched from magic-link email after hitting
   Supabase's shared-mailer rate limit and a localStorage session-corruption
-  issue; see `docs/commissioner-auth-phase1.md`). On a successful sign-in, `App.jsx` calls
+  issue; see `docs/commissioner-auth-phase1.md`. On a successful sign-in
+  with a configured commissioner email, `App.jsx` calls
   `identifyCommissioner(userId, email, role)`, which:
   - `mixpanel.identify(userId)` — **the Supabase Auth `session.user.id`
     (a stable UUID), not the email.** Emails can change; the database ID
@@ -33,12 +41,33 @@ the long-form version; this file is the in-repo quick reference.
   - Sets `role`, `first_commissioner_login` (set_once), `last_commissioner_login`,
     increments `commissioner_login_count`.
   - Registers `is_commissioner: true` as a super property.
-- On sign-out, `resetIdentity()` calls `mixpanel.reset()` — breaks the
-  identity link so a later visitor on a shared device doesn't inherit the
-  previous commissioner's profile.
+- **Member identity**: the "who are you?" picker now exists (the account
+  menu in `App.jsx`'s header, visible on every tab, not just
+  Draft/Settings). The first time a signed-in Google account has no
+  `profiles.member_id` yet, it can self-claim one of the static
+  `DRAFT_MEMBERS` ids via the `claim_member_identity` RPC
+  (`supabase/phase10_member_accounts.sql`), then `App.jsx` calls
+  `identifyMember(memberId)`, which:
+  - `mixpanel.identify(memberId)` — **the stable member id (e.g. `"adam"`),
+    never a display name or email**, per the rule this file already had
+    for this feature before it was built. Claiming fires `member_claimed`
+    once; every later session re-identifies to the same `member_id`
+    automatically (see the `identifyMember`/`memberId` effect in `App.jsx`),
+    so no repeat event is needed for the KPI in "Value Moment" below.
+  - Registers `member_id` as a super property (unregistered on sign-out).
+  - Deliberately open self-claim for now — no gate on which Google account
+    can claim which member — because claiming only affects push targeting
+    (Phase B) today. Revisit before member_id is ever used to authorize an
+    action (e.g. a live draft pick) — see phase10's own migration comment.
+- On sign-out, `resetIdentity()` calls `mixpanel.reset()` (and unregisters
+  `member_id`) — breaks the identity link so a later visitor on a shared
+  device doesn't inherit the previous signed-in person's profile. The
+  account menu's visible avatar + name + explicit "Sign out" exists
+  specifically so that's obvious to see and easy to act on, rather than
+  relying on people remembering to log out of a device that isn't theirs.
 - **Never call `identify()` with an email or a league member's display
-  name.** If a future "who are you?" picker is added for regular members,
-  identify with a generated/stable `member_id`, not their display name.
+  name** — identify with the stable `userId` (commissioner) or `member_id`
+  (member) instead, per above.
 
 ## Naming conventions
 
@@ -138,6 +167,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `commissioner_login_failed` | header | `error_message` |
 | `commissioner_signed_in` | header | `role` (also calls `identify()`) |
 | `commissioner_signed_out` | header | — (also calls `reset()`) |
+| `member_claimed` | header | `member_id` (also calls `identify()`) |
 | `settings_mode_changed` | settings | `mode` |
 | `lock_toggled` | settings | `category`, `field_key`, `is_locked` |
 | `detail_row_added` | settings | `category`, `row_type` |

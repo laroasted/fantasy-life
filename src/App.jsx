@@ -29,7 +29,10 @@ import {
   signOutCommissioner,
   getCommissionerSession,
   getConfiguredCommissionerEmails,
+  claimMemberIdentityRpc,
+  fetchClaimedMemberIds,
 } from "./utils/storage";
+import { DRAFT_MEMBERS, MEMBER_COLORS } from "./constants/members";
 import Scoreboard from "./components/Scoreboard";
 import AdUnit from "./components/AdUnit";
 import ScrollFadeEdges from "./components/ScrollFadeEdges";
@@ -50,6 +53,7 @@ import {
   track,
   EVENTS,
   identifyCommissioner,
+  identifyMember,
   resetIdentity,
   setDeviceTypeSuperProperty,
   setSeasonSuperProperties,
@@ -163,6 +167,11 @@ export default function App() {
   const [commissionerRole, setCommissionerRole] = useState(null);
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [memberId, setMemberId] = useState(null);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [claimedMemberIds, setClaimedMemberIds] = useState([]);
+  const [claimingId, setClaimingId] = useState(null);
+  const [claimError, setClaimError] = useState("");
   const [biggestRiser, setBiggestRiser] = useState(null);
   const [biggestFaller, setBiggestFaller] = useState(null);
   const [nextEvent, setNextEvent] = useState(null);
@@ -192,8 +201,37 @@ export default function App() {
 
   const configuredCommissioners = getConfiguredCommissionerEmails();
   const isCommissioner = commissionerRole === "commissioner" || commissionerRole === "admin";
- 
+  const accountDisplayName = memberId
+    ? (DRAFT_MEMBERS.find((m) => m.id === memberId)?.name || memberId)
+    : null;
+  const unclaimedMembers = useMemo(
+    () => DRAFT_MEMBERS.filter((m) => !claimedMemberIds.includes(m.id)),
+    [claimedMemberIds]
+  );
+
   useEffect(() => { setDeviceTypeSuperProperty(isMobile); }, [isMobile]);
+
+  // Lazily fetch who's already claimed, only when the picker is actually
+  // open and there's still a name to pick — no need to hold this in state
+  // for visitors who never open the menu.
+  useEffect(() => {
+    if (!showAccountMenu || memberId || !commissionerSession) return;
+    fetchClaimedMemberIds().then(setClaimedMemberIds).catch(() => setClaimedMemberIds([]));
+  }, [showAccountMenu, memberId, commissionerSession]);
+
+  const handleClaimMember = useCallback(async (id) => {
+    setClaimingId(id);
+    setClaimError("");
+    const ok = await claimMemberIdentityRpc(id);
+    if (ok) {
+      setMemberId(id);
+      track(EVENTS.MEMBER_CLAIMED, { member_id: id });
+      setShowAccountMenu(false);
+    } else {
+      setClaimError("That name may already be claimed — try again or ask the commissioner.");
+    }
+    setClaimingId(null);
+  }, []);
 
   // Keep the URL in sync with the active tab so a tab is a link someone can
   // actually send to the group chat, not just an in-session click target.
@@ -217,10 +255,11 @@ export default function App() {
         // never settles must not leave authReady stuck false forever.
         const result = await withTimeout(getCommissionerSession(), 10000, null);
         if (!result) throw new Error("getCommissionerSession timed out");
-        const { session, role } = result;
+        const { session, role, memberId: claimedMemberId } = result;
         if (!isMounted) return;
         setCommissionerSession(session);
         setCommissionerRole(role);
+        setMemberId(claimedMemberId);
       } catch (e) {
         // A stale/corrupted stored session can make getSession() throw
         // outright rather than return { error }. Resetting React state alone
@@ -235,6 +274,7 @@ export default function App() {
         if (!isMounted) return;
         setCommissionerSession(null);
         setCommissionerRole(null);
+        setMemberId(null);
       } finally {
         if (isMounted) setAuthReady(true);
       }
@@ -247,20 +287,23 @@ export default function App() {
       setCommissionerSession(session || null);
       if (!session) {
         setCommissionerRole(null);
+        setMemberId(null);
         setAuthReady(true);
         return;
       }
       try {
         const result = await withTimeout(getCommissionerSession(), 10000, null);
         if (!result) throw new Error("getCommissionerSession timed out");
-        const { role } = result;
+        const { role, memberId: claimedMemberId } = result;
         if (!isMounted) return;
         setCommissionerRole(role);
+        setMemberId(claimedMemberId);
       } catch (e) {
         console.error("Auth state change role lookup failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
         if (!isMounted) return;
         setCommissionerRole(null);
+        setMemberId(null);
       } finally {
         if (isMounted) setAuthReady(true);
       }
@@ -289,7 +332,26 @@ export default function App() {
     }
     prevSignedInRef.current = signedIn;
   }, [authReady, commissionerRole, commissionerSession]);
- 
+
+  // Separately: identify as the claimed member_id on sign-in (covers both
+  // the moment of claiming and every later session that resumes with one
+  // already set), and break that identity link on ANY sign-out — not just
+  // a commissioner one. Without this, a plain member signing out on a
+  // shared device would leave the Mixpanel identity (and the account menu)
+  // still pointed at them, which is exactly the shared-device leak the
+  // account menu's visible "Sign out" exists to avoid.
+  const prevHadSessionRef = useRef(false);
+  useEffect(() => {
+    if (!authReady) return;
+    const hasSession = !!commissionerSession;
+    if (hasSession && memberId) {
+      identifyMember(memberId);
+    } else if (!hasSession && prevHadSessionRef.current) {
+      resetIdentity();
+    }
+    prevHadSessionRef.current = hasSession;
+  }, [authReady, commissionerSession, memberId]);
+
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false, trigger) => {
     var resolvedTrigger = trigger || (showRefreshing ? "manual_refresh" : "initial");
@@ -765,76 +827,137 @@ export default function App() {
                 {pushEnabled ? <Bell size={16} /> : <BellOff size={16} />}
               </button>
             )}
-            {/* Commissioner auth only matters on Draft/Settings — keeping it off the
-                header on every other tab gives the primary surfaces (Scoreboard
-                especially) back the width this was eating on mobile. */}
-            {authReady && (activeTab === "draft" || activeTab === "settings") && (
-              <div style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: isMobile ? "stretch" : "flex-end",
-                gap: 6,
-                minWidth: isMobile ? 0 : 280,
-              }}>
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  flexWrap: "wrap",
-                  justifyContent: isMobile ? "flex-start" : "flex-end",
-                }}>
-                  {isCommissioner ? (
-                    <>
-                      <span style={{ fontSize: 11, color: "#86efac", fontWeight: 700 }}>
-                        Commissioner signed in
-                      </span>
-                      <button
-                        onClick={handleCommissionerSignOut}
-                        disabled={authLoading}
-                        style={{
-                          background: "none",
-                          border: "1px solid " + theme.bdr,
-                          borderRadius: 8,
-                          padding: isMobile ? "5px 8px" : "6px 10px",
-                          color: theme.txt,
-                          fontSize: 11,
-                          cursor: authLoading ? "default" : "pointer",
-                        }}>
-                        Sign out
-                      </button>
-                    </>
-                  ) : (
+            {/* Account menu — always visible on every tab, not just Draft/Settings,
+                so it's never ambiguous who (if anyone) is signed in on this
+                device. Avatar + name double as the "who's logged in" signal;
+                the dropdown's explicit Sign out exists so a shared device
+                doesn't silently stay logged in as whoever used it last. */}
+            {authReady && (
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                {commissionerSession ? (
+                  <>
                     <button
-                      onClick={() => { setAuthError(""); handleGoogleSignIn(); }}
-                      disabled={authLoading}
+                      onClick={() => setShowAccountMenu((v) => !v)}
                       style={{
+                        display: "flex", alignItems: "center", gap: 6,
                         background: "none",
                         border: "1px solid " + theme.bdr,
                         borderRadius: 8,
-                        padding: isMobile ? "5px 8px" : "6px 10px",
+                        padding: isMobile ? "4px 6px" : "4px 10px 4px 6px",
                         color: theme.txt,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        cursor: authLoading ? "default" : "pointer",
-                        opacity: authLoading ? 0.6 : 1,
+                        cursor: "pointer",
                       }}>
-                      {authLoading ? "Redirecting…" : "Sign in with Google"}
+                      <span style={{
+                        width: 20, height: 20, borderRadius: "50%",
+                        background: (memberId && MEMBER_COLORS[memberId]) || theme.dim,
+                        color: "#fff", fontSize: 11, fontWeight: 700,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        flexShrink: 0,
+                      }}>
+                        {(accountDisplayName || "?").charAt(0).toUpperCase()}
+                      </span>
+                      {!isMobile && (
+                        <span style={{ fontSize: 11, fontWeight: 700 }}>
+                          {accountDisplayName || "Set your name"}
+                        </span>
+                      )}
                     </button>
-                  )}
-                </div>
+                    {showAccountMenu && (
+                      <>
+                        <div onClick={() => setShowAccountMenu(false)}
+                          style={{ position: "fixed", inset: 0, zIndex: 150 }} />
+                        <div style={{
+                          position: "absolute", top: "calc(100% + 6px)", right: 0,
+                          background: theme.card, border: "1px solid " + theme.bdr,
+                          borderRadius: 10, padding: 10, minWidth: 220,
+                          zIndex: 151, boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                        }}>
+                          {isCommissioner && (
+                            <div style={{ fontSize: 11, color: "#86efac", fontWeight: 700, marginBottom: 8 }}>
+                              Commissioner
+                            </div>
+                          )}
+                          {memberId ? (
+                            <div style={{ fontSize: 11, color: theme.dim, marginBottom: 10 }}>
+                              Signed in as {accountDisplayName}
+                            </div>
+                          ) : (
+                            <div style={{ marginBottom: 10 }}>
+                              <div style={{ fontSize: 11, color: theme.dim, marginBottom: 6 }}>
+                                Which of these are you?
+                              </div>
+                              {claimError && (
+                                <div style={{ fontSize: 10, color: "#fca5a5", marginBottom: 6 }}>
+                                  {claimError}
+                                </div>
+                              )}
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+                                {unclaimedMembers.map((m) => (
+                                  <button key={m.id}
+                                    onClick={() => handleClaimMember(m.id)}
+                                    disabled={!!claimingId}
+                                    style={{
+                                      textAlign: "left",
+                                      background: "none", border: "1px solid " + theme.bdr,
+                                      borderRadius: 6, padding: "5px 8px",
+                                      color: theme.txt, fontSize: 12,
+                                      cursor: claimingId ? "default" : "pointer",
+                                      opacity: claimingId === m.id ? 0.6 : 1,
+                                    }}>
+                                    {m.name}
+                                  </button>
+                                ))}
+                                {unclaimedMembers.length === 0 && (
+                                  <div style={{ fontSize: 11, color: theme.dim }}>
+                                    Everyone's claimed — ask the commissioner if yours is wrong.
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => { setShowAccountMenu(false); handleCommissionerSignOut(); }}
+                            disabled={authLoading}
+                            style={{
+                              width: "100%",
+                              background: "none", border: "1px solid " + theme.bdr,
+                              borderRadius: 8, padding: "6px 10px",
+                              color: theme.txt, fontSize: 11,
+                              cursor: authLoading ? "default" : "pointer",
+                            }}>
+                            Sign out
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { setAuthError(""); handleGoogleSignIn(); }}
+                    disabled={authLoading}
+                    style={{
+                      background: "none",
+                      border: "1px solid " + theme.bdr,
+                      borderRadius: 8,
+                      padding: isMobile ? "5px 8px" : "6px 10px",
+                      color: theme.txt,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: authLoading ? "default" : "pointer",
+                      opacity: authLoading ? 0.6 : 1,
+                    }}>
+                    {authLoading ? "Redirecting…" : "Sign in with Google"}
+                  </button>
+                )}
                 {authError && (
-                  <div style={{ fontSize: 10, color: "#fca5a5", textAlign: isMobile ? "left" : "right" }}>
+                  <div style={{
+                    position: "absolute", top: "100%", right: 0, marginTop: 4,
+                    fontSize: 10, color: "#fca5a5", whiteSpace: "nowrap",
+                  }}>
                     {authError}
                   </div>
                 )}
               </div>
-            )}
-            {/* Elsewhere, a signed-in commissioner gets a quiet reminder instead of
-                losing all trace that they're signed in. */}
-            {authReady && !(activeTab === "draft" || activeTab === "settings") && isCommissioner && (
-              <span style={{ fontSize: 11, color: "#86efac", fontWeight: 700, flexShrink: 0 }}>
-                Commissioner
-              </span>
             )}
             <button onClick={handleRefresh} disabled={refreshing}
               style={{
