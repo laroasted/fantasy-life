@@ -33,6 +33,7 @@ import {
   claimMemberIdentityRpc,
   autoClaimMemberIdentityRpc,
   fetchClaimedMemberIds,
+  SUPABASE_SESSION_STORAGE_KEY,
 } from "./utils/storage";
 import { DRAFT_MEMBERS, MEMBER_COLORS } from "./constants/members";
 import Scoreboard from "./components/Scoreboard";
@@ -152,6 +153,72 @@ function fmtEventWhen(dateStr) {
     : date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// ── Optimistic auth hydration ──
+//
+// supabase-js's own getSession() is lock-gated (see GoTrueClient
+// _acquireLock, and storage.js's SUPABASE_SESSION_STORAGE_KEY comment) —
+// reported live as a 10+ second wait after a refresh before the account
+// menu shows anyone as signed in at all, even though the session is
+// sitting right there in localStorage the whole time. Nothing about
+// *reading* that key needs the lock: the lock exists to serialize writes
+// and refreshes, not to protect a plain read of what's already stored.
+//
+// So on mount, before any of that async machinery even starts, read the
+// persisted session directly and — if it looks unexpired — use it to paint
+// the signed-in UI immediately. This is optimistic, not authoritative: the
+// real loadAuth()/onAuthStateChange flow below still runs exactly as
+// before and overwrites these values (session, role, memberId) with the
+// confirmed ones once it resolves, correcting anything this guessed wrong.
+// Worst case on a stale/invalid stored token is a few seconds of showing
+// the wrong person before that correction lands — a strict improvement
+// over several seconds of showing no one.
+//
+// commissionerRole/memberId aren't in that localStorage blob at all (they
+// come from our own `profiles` lookup, which — being an authenticated
+// query — is itself lock-gated and can't be shortcut the same way), so
+// those are optimistically restored from a small cache this file writes
+// itself, in writeCachedIdentity() below, every time the real flow
+// resolves them. Both reads are skipped (and the identity cache stays
+// unused) whenever there's no plausible session — a genuinely signed-out
+// visitor gets an instant, confident "not signed in" render instead of
+// waiting it out just to be told what localStorage already shows.
+const CACHED_IDENTITY_KEY = "fl-cached-identity";
+
+function readOptimisticSession() {
+  try {
+    var raw = window.localStorage.getItem(SUPABASE_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    var parsed = JSON.parse(raw);
+    if (!parsed || !parsed.access_token || !parsed.user) return null;
+    if (parsed.expires_at && parsed.expires_at * 1000 < Date.now()) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+function readCachedIdentity() {
+  try {
+    var raw = window.localStorage.getItem(CACHED_IDENTITY_KEY);
+    if (!raw) return { role: null, memberId: null };
+    var parsed = JSON.parse(raw);
+    return { role: (parsed && parsed.role) || null, memberId: (parsed && parsed.memberId) || null };
+  } catch (e) {
+    return { role: null, memberId: null };
+  }
+}
+
+function writeCachedIdentity(role, memberId) {
+  try {
+    if (!role && !memberId) { window.localStorage.removeItem(CACHED_IDENTITY_KEY); return; }
+    window.localStorage.setItem(CACHED_IDENTITY_KEY, JSON.stringify({ role: role, memberId: memberId }));
+  } catch (e) {}
+}
+
+function clearCachedIdentity() {
+  try { window.localStorage.removeItem(CACHED_IDENTITY_KEY); } catch (e) {}
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [activeSeason, setActiveSeason] = useState(null);
@@ -164,12 +231,27 @@ export default function App() {
   // lockstep with Scoreboard's sidebar instead of the two hand-copying the
   // same breakpoint numbers (see useViewport.js).
   const { isMobile, isWide } = useViewport();
-  const [authReady, setAuthReady] = useState(false);
-  const [commissionerSession, setCommissionerSession] = useState(null);
-  const [commissionerRole, setCommissionerRole] = useState(null);
+  // See the "Optimistic auth hydration" comment above: these three start
+  // from whatever's already in localStorage instead of null/false, so the
+  // account menu has something to show on the very first render rather
+  // than waiting out loadAuth()'s lock-gated session check. authReady
+  // itself can start true unconditionally — "no session in localStorage"
+  // is just as confident and instant an answer as "session found".
+  // authConfirmed tracks the separate, still-async question of whether the
+  // REAL check (below) has corrected/confirmed these yet; anything that
+  // must not act on a guess (Mixpanel identity, login bookkeeping) gates
+  // on that instead.
+  const [authReady, setAuthReady] = useState(true);
+  const [authConfirmed, setAuthConfirmed] = useState(false);
+  const [commissionerSession, setCommissionerSession] = useState(readOptimisticSession);
+  const [commissionerRole, setCommissionerRole] = useState(
+    () => (readOptimisticSession() ? readCachedIdentity().role : null)
+  );
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [memberId, setMemberId] = useState(null);
+  const [memberId, setMemberId] = useState(
+    () => (readOptimisticSession() ? readCachedIdentity().memberId : null)
+  );
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [claimedMemberIds, setClaimedMemberIds] = useState([]);
   const [claimingId, setClaimingId] = useState(null);
@@ -227,6 +309,7 @@ export default function App() {
     const ok = await claimMemberIdentityRpc(id);
     if (ok) {
       setMemberId(id);
+      writeCachedIdentity(commissionerRole, id);
       track(EVENTS.MEMBER_CLAIMED, { member_id: id, method: "manual" });
       setShowAccountMenu(false);
       // If push was already enabled from before this device had a claimed
@@ -240,7 +323,7 @@ export default function App() {
       setClaimError("That name may already be claimed — try again or ask the commissioner.");
     }
     setClaimingId(null);
-  }, [pushEnabled]);
+  }, [pushEnabled, commissionerRole]);
 
   // Keep the URL in sync with the active tab so a tab is a link someone can
   // actually send to the group chat, not just an in-session click target.
@@ -299,11 +382,13 @@ export default function App() {
       } catch (e) {
         console.error("loadAuth failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
+        clearCachedIdentity();
         if (isMounted) {
           setCommissionerSession(null);
           setCommissionerRole(null);
           setMemberId(null);
           setAuthReady(true);
+          setAuthConfirmed(true);
         }
         return;
       }
@@ -332,9 +417,11 @@ export default function App() {
       setCommissionerSession(session || null);
 
       if (!session) {
+        clearCachedIdentity();
         setCommissionerRole(null);
         setMemberId(null);
         setAuthReady(true);
+        setAuthConfirmed(true);
         return;
       }
 
@@ -347,10 +434,12 @@ export default function App() {
       } catch (e) {
         console.error("Auth state change role lookup failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
+        clearCachedIdentity();
         if (isMounted) {
           setCommissionerRole(null);
           setMemberId(null);
           setAuthReady(true);
+          setAuthConfirmed(true);
         }
         return;
       }
@@ -367,7 +456,13 @@ export default function App() {
 
       if (claimedMemberId) {
         setMemberId(claimedMemberId);
+        // Confirmed, real identity — cache it so the NEXT load (a refresh,
+        // most likely) can paint this immediately instead of starting from
+        // "Set your name" again while this same lookup re-runs. See the
+        // "Optimistic auth hydration" comment above App().
+        writeCachedIdentity(role, claimedMemberId);
         setAuthReady(true);
+        setAuthConfirmed(true);
         return;
       }
 
@@ -380,10 +475,13 @@ export default function App() {
       if (autoClaimedId) {
         setMemberId(autoClaimedId);
         track(EVENTS.MEMBER_CLAIMED, { member_id: autoClaimedId, method: "auto" });
+        writeCachedIdentity(role, autoClaimedId);
       } else {
         setMemberId(null);
+        writeCachedIdentity(role, null);
       }
       setAuthReady(true);
+      setAuthConfirmed(true);
     });
  
     return () => {
@@ -406,7 +504,12 @@ export default function App() {
   const prevSignedInRef = useRef(false);
   const prevHadSessionRef = useRef(false);
   useEffect(() => {
-    if (!authReady) return;
+    // Gates on authConfirmed, not authReady — these values may still be
+    // the optimistic, unconfirmed guess from localStorage (see "Optimistic
+    // auth hydration" above App()) while authReady is already true, and
+    // identifying to Mixpanel or counting a commissioner login off a guess
+    // that turns out wrong is worse than a few seconds' delay here.
+    if (!authConfirmed) return;
     const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
     const hasSession = !!commissionerSession;
 
@@ -433,7 +536,7 @@ export default function App() {
       resetIdentity();
     }
     prevHadSessionRef.current = hasSession;
-  }, [authReady, commissionerRole, commissionerSession, memberId]);
+  }, [authConfirmed, commissionerRole, commissionerSession, memberId]);
 
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false, trigger) => {

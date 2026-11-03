@@ -11,6 +11,17 @@ const SUPABASE_ANON_KEY = 'sb_publishable_9lGdGZ1EEifhWZlPRQa-WA_QVbPD6O6';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// The localStorage key supabase-js itself persists the signed-in session
+// under — same derivation it uses internally (`sb-${hostname-first-label}
+// -auth-token`, see @supabase/supabase-js SupabaseClient's defaultStorageKey),
+// computed here instead of hardcoded a second time so it can't drift from
+// SUPABASE_URL. App.jsx reads this directly, synchronously, to paint the
+// signed-in UI on first render instead of waiting on GoTrueClient's
+// lock-gated getSession() — see the comment there for why that wait can
+// run long.
+export const SUPABASE_SESSION_STORAGE_KEY =
+ `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
+
 // Second client, deliberately session-less, for the public reads (season,
 // projections, draft recap, trends, calendar — anything covered by the
 // "public can read ..." RLS policies in phase1_commissioner_auth.sql) that

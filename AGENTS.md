@@ -91,6 +91,20 @@ the long-form version; this file is the in-repo quick reference.
   name** — identify with the stable `userId` (commissioner-only, no
   claimed member identity) or `member_id` (everyone else) instead, per
   `identifyPerson()` above.
+- **`authReady` vs. `authConfirmed` in `App.jsx`**: on mount, `commissionerSession`/
+  `commissionerRole`/`memberId` are optimistically hydrated straight from
+  localStorage (the same `sb-...-auth-token` blob Supabase itself persists,
+  plus a small `fl-cached-identity` cache this app writes) so the account
+  menu doesn't sit blank for several seconds waiting on supabase-js's
+  lock-gated `getSession()` on every refresh — see the "Optimistic auth
+  hydration" comment above `App()`. `authReady` is `true` from the first
+  render because of this and no longer means "the real check finished."
+  The combined Mixpanel-identify/login-tracking effect gates on the
+  separate `authConfirmed` flag instead, which only flips once the actual
+  `loadAuth()`/`onAuthStateChange` flow resolves — never identify a
+  person or count a commissioner login off the optimistic guess alone, it
+  may be stale or wrong. Any new effect that needs to *act* on signed-in
+  state (not just render it) should gate on `authConfirmed`, the same way.
 - **Known limitation, not yet fixed**: a few foundational events
   (`app_loaded` in particular) can fire before the async auth check
   resolves and `identifyPerson()` has run, landing under the anonymous
