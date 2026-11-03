@@ -57,17 +57,23 @@ function ensureConfigured() {
   return true;
 }
 
-// Sends one notification to every stored subscription. A subscription the
-// push service reports as gone (410, or 404 — some services use either)
-// is deleted so push_subscriptions doesn't accumulate dead rows forever;
-// any other per-subscription failure is logged and skipped, same
-// "additive, never blocks the real write" stance as score_events.
-async function sendPushToAllSubscribers(supabase, { title, body, url = '/' }) {
+// Shared core: loads whichever subscriptions `scope` selects, sends the
+// payload to each, and cleans up any the push service reports as gone.
+// `scope` is one of:
+//   {} — every subscription (the manual test trigger, and anyone who's
+//        never claimed a member identity)
+//   { memberId } — only that member's device(s)
+//   { unclaimedOnly: true } — only subscriptions with no member_id, i.e.
+//        the broad digest's audience once claimed members get targeted
+//        pushes instead (see sendPushToMember / AGENTS.md's push section)
+async function sendPush(supabase, { title, body, url = '/' }, scope = {}) {
   if (!ensureConfigured()) return { sent: 0, failed: 0 };
 
-  const { data: subs, error } = await supabase
-    .from('push_subscriptions')
-    .select('id, endpoint, p256dh, auth');
+  let query = supabase.from('push_subscriptions').select('id, endpoint, p256dh, auth');
+  if (scope.memberId) query = query.eq('member_id', scope.memberId);
+  else if (scope.unclaimedOnly) query = query.is('member_id', null);
+
+  const { data: subs, error } = await query;
   if (error) {
     console.error('Push: failed to load subscriptions:', error.message);
     return { sent: 0, failed: 0 };
@@ -106,4 +112,29 @@ async function sendPushToAllSubscribers(supabase, { title, body, url = '/' }) {
   return { sent, failed };
 }
 
-module.exports = { sendPushToAllSubscribers, isAllowedPushEndpoint };
+// Literally everyone — used by the manual ?action=test trigger, which
+// should reach every subscription regardless of claim status.
+async function sendPushToAllSubscribers(supabase, payload) {
+  return sendPush(supabase, payload);
+}
+
+// Only the given member's device(s) — see AGENTS.md's push section:
+// once a member has claimed an identity, this replaces the broad digest
+// for them rather than adding to it.
+async function sendPushToMember(supabase, memberId, payload) {
+  if (!memberId) return { sent: 0, failed: 0 };
+  return sendPush(supabase, payload, { memberId });
+}
+
+// Everyone who hasn't claimed a member identity yet — the broad digest's
+// actual audience now that claimed members get sendPushToMember() instead.
+async function sendPushToUnclaimedSubscribers(supabase, payload) {
+  return sendPush(supabase, payload, { unclaimedOnly: true });
+}
+
+module.exports = {
+  sendPushToAllSubscribers,
+  sendPushToMember,
+  sendPushToUnclaimedSubscribers,
+  isAllowedPushEndpoint,
+};

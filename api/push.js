@@ -25,17 +25,29 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.s
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 async function handleSubscribe(req, res, supabase) {
-  const { endpoint, keys } = req.body || {};
+  const { endpoint, keys, memberId } = req.body || {};
   if (!endpoint || !keys || !keys.p256dh || !keys.auth) {
     return res.status(400).json({ error: 'Invalid subscription payload' });
   }
   if (!isAllowedPushEndpoint(endpoint)) {
     return res.status(400).json({ error: 'Unrecognized push endpoint' });
   }
+  // The browser always sends its current claimed identity (or null if
+  // unclaimed) on every subscribe call — see subscribeToPush() — so this
+  // upsert correctly reflects the live state each time, including
+  // clearing a stale member_id if someone ever un-claims. The FK on
+  // push_subscriptions.member_id only ever sees ids the claim RPC has
+  // already validated against the members table, so no extra check here.
   const { error } = await supabase
     .from('push_subscriptions')
     .upsert(
-      { endpoint, p256dh: keys.p256dh, auth: keys.auth, user_agent: req.headers['user-agent'] || null },
+      {
+        endpoint,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+        user_agent: req.headers['user-agent'] || null,
+        member_id: typeof memberId === 'string' && memberId ? memberId : null,
+      },
       { onConflict: 'endpoint' }
     );
   if (error) {

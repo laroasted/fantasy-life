@@ -47,7 +47,7 @@
  */
  
 const { createClient } = require('@supabase/supabase-js');
-const { sendPushToAllSubscribers } = require('../_lib/push');
+const { sendPushToUnclaimedSubscribers, sendPushToMember } = require('../_lib/push');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -430,16 +430,38 @@ module.exports = async function handler(req, res) {
     if (eventsErr) console.error(`Failed to write score_events: ${eventsErr.message}`);
     else console.log(`Wrote ${scoreEvents.length} score_events rows`);
 
+    // Broad "N score updates" digest goes to subscribers who haven't
+    // claimed a member identity — unchanged behavior for them. A claimed
+    // member gets a targeted push about their OWN change instead (below),
+    // not this, per AGENTS.md's push section: once identity is known,
+    // targeted replaces broad rather than adding to it.
     const digest = buildScoreDigest(scoreEvents, memberNameById);
     if (digest) {
-      // Belt-and-suspenders on top of sendPushToAllSubscribers()'s own
-      // internal error handling: scores and score_events have already been
-      // written above, so nothing past this point may ever fail the cron's
-      // response, whatever goes wrong sending the digest.
+      // Belt-and-suspenders on top of sendPushToUnclaimedSubscribers()'s
+      // own internal error handling: scores and score_events have already
+      // been written above, so nothing past this point may ever fail the
+      // cron's response, whatever goes wrong sending the digest.
       try {
-        await sendPushToAllSubscribers(supabase, digest);
+        await sendPushToUnclaimedSubscribers(supabase, digest);
       } catch (pushErr) {
-        console.error('Push: digest send failed:', pushErr.message);
+        console.error('Push: broad digest send failed:', pushErr.message);
+      }
+    }
+
+    // One targeted push per member whose score actually moved this run —
+    // grouped so a member with picks in two different leagues that both
+    // updated in the same run still gets exactly one notification, not two.
+    const eventsByMember = {};
+    scoreEvents.forEach((e) => {
+      (eventsByMember[e.member_id] = eventsByMember[e.member_id] || []).push(e);
+    });
+    for (const [memberId, memberEvents] of Object.entries(eventsByMember)) {
+      const memberDigest = buildScoreDigest(memberEvents, memberNameById);
+      if (!memberDigest) continue;
+      try {
+        await sendPushToMember(supabase, memberId, memberDigest);
+      } catch (pushErr) {
+        console.error(`Push: targeted send to ${memberId} failed:`, pushErr.message);
       }
     }
   }
