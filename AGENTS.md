@@ -297,7 +297,10 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   shared `sendPush()` core, via the `web-push` package and three env vars
   (`REACT_APP_VAPID_PUBLIC_KEY`, server-only `VAPID_PRIVATE_KEY`,
   `VAPID_SUBJECT`): `sendPushToAllSubscribers()` (literally everyone —
-  used by the manual `?action=test` trigger only),
+  used by the manual `?action=test` trigger when called with no
+  `memberId`; pass one in the test request body to exercise
+  `sendPushToMember()` instead, on demand, rather than waiting for a real
+  score change to a claimed member's pick),
   `sendPushToUnclaimedSubscribers()` (only `member_id is null` rows —
   the broad digest's actual audience, see below), and
   `sendPushToMember(memberId, ...)` (one member's device(s) only). A

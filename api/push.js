@@ -19,7 +19,7 @@
 // seem to support. Callers now hit /api/push?action=subscribe,
 // ?action=unsubscribe, ?action=test.
 const { createClient } = require('@supabase/supabase-js');
-const { sendPushToAllSubscribers, isAllowedPushEndpoint } = require('./_lib/push');
+const { sendPushToAllSubscribers, sendPushToMember, isAllowedPushEndpoint } = require('./_lib/push');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -75,10 +75,18 @@ async function handleTest(req, res, supabase) {
   // shows "from Fantasy Life" as its own platform-level second line on
   // every web push notification, so a literal "Fantasy Life" title here
   // would just duplicate it.
-  const result = await sendPushToAllSubscribers(supabase, {
-    title: 'Test notification',
+  const { memberId } = req.body || {};
+  const payload = {
+    title: memberId ? `Test notification for ${memberId}` : 'Test notification',
     body: 'If you can see this, push is working.',
-  });
+  };
+  // Optional memberId lets you verify the targeted-push path (phase12)
+  // on demand instead of waiting for a real score change to exercise it
+  // — same gating as the broadcast test (CRON_SECRET bearer token below),
+  // nothing new to secure here.
+  const result = memberId
+    ? await sendPushToMember(supabase, memberId, payload)
+    : await sendPushToAllSubscribers(supabase, payload);
   return res.status(200).json(result);
 }
 
