@@ -63,9 +63,22 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl = (event.notification.data && event.notification.data.url) || "/";
   event.waitUntil(
-    self.clients.matchAll({ type: "window" }).then((clients) => {
+    self.clients.matchAll({ type: "window" }).then(async (clients) => {
       const existing = clients.find((c) => c.url.includes(self.location.origin));
-      return existing ? existing.focus() : self.clients.openWindow(targetUrl);
+      if (!existing) return self.clients.openWindow(targetUrl);
+      // An already-open tab used to just get focused, silently ignoring
+      // whatever deep link the push carried (e.g. straight to the NFL
+      // category) — the common case for anyone with the app already
+      // open. navigate() isn't reliably supported everywhere (notably
+      // older WebKit), so fall back to a plain focus rather than
+      // breaking the click entirely if it's missing or rejects.
+      try {
+        if (existing.navigate) {
+          const navigated = await existing.navigate(targetUrl);
+          if (navigated) return navigated.focus();
+        }
+      } catch (e) {}
+      return existing.focus();
     })
   );
 });
