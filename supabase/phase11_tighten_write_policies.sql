@@ -65,7 +65,7 @@ language plpgsql
 security definer
 set search_path = public
 stable
-as $$
+as $func$
 declare
   v_uid uuid := auth.uid();
   v_email text;
@@ -87,7 +87,7 @@ begin
     where id = v_uid and role in ('commissioner', 'admin')
   );
 end;
-$$;
+$func$;
 
 revoke all on function public.is_commissioner() from public;
 grant execute on function public.is_commissioner() to authenticated;

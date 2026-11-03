@@ -68,7 +68,7 @@ returns void
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $func$
 declare
   v_uid uuid := auth.uid();
   v_email text;
@@ -95,7 +95,7 @@ begin
   on conflict (id) do update
     set member_id = excluded.member_id;
 end;
-$$;
+$func$;
 
 revoke all on function public.claim_member_identity(text) from public;
 grant execute on function public.claim_member_identity(text) to authenticated;
