@@ -865,7 +865,14 @@ export default function App() {
         background: theme.card,
         borderBottom: "1px solid " + theme.bdr,
         padding: isMobile ? "12px 12px 0" : "16px 20px 0",
-        position: "sticky", top: 0, zIndex: 100,
+        // Not literal 0 — body's own safe-area padding (public/index.html)
+        // only clears the status bar/notch on initial load; once this
+        // sticks during scroll, position:sticky recalculates against the
+        // viewport directly, bypassing that padding. Pinning top to the
+        // same env() value keeps it below the status bar in standalone
+        // (Added to Home Screen) mode even after scrolling, with no
+        // effect in an ordinary browser tab where it's 0px.
+        position: "sticky", top: "env(safe-area-inset-top, 0px)", zIndex: 100,
       }}>
         <div style={{ maxWidth: (isWide && activeTab === "scoreboard") ? 1080 : 900, margin: "0 auto" }}>
           {/* Title row */}
