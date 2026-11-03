@@ -99,12 +99,18 @@ the long-form version; this file is the in-repo quick reference.
   lock-gated `getSession()` on every refresh — see the "Optimistic auth
   hydration" comment above `App()`. `authReady` is `true` from the first
   render because of this and no longer means "the real check finished."
-  The combined Mixpanel-identify/login-tracking effect gates on the
-  separate `authConfirmed` flag instead, which only flips once the actual
-  `loadAuth()`/`onAuthStateChange` flow resolves — never identify a
-  person or count a commissioner login off the optimistic guess alone, it
-  may be stale or wrong. Any new effect that needs to *act* on signed-in
-  state (not just render it) should gate on `authConfirmed`, the same way.
+  `identifyPerson()` fires off `commissionerSession` alone (including the
+  optimistic one) — safe, since it's explicitly idempotent (see
+  analytics.js's own comment), and gating it on confirmation turned out to
+  be a real bug, not extra safety: a role-lookup timeout with nothing left
+  to retry it could leave that whole session's activity anonymous. Only
+  the genuinely non-idempotent bookkeeping — `markCommissionerLogin()`,
+  `COMMISSIONER_SIGNED_IN`/`OUT` — gates on the separate `authConfirmed`
+  flag, which only flips once `loadAuth()`/`onAuthStateChange` actually
+  resolves a role (now with one retry on timeout before giving up — see
+  that branch's comment). Any new effect that isn't idempotent should gate
+  on `authConfirmed`, the same way; anything that is (like `identifyPerson()`)
+  doesn't need to.
 - **Known limitation, not yet fixed**: a few foundational events
   (`app_loaded` in particular) can fire before the async auth check
   resolves and `identifyPerson()` has run, landing under the anonymous

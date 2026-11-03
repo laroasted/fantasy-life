@@ -445,9 +445,25 @@ export default function App() {
       }
 
       if (!result) {
-        console.warn("Auth state change: getCommissionerRole timed out — leaving role as-is");
-        if (isMounted) setAuthReady(true);
-        return;
+        // One retry before giving up — with nothing else in this app that
+        // would ever come back and finish this lookup (the next thing to
+        // fire this listener again could be the SDK's own token-refresh
+        // timer, up to an hour away), leaving it unretried meant a single
+        // slow lock acquisition could permanently leave authConfirmed
+        // false for the whole session: no Mixpanel identity, and for an
+        // actual commissioner, no counted login. Flagged in PR review.
+        console.warn("Auth state change: getCommissionerRole timed out — retrying once");
+        try {
+          result = await withTimeout(getCommissionerRole(session), 10000, null);
+        } catch (e) {
+          result = null;
+        }
+        if (!isMounted) return;
+        if (!result) {
+          console.warn("Auth state change: getCommissionerRole timed out twice — leaving role as-is");
+          setAuthReady(true);
+          return;
+        }
       }
 
       const { role, memberId: claimedMemberId } = result;
@@ -490,36 +506,38 @@ export default function App() {
     };
   }, []);
 
-  // Identity to Mixpanel + Commissioner Signed In/Out tracking, combined
-  // into one effect so there's a single coordinated decision about which
-  // distinct_id to identify as — these used to be two independent effects
-  // (one per role), which meant someone who is both commissioner and a
-  // claimed member (the common case: the commissioner is usually also a
-  // league member) got mixpanel.identify() called twice with two
-  // different values in the same session. identifyPerson() picks member_id
-  // over the Supabase UUID when both are known and is safe to call on
-  // every render with a session (a no-op if the id hasn't changed);
-  // markCommissionerLogin()'s one-time bookkeeping (login counts etc.)
-  // stays gated to the actual sign-in transition, same as before.
+  // Identify to Mixpanel as soon as there's a session — including the
+  // optimistic, not-yet-confirmed one from localStorage hydration above.
+  // identifyPerson() is explicitly safe to call repeatedly (a no-op once
+  // it's already using the given id — see analytics.js), so there's no
+  // correctness reason to make it wait for authConfirmed: doing so was
+  // itself a bug (flagged in PR review) — a role-lookup timeout left
+  // authConfirmed false with nothing left to retry it, which silently
+  // dropped that entire session's activity to the anonymous $device_id
+  // instead of the signed-in profile, exactly the race this file's
+  // "Known limitation" note already describes, just stretched from a
+  // split-second to potentially the whole session.
+  useEffect(() => {
+    if (!commissionerSession) return;
+    identifyPerson({
+      userId: commissionerSession?.user?.id,
+      email: commissionerSession?.user?.email,
+      memberId,
+    });
+  }, [commissionerSession, memberId]);
+
+  // Commissioner Signed In/Out tracking — kept on its own effect, gated on
+  // authConfirmed (not just authReady/a session existing), because unlike
+  // identifyPerson() above this bookkeeping is NOT idempotent:
+  // markCommissionerLogin() increments commissioner_login_count once per
+  // call, so counting it off the optimistic/unconfirmed role guess risks
+  // a real over-count if that guess turns out wrong moments later.
   const prevSignedInRef = useRef(false);
   const prevHadSessionRef = useRef(false);
   useEffect(() => {
-    // Gates on authConfirmed, not authReady — these values may still be
-    // the optimistic, unconfirmed guess from localStorage (see "Optimistic
-    // auth hydration" above App()) while authReady is already true, and
-    // identifying to Mixpanel or counting a commissioner login off a guess
-    // that turns out wrong is worse than a few seconds' delay here.
     if (!authConfirmed) return;
     const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
     const hasSession = !!commissionerSession;
-
-    if (hasSession) {
-      identifyPerson({
-        userId: commissionerSession?.user?.id,
-        email: commissionerSession?.user?.email,
-        memberId,
-      });
-    }
 
     if (signedIn && !prevSignedInRef.current) {
       markCommissionerLogin(commissionerRole);
@@ -536,7 +554,7 @@ export default function App() {
       resetIdentity();
     }
     prevHadSessionRef.current = hasSession;
-  }, [authConfirmed, commissionerRole, commissionerSession, memberId]);
+  }, [authConfirmed, commissionerRole, commissionerSession]);
 
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false, trigger) => {
