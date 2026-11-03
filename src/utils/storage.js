@@ -29,8 +29,25 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // client never touches that lock at all — it always just sends the plain
 // anon key, which these public policies already accept from anyone,
 // signed in or not.
+//
+// storageKey MUST be distinct from the real client's: supabase-js derives
+// its default storage key (and from that, its navigator.locks lock name —
+// see `_acquireLock` in GoTrueClient, which locks on `lock:${storageKey}`)
+// from the project URL alone, not from persistSession. Two clients built
+// from the same SUPABASE_URL with no explicit storageKey silently collide
+// on that same lock name, so leaving this out would make a THIRD thing
+// (this client's own internal getSession() calls, still made unconditionally
+// for every query regardless of persistSession) queue behind the real
+// client's lock — reintroducing the exact contention this client exists to
+// avoid, and in testing actually made the real client's own sign-in state
+// flicker (resolve, drop, re-resolve) rather than just loading data slowly.
 export const supabasePublic = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
- auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+ auth: {
+ persistSession: false,
+ autoRefreshToken: false,
+ detectSessionInUrl: false,
+ storageKey: 'fantasy-life-public-noauth',
+ },
 });
 
 const COMMISSIONER_EMAILS = (process.env.REACT_APP_COMMISSIONER_EMAILS || '')
