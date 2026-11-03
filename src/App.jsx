@@ -1161,7 +1161,7 @@ export default function App() {
                 </div>
               )}
             </div>
-            <Scoreboard seasonData={viewingSeasonData} onUnlockPaywall={isViewingActive ? handlePaywallUnlock : undefined} />
+            <Scoreboard seasonData={viewingSeasonData} onUnlockPaywall={isViewingActive ? handlePaywallUnlock : undefined} memberId={memberId} />
             <div style={{ maxWidth: 760, margin: "20px auto 0" }}>
               <AdUnit slot="9806940854" />
             </div>

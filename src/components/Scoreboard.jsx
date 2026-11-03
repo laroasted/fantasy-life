@@ -57,6 +57,23 @@ var RankBadge = memo(function RankBadge({ rank, size }) {
  );
 });
 
+// ─── "You" chip — marks the signed-in member's own row so it reads as
+// theirs at a glance, not just via the row's background tint (color
+// alone isn't a reliable or accessible cue on its own). Uses their own
+// MEMBER_COLORS entry rather than the generic brand accent so it doesn't
+// collide with the unrelated "1st place" gold convention (rowBorder) —
+// someone who's both #1 and viewing their own row gets both cues at
+// once without them reading as the same thing.
+var YouBadge = memo(function YouBadge({ color }) {
+ return (
+  <span style={{
+   fontSize: 9, fontWeight: 800, color: color, flexShrink: 0,
+   background: color + "22", border: "1px solid " + color + "55",
+   borderRadius: 4, padding: "1px 5px", letterSpacing: 0.3,
+  }}>YOU</span>
+ );
+});
+
 // ─── Small lock indicator that players see on the scoreboard ───
 var LockIndicator = memo(function LockIndicator({ note }) {
  var _h = useState(false), hover = _h[0], setHover = _h[1];
@@ -78,7 +95,7 @@ var LockIndicator = memo(function LockIndicator({ note }) {
  );
 });
  
-export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
+export default function Scoreboard({ seasonData, surface, onUnlockPaywall, memberId }) {
  var surfaceName = surface || "scoreboard";
  // Only the primary Scoreboard tab syncs its selected category to the URL —
  // a non-"scoreboard" surface value means this instance isn't the primary
@@ -751,6 +768,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
      {(showProjected ? overallStandings.projected : overallStandings.actual).map(function (m) {
       var isExp = expRow === m.owner;
       var memberPaywalled = isPaywalled(seasonData, m.id);
+      var isMine = !!memberId && m.id === memberId;
+      var myColor = MEMBER_COLORS[m.id] || theme.acc;
       return (
        <div key={m.owner}>
         <div className="interactive" onClick={function () {
@@ -759,7 +778,9 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
           }}
          style={{
           borderRadius: isExp ? "10px 10px 0 0" : 10,
-          background: rowBackground(m.rank), border: "1px solid " + rowBorder(m.rank),
+          background: isMine ? myColor + "14" : rowBackground(m.rank),
+          border: "1px solid " + rowBorder(m.rank),
+          borderLeft: isMine ? "3px solid " + myColor : undefined,
           borderBottom: isExp ? "none" : undefined, cursor: "pointer",
           padding: isMobile ? "8px 10px" : "10px 12px" }}>
          <div style={{ display: "grid",
@@ -770,6 +791,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
            <Avatar name={m.owner} color={MEMBER_COLORS[m.id]} size={isMobile ? 20 : 24} />
            <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
+           {isMine && <YouBadge color={myColor} />}
           </span>
           <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
            {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
@@ -867,6 +889,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
        var mid = (members.find(function (x) { return x.name === m.owner; }) || {}).id;
        var memberHasLocks = hasAnyLock(seasonData, selCat, m.owner);
        var memberPaywalled = isPaywalled(seasonData, mid);
+       var isMine = !!memberId && mid === memberId;
+       var myColor = MEMBER_COLORS[mid] || theme.acc;
        return (
         <div key={m.owner}>
          <div className="interactive" onClick={function () {
@@ -878,7 +902,9 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
            gridTemplateColumns: isMobile ? "28px 1fr auto" : "32px 1fr auto",
            alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px", gap: 8,
            borderRadius: isExp ? "10px 10px 0 0" : 10,
-           background: rowBackground(m.rank), border: "1px solid " + rowBorder(m.rank),
+           background: isMine ? myColor + "14" : rowBackground(m.rank),
+           border: "1px solid " + rowBorder(m.rank),
+           borderLeft: isMine ? "3px solid " + myColor : undefined,
            borderBottom: isExp ? "none" : undefined, cursor: "pointer",
           }}>
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
@@ -889,6 +915,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall }) {
              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
              {m.owner}
             </span>
+            {isMine && <YouBadge color={myColor} />}
             {memberHasLocks && <LockIndicator note="Commissioner has locked some values for this entry" />}
             {memberPaywalled && <Lock size={10} color={theme.yel} style={{ marginLeft: 4, flexShrink: 0 }} />}
             <button
