@@ -91,6 +91,26 @@ the long-form version; this file is the in-repo quick reference.
   name** — identify with the stable `userId` (commissioner-only, no
   claimed member identity) or `member_id` (everyone else) instead, per
   `identifyPerson()` above.
+- **`authReady` vs. `authConfirmed` in `App.jsx`**: on mount, `commissionerSession`/
+  `commissionerRole`/`memberId` are optimistically hydrated straight from
+  localStorage (the same `sb-...-auth-token` blob Supabase itself persists,
+  plus a small `fl-cached-identity` cache this app writes) so the account
+  menu doesn't sit blank for several seconds waiting on supabase-js's
+  lock-gated `getSession()` on every refresh — see the "Optimistic auth
+  hydration" comment above `App()`. `authReady` is `true` from the first
+  render because of this and no longer means "the real check finished."
+  `identifyPerson()` fires off `commissionerSession` alone (including the
+  optimistic one) — safe, since it's explicitly idempotent (see
+  analytics.js's own comment), and gating it on confirmation turned out to
+  be a real bug, not extra safety: a role-lookup timeout with nothing left
+  to retry it could leave that whole session's activity anonymous. Only
+  the genuinely non-idempotent bookkeeping — `markCommissionerLogin()`,
+  `COMMISSIONER_SIGNED_IN`/`OUT` — gates on the separate `authConfirmed`
+  flag, which only flips once `loadAuth()`/`onAuthStateChange` actually
+  resolves a role (now with one retry on timeout before giving up — see
+  that branch's comment). Any new effect that isn't idempotent should gate
+  on `authConfirmed`, the same way; anything that is (like `identifyPerson()`)
+  doesn't need to.
 - **Known limitation, not yet fixed**: a few foundational events
   (`app_loaded` in particular) can fire before the async auth check
   resolves and `identifyPerson()` has run, landing under the anonymous

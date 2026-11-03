@@ -33,6 +33,7 @@ import {
   claimMemberIdentityRpc,
   autoClaimMemberIdentityRpc,
   fetchClaimedMemberIds,
+  SUPABASE_SESSION_STORAGE_KEY,
 } from "./utils/storage";
 import { DRAFT_MEMBERS, MEMBER_COLORS } from "./constants/members";
 import Scoreboard from "./components/Scoreboard";
@@ -152,6 +153,72 @@ function fmtEventWhen(dateStr) {
     : date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// ── Optimistic auth hydration ──
+//
+// supabase-js's own getSession() is lock-gated (see GoTrueClient
+// _acquireLock, and storage.js's SUPABASE_SESSION_STORAGE_KEY comment) —
+// reported live as a 10+ second wait after a refresh before the account
+// menu shows anyone as signed in at all, even though the session is
+// sitting right there in localStorage the whole time. Nothing about
+// *reading* that key needs the lock: the lock exists to serialize writes
+// and refreshes, not to protect a plain read of what's already stored.
+//
+// So on mount, before any of that async machinery even starts, read the
+// persisted session directly and — if it looks unexpired — use it to paint
+// the signed-in UI immediately. This is optimistic, not authoritative: the
+// real loadAuth()/onAuthStateChange flow below still runs exactly as
+// before and overwrites these values (session, role, memberId) with the
+// confirmed ones once it resolves, correcting anything this guessed wrong.
+// Worst case on a stale/invalid stored token is a few seconds of showing
+// the wrong person before that correction lands — a strict improvement
+// over several seconds of showing no one.
+//
+// commissionerRole/memberId aren't in that localStorage blob at all (they
+// come from our own `profiles` lookup, which — being an authenticated
+// query — is itself lock-gated and can't be shortcut the same way), so
+// those are optimistically restored from a small cache this file writes
+// itself, in writeCachedIdentity() below, every time the real flow
+// resolves them. Both reads are skipped (and the identity cache stays
+// unused) whenever there's no plausible session — a genuinely signed-out
+// visitor gets an instant, confident "not signed in" render instead of
+// waiting it out just to be told what localStorage already shows.
+const CACHED_IDENTITY_KEY = "fl-cached-identity";
+
+function readOptimisticSession() {
+  try {
+    var raw = window.localStorage.getItem(SUPABASE_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    var parsed = JSON.parse(raw);
+    if (!parsed || !parsed.access_token || !parsed.user) return null;
+    if (parsed.expires_at && parsed.expires_at * 1000 < Date.now()) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+function readCachedIdentity() {
+  try {
+    var raw = window.localStorage.getItem(CACHED_IDENTITY_KEY);
+    if (!raw) return { role: null, memberId: null };
+    var parsed = JSON.parse(raw);
+    return { role: (parsed && parsed.role) || null, memberId: (parsed && parsed.memberId) || null };
+  } catch (e) {
+    return { role: null, memberId: null };
+  }
+}
+
+function writeCachedIdentity(role, memberId) {
+  try {
+    if (!role && !memberId) { window.localStorage.removeItem(CACHED_IDENTITY_KEY); return; }
+    window.localStorage.setItem(CACHED_IDENTITY_KEY, JSON.stringify({ role: role, memberId: memberId }));
+  } catch (e) {}
+}
+
+function clearCachedIdentity() {
+  try { window.localStorage.removeItem(CACHED_IDENTITY_KEY); } catch (e) {}
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [activeSeason, setActiveSeason] = useState(null);
@@ -164,12 +231,27 @@ export default function App() {
   // lockstep with Scoreboard's sidebar instead of the two hand-copying the
   // same breakpoint numbers (see useViewport.js).
   const { isMobile, isWide } = useViewport();
-  const [authReady, setAuthReady] = useState(false);
-  const [commissionerSession, setCommissionerSession] = useState(null);
-  const [commissionerRole, setCommissionerRole] = useState(null);
+  // See the "Optimistic auth hydration" comment above: these three start
+  // from whatever's already in localStorage instead of null/false, so the
+  // account menu has something to show on the very first render rather
+  // than waiting out loadAuth()'s lock-gated session check. authReady
+  // itself can start true unconditionally — "no session in localStorage"
+  // is just as confident and instant an answer as "session found".
+  // authConfirmed tracks the separate, still-async question of whether the
+  // REAL check (below) has corrected/confirmed these yet; anything that
+  // must not act on a guess (Mixpanel identity, login bookkeeping) gates
+  // on that instead.
+  const [authReady, setAuthReady] = useState(true);
+  const [authConfirmed, setAuthConfirmed] = useState(false);
+  const [commissionerSession, setCommissionerSession] = useState(readOptimisticSession);
+  const [commissionerRole, setCommissionerRole] = useState(
+    () => (readOptimisticSession() ? readCachedIdentity().role : null)
+  );
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [memberId, setMemberId] = useState(null);
+  const [memberId, setMemberId] = useState(
+    () => (readOptimisticSession() ? readCachedIdentity().memberId : null)
+  );
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [claimedMemberIds, setClaimedMemberIds] = useState([]);
   const [claimingId, setClaimingId] = useState(null);
@@ -227,6 +309,7 @@ export default function App() {
     const ok = await claimMemberIdentityRpc(id);
     if (ok) {
       setMemberId(id);
+      writeCachedIdentity(commissionerRole, id);
       track(EVENTS.MEMBER_CLAIMED, { member_id: id, method: "manual" });
       setShowAccountMenu(false);
       // If push was already enabled from before this device had a claimed
@@ -240,7 +323,7 @@ export default function App() {
       setClaimError("That name may already be claimed — try again or ask the commissioner.");
     }
     setClaimingId(null);
-  }, [pushEnabled]);
+  }, [pushEnabled, commissionerRole]);
 
   // Keep the URL in sync with the active tab so a tab is a link someone can
   // actually send to the group chat, not just an in-session click target.
@@ -299,11 +382,13 @@ export default function App() {
       } catch (e) {
         console.error("loadAuth failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
+        clearCachedIdentity();
         if (isMounted) {
           setCommissionerSession(null);
           setCommissionerRole(null);
           setMemberId(null);
           setAuthReady(true);
+          setAuthConfirmed(true);
         }
         return;
       }
@@ -332,9 +417,11 @@ export default function App() {
       setCommissionerSession(session || null);
 
       if (!session) {
+        clearCachedIdentity();
         setCommissionerRole(null);
         setMemberId(null);
         setAuthReady(true);
+        setAuthConfirmed(true);
         return;
       }
 
@@ -347,18 +434,36 @@ export default function App() {
       } catch (e) {
         console.error("Auth state change role lookup failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
+        clearCachedIdentity();
         if (isMounted) {
           setCommissionerRole(null);
           setMemberId(null);
           setAuthReady(true);
+          setAuthConfirmed(true);
         }
         return;
       }
 
       if (!result) {
-        console.warn("Auth state change: getCommissionerRole timed out — leaving role as-is");
-        if (isMounted) setAuthReady(true);
-        return;
+        // One retry before giving up — with nothing else in this app that
+        // would ever come back and finish this lookup (the next thing to
+        // fire this listener again could be the SDK's own token-refresh
+        // timer, up to an hour away), leaving it unretried meant a single
+        // slow lock acquisition could permanently leave authConfirmed
+        // false for the whole session: no Mixpanel identity, and for an
+        // actual commissioner, no counted login. Flagged in PR review.
+        console.warn("Auth state change: getCommissionerRole timed out — retrying once");
+        try {
+          result = await withTimeout(getCommissionerRole(session), 10000, null);
+        } catch (e) {
+          result = null;
+        }
+        if (!isMounted) return;
+        if (!result) {
+          console.warn("Auth state change: getCommissionerRole timed out twice — leaving role as-is");
+          setAuthReady(true);
+          return;
+        }
       }
 
       const { role, memberId: claimedMemberId } = result;
@@ -367,7 +472,13 @@ export default function App() {
 
       if (claimedMemberId) {
         setMemberId(claimedMemberId);
+        // Confirmed, real identity — cache it so the NEXT load (a refresh,
+        // most likely) can paint this immediately instead of starting from
+        // "Set your name" again while this same lookup re-runs. See the
+        // "Optimistic auth hydration" comment above App().
+        writeCachedIdentity(role, claimedMemberId);
         setAuthReady(true);
+        setAuthConfirmed(true);
         return;
       }
 
@@ -380,10 +491,13 @@ export default function App() {
       if (autoClaimedId) {
         setMemberId(autoClaimedId);
         track(EVENTS.MEMBER_CLAIMED, { member_id: autoClaimedId, method: "auto" });
+        writeCachedIdentity(role, autoClaimedId);
       } else {
         setMemberId(null);
+        writeCachedIdentity(role, null);
       }
       setAuthReady(true);
+      setAuthConfirmed(true);
     });
  
     return () => {
@@ -392,31 +506,38 @@ export default function App() {
     };
   }, []);
 
-  // Identity to Mixpanel + Commissioner Signed In/Out tracking, combined
-  // into one effect so there's a single coordinated decision about which
-  // distinct_id to identify as — these used to be two independent effects
-  // (one per role), which meant someone who is both commissioner and a
-  // claimed member (the common case: the commissioner is usually also a
-  // league member) got mixpanel.identify() called twice with two
-  // different values in the same session. identifyPerson() picks member_id
-  // over the Supabase UUID when both are known and is safe to call on
-  // every render with a session (a no-op if the id hasn't changed);
-  // markCommissionerLogin()'s one-time bookkeeping (login counts etc.)
-  // stays gated to the actual sign-in transition, same as before.
+  // Identify to Mixpanel as soon as there's a session — including the
+  // optimistic, not-yet-confirmed one from localStorage hydration above.
+  // identifyPerson() is explicitly safe to call repeatedly (a no-op once
+  // it's already using the given id — see analytics.js), so there's no
+  // correctness reason to make it wait for authConfirmed: doing so was
+  // itself a bug (flagged in PR review) — a role-lookup timeout left
+  // authConfirmed false with nothing left to retry it, which silently
+  // dropped that entire session's activity to the anonymous $device_id
+  // instead of the signed-in profile, exactly the race this file's
+  // "Known limitation" note already describes, just stretched from a
+  // split-second to potentially the whole session.
+  useEffect(() => {
+    if (!commissionerSession) return;
+    identifyPerson({
+      userId: commissionerSession?.user?.id,
+      email: commissionerSession?.user?.email,
+      memberId,
+    });
+  }, [commissionerSession, memberId]);
+
+  // Commissioner Signed In/Out tracking — kept on its own effect, gated on
+  // authConfirmed (not just authReady/a session existing), because unlike
+  // identifyPerson() above this bookkeeping is NOT idempotent:
+  // markCommissionerLogin() increments commissioner_login_count once per
+  // call, so counting it off the optimistic/unconfirmed role guess risks
+  // a real over-count if that guess turns out wrong moments later.
   const prevSignedInRef = useRef(false);
   const prevHadSessionRef = useRef(false);
   useEffect(() => {
-    if (!authReady) return;
+    if (!authConfirmed) return;
     const signedIn = commissionerRole === "commissioner" || commissionerRole === "admin";
     const hasSession = !!commissionerSession;
-
-    if (hasSession) {
-      identifyPerson({
-        userId: commissionerSession?.user?.id,
-        email: commissionerSession?.user?.email,
-        memberId,
-      });
-    }
 
     if (signedIn && !prevSignedInRef.current) {
       markCommissionerLogin(commissionerRole);
@@ -433,7 +554,7 @@ export default function App() {
       resetIdentity();
     }
     prevHadSessionRef.current = hasSession;
-  }, [authReady, commissionerRole, commissionerSession, memberId]);
+  }, [authConfirmed, commissionerRole, commissionerSession]);
 
   const lastSourceRef = useRef(null);
   const loadSeason = useCallback(async (showRefreshing = false, trigger) => {
