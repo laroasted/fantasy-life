@@ -28,6 +28,7 @@ import {
   signInWithGoogle,
   signOutCommissioner,
   getCommissionerSession,
+  getCommissionerRole,
   getConfiguredCommissionerEmails,
   claimMemberIdentityRpc,
   fetchClaimedMemberIds,
@@ -292,8 +293,15 @@ export default function App() {
         return;
       }
       try {
-        const result = await withTimeout(getCommissionerSession(), 10000, null);
-        if (!result) throw new Error("getCommissionerSession timed out");
+        // Use the session the event already handed us instead of calling
+        // getCommissionerSession() again here — that would re-fetch via
+        // supabase.auth.getSession(), racing the fetch loadAuth() already
+        // has in flight for gotrue-js's internal cross-tab lock. Losing
+        // that race timed this out and triggered the "wipe local session"
+        // fallback below on a perfectly good session — not a corrupted
+        // one, just a starved redundant request.
+        const result = await withTimeout(getCommissionerRole(session), 10000, null);
+        if (!result) throw new Error("getCommissionerRole timed out");
         const { role, memberId: claimedMemberId } = result;
         if (!isMounted) return;
         setCommissionerRole(role);
