@@ -314,12 +314,27 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   goes only to unclaimed subscribers now; separately, `score_events` for
   this run are grouped by `member_id` and each member whose own score
   moved gets one targeted `sendPushToMember()` push via the same
-  `buildScoreDigest()` scoped to just their events — **targeted replaces
-  broad for a claimed member, it doesn't add to it**: if their own score
-  didn't move this run, they get nothing from this run even if other
-  members' scores did. This cron runs once daily (`vercel.json`), so
-  there's no spam risk from either call site. Every other cron stays
-  silent for now — wiring in college/stocks/entertainment/etc. is a
+  `buildScoreDigest()`, called with `{ targeted: true }`, scoped to just
+  their events — **targeted replaces broad for a claimed member, it
+  doesn't add to it**: if their own score didn't move this run, they get
+  nothing from this run even if other members' scores did. With
+  `targeted: true`, a multi-category run also names each category's own
+  delta (`"NFL +16 · NBA +5"`) instead of falling back to a bare count,
+  since there's one specific person to be specific for — the broad,
+  potentially-multi-member digest keeps the generic count, there's no
+  single person to deep-link it to. Every push's `url` deep-links into
+  the relevant category via `scoreboardUrl()` (`/?tab=scoreboard&cat=X`,
+  or no `cat` for the multi-category/broad cases) — reuses the `cat` URL
+  param `Scoreboard.jsx`'s own `selCat` effect already reads on mount,
+  no new frontend wiring needed. `service-worker.js`'s
+  `notificationclick` handler navigates an already-open tab to that URL
+  (falling back to a plain focus if `WindowClient.navigate()` isn't
+  available, notably on older WebKit) instead of just focusing it
+  wherever it already was, which used to silently swallow the deep link
+  whenever the app was already open — the common case for an engaged
+  user. This cron runs once daily (`vercel.json`), so there's no spam
+  risk from either call site. Every other cron stays silent for now —
+  wiring in college/stocks/entertainment/etc. is a
   deliberate future follow-up, same reasoning as `score_events` itself
   only covering sports so far (see phase7's own note).
 
