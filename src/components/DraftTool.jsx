@@ -12,6 +12,7 @@ import {
   startDraftSession,
   saveDraftSession,
   deleteDraftSession,
+  fetchServerClockOffset,
 } from "../utils/storage";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
 import { Avatar } from "./Badges";
@@ -46,31 +47,9 @@ function computeLiveRemaining(session, nowMs) {
 // specifically: a clock shown as running but frozen at its starting
 // value forever. Called after any failed saveDraftSession() to discard
 // the bad guess and resync to whatever the server actually has.
-async function reconcileAfterFailedSave(setLiveSession, clockOffsetRef) {
+async function reconcileAfterFailedSave(setLiveSession) {
   const real = await fetchDraftSession();
-  applyServerSession(real, setLiveSession, clockOffsetRef);
-}
-
-// Leaving the optimistic timer_started_at null (see makePick/handleTimer*
-// below) fixed the big, inconsistent jumps — but a smaller one could
-// still show up: once the server-confirmed row lands, computeLiveRemaining
-// measures elapsed time using THIS device's own Date.now(), and if this
-// one device's clock is even a couple seconds off from the database
-// server's, that shows up as a small, consistent overshoot right after
-// every pick before settling in. Every call that hands this component a
-// server-confirmed row (never an optimistic local merge) goes through
-// here instead of a bare setLiveSession, to also record how far off this
-// device's clock is from the timestamp the server just gave us —
-// `updated_at` is stamped by the same phase16 trigger as
-// timer_started_at, so it's current to the millisecond on every single
-// write. computeLiveRemaining's callers add this offset to their own
-// Date.now() reads, so they're measuring elapsed time against an
-// estimate of the SERVER's clock, not this device's raw one.
-function applyServerSession(session, setLiveSession, clockOffsetRef) {
-  if (session && session.updated_at) {
-    clockOffsetRef.current = new Date(session.updated_at).getTime() - Date.now();
-  }
-  setLiveSession(session);
+  setLiveSession(real);
 }
 
 export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail, currentSeasonYear, currentSeasonMembers }) {
@@ -138,19 +117,40 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // exists — subscribes and renders from this same row.
   // ═══════════════════════════════════════════════════════════════
   const [liveSession, setLiveSession] = useState(undefined);
-  // This device's clock minus the database server's, in ms — see
-  // applyServerSession() above. A ref, not state: updating it should
-  // never itself trigger a render, only feed into the next tick's
-  // computeLiveRemaining() call.
+  // This device's clock minus the database server's, in ms. A ref, not
+  // state: updating it should never itself trigger a render, only feed
+  // into the next tick's computeLiveRemaining() call.
+  //
+  // Calibrated from server_now() (fetchServerClockOffset(), phase17),
+  // NOT from draft_sessions.updated_at — updated_at is only the time of
+  // the LAST WRITE, which is stale the moment anyone opens or refreshes
+  // the Draft tab without a write happening right then (the common
+  // case: joining or reloading mid-countdown). Using it anyway briefly
+  // made the countdown jump backward to its value as of that last write
+  // (a real Codex finding on the first version of this fix). Calibrates
+  // once on mount and every 60s after, for as long as this tab stays
+  // open — a long enough interval that this device's clock can't drift
+  // by anything the ~2-minute timer would ever show.
   const clockOffsetRef = useRef(0);
+  useEffect(() => {
+    let cancelled = false;
+    const calibrate = () => {
+      fetchServerClockOffset().then((offset) => {
+        if (!cancelled && offset !== null) clockOffsetRef.current = offset;
+      });
+    };
+    calibrate();
+    const id = setInterval(calibrate, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     let unsubscribe = null;
     fetchDraftSession().then((row) => {
       if (cancelled) return;
-      applyServerSession(row, setLiveSession, clockOffsetRef);
+      setLiveSession(row);
       unsubscribe = subscribeDraftSession((next) => {
-        if (!cancelled) applyServerSession(next, setLiveSession, clockOffsetRef);
+        if (!cancelled) setLiveSession(next);
       });
     });
     return () => { cancelled = true; if (unsubscribe) unsubscribe(); };
@@ -284,9 +284,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     timeEvent(EVENTS.DRAFT_FINALIZED);
     if (isCommissioner) {
       const row = await startDraftSession({ seasonName, draftOrder, snakeOrder: so, timerDuration: TIMER_DURATION });
-      if (row) { applyServerSession(row, setLiveSession, clockOffsetRef); return; }
+      if (row) { setLiveSession(row); return; }
       const existing = await fetchDraftSession();
-      if (existing) { applyServerSession(existing, setLiveSession, clockOffsetRef); return; }
+      if (existing) { setLiveSession(existing); return; }
     }
     setSnakeOrder(so);
     setPhase("draft");
@@ -382,7 +382,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           timer_active: true, timer_started_at: null, timer_remaining: TIMER_DURATION,
         };
         setLiveSession((s) => (s ? { ...s, ...patch } : s));
-        if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession, clockOffsetRef);
+        if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
       } else {
         setPicks((p) => ({ ...p, [key]: selection }));
         setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
@@ -408,7 +408,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         status: "drafting",
       };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession, clockOffsetRef);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setPicks((p) => { const n = { ...p }; delete n[last.memberId + "-" + last.categoryId]; return n; });
       setPickHistory((h) => h.slice(0, -1));
@@ -427,7 +427,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       // comment on this same pattern in makePick() above.
       const patch = { timer_active: true, timer_started_at: null, timer_remaining: remaining };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession, clockOffsetRef);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setTimerActive(true);
     }
@@ -438,7 +438,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       const remaining = computeLiveRemaining(liveSession, Date.now() + clockOffsetRef.current);
       const patch = { timer_active: false, timer_started_at: null, timer_remaining: remaining };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession, clockOffsetRef);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setTimerActive(false);
     }
@@ -451,7 +451,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       // timer_started_at left null for the same no-glitch reason too.
       const patch = { timer_active: true, timer_started_at: null, timer_remaining: TIMER_DURATION };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession, clockOffsetRef);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setTimer(TIMER_DURATION); setTimerActive(true);
     }
