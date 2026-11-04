@@ -75,6 +75,16 @@ A write only happens on start / pause / reset / pick-made (state
 transitions), not on ticks. See `computeLiveRemaining()` in
 `DraftTool.jsx`.
 
+**Keeps running across picks** — the clock auto-restarts at a fresh 2:00
+the moment a pick lands (and when the draft itself starts), rather than
+stopping and waiting for the commissioner to click Start again every
+single time. Pause still works, for whenever it's actually needed.
+
+**`timer_started_at` is server-set, never client-set** (phase 16) — see
+below. Every write that leaves the row with `timer_active = true` gets
+that field overwritten by the database's own `now()`, regardless of what
+value the client sent.
+
 ## Realtime payloads and REPLICA IDENTITY (phase 15)
 
 Hit live, confirmed from the actual browser console error, not guessed:
@@ -100,6 +110,27 @@ Fixed two ways, deliberately both:
   effect in `App.jsx` already uses. Belt and suspenders: a correct render
   then doesn't depend on every future write remembering to touch every
   column, or on nothing else about Realtime's payload shape changing.
+
+## Server-authoritative timer start (phase 16)
+
+Reported live: the countdown would sometimes start above 2:00 —
+inconsistently, 2:02 one pick, 2:11 another. Cause: `timer_started_at`
+was a client-generated timestamp, and every viewer's
+`computeLiveRemaining()` measures elapsed time against THEIR OWN device
+clock. Two independently-drifting client clocks compared to each other
+produce exactly this kind of inconsistent, direction-either-way error —
+and specifically, a start time that looks like it's in the future to a
+correctly-synced viewer makes the computed remaining time exceed the
+real duration.
+
+Fixed with a database trigger (`draft_sessions_touch`,
+`phase16_draft_sessions_server_timer.sql`) that overwrites
+`timer_started_at` with Postgres's own `now()` on any write that leaves
+`timer_active = true`, regardless of what the client sent. That leaves
+exactly one authoritative clock every viewer measures against, instead
+of N arbitrary device clocks. The same trigger also takes over
+`updated_at` for the same reason — `saveDraftSession()` no longer sets
+either field itself.
 
 ## Access
 
