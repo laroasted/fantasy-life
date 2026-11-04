@@ -1,21 +1,33 @@
 /**
  * Fantasy Life — Country GDP + Olympics Updater
  *
- * GDP DATA SOURCE: IMF DataMapper API (NGDP_RPCH — Real GDP growth, annual
- *   percent change), fetched live on every run from
- *   https://www.imf.org/external/datamapper/api/v2/NGDP_RPCH
- *   - Free, no key, no auth. Always returns the full indicator (all ~229
- *     countries, all years) — filtering happens client-side below, not via
- *     query params (confirmed live: the API's documented `periods`/country
- *     path filters are ignored in practice).
+ * GDP DATA SOURCE: IMF's official SDMX 2.1 API (api.imf.org), NGDP_RPCH —
+ *   Real GDP growth, annual percent change — fetched live on every run:
+ *   https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/.NGDP_RPCH.A
+ *     ?startPeriod={year}&endPeriod={year}
+ *   (the empty first key segment wildcards the COUNTRY dimension, so one
+ *   request returns every economy for just the one indicator/year needed)
+ *   - Free, no key, no auth. NOT the same host as the public DataMapper
+ *     website (www.imf.org/external/datamapper) — that one sits behind
+ *     bot-detection that 403s a plain server-side fetch regardless of
+ *     headers (confirmed live on Vercel); api.imf.org is IMF's actual API
+ *     product and has no such protection (also confirmed live on Vercel).
+ *   - Response is SDMX-ML XML, not JSON (the server ignores an
+ *     Accept: application/vnd.sdmx.data+json request and always returns
+ *     XML) — parsed below with a regex over the flat
+ *     <Series COUNTRY="X"><Obs TIME_PERIOD="Y" OBS_VALUE="Z"/></Series>
+ *     shape, the same crude-but-adequate approach this file already uses
+ *     for ESPN's HTML in fetchOlympicMedals, rather than a new XML
+ *     dependency for one simple, stable shape.
  *   - IMF only republishes WEO forecasts twice a year (April/October), so
  *     this won't change more often than that — but it removes the old
  *     dependency on a commissioner remembering to hand-run SQL each time.
  *   - On fetch failure, falls back to the last successfully-fetched values
  *     cached in seasons.gdp_forecasts (same column, now a cache rather than
  *     the primary source):
- *     { "source": "World Economic Outlook (October 2026)", "year": 2026,
- *       "data": { "GIN": 10.5, "USA": 1.8, ... }, "fetched_at": "..." }
+ *     { "source": "IMF World Economic Outlook (published 2026-10-13)",
+ *       "year": 2026, "data": { "GIN": 7.19, "USA": 2.33, ... },
+ *       "fetched_at": "..." }
  *
  * OLYMPIC DATA: Still fetched live from ESPN during Olympic windows
  *
@@ -201,51 +213,39 @@ function matchOlympicMedals(pickName, medalData) {
  
 async function fetchIMFGdpData(year) {
   try {
-    // IMF's site sits behind bot-detection (confirmed live: a bare
-    // "Mozilla/5.0" User-Agent gets HTTP 403, a full realistic browser
-    // fingerprint gets 200) — these headers mimic an actual Chrome request,
-    // not a trivial placeholder.
-    var res = await fetch('https://www.imf.org/external/datamapper/api/v2/NGDP_RPCH', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.imf.org/external/datamapper/NGDP_RPCH@WEO'
-      }
-    });
+    // Empty COUNTRY segment (before the first dot) wildcards every economy —
+    // one request returns all of them for just this indicator/year.
+    var url = 'https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/.NGDP_RPCH.A' +
+      '?startPeriod=' + year + '&endPeriod=' + year;
+    var res = await fetch(url);
     if (!res.ok) {
-      var bodySnippet = '';
-      try { bodySnippet = (await res.text()).slice(0, 200); } catch (e) {}
-      console.error('  IMF DataMapper fetch failed: HTTP ' + res.status +
-        (bodySnippet ? ' — ' + bodySnippet : ''));
+      console.error('  IMF SDMX fetch failed: HTTP ' + res.status);
       return null;
     }
-    var json = await res.json();
-    var values = json && json.values && json.values.NGDP_RPCH;
-    if (!values) {
-      console.error('  IMF DataMapper response missing values.NGDP_RPCH');
-      return null;
-    }
+    var xml = await res.text();
 
+    // Structure-specific SDMX-ML: <Series COUNTRY="X" ...><Obs TIME_PERIOD="Y"
+    // OBS_VALUE="Z"/></Series> — flat attributes, no nested value elements.
     var data = {};
-    for (var iso in values) {
-      var growth = values[iso][String(year)];
-      if (growth != null) data[iso] = growth;
+    var seriesRe = /<Series\s+COUNTRY="([A-Z]{3})"[^>]*>([\s\S]*?)<\/Series>/g;
+    var obsRe = /<Obs\s+TIME_PERIOD="(\d{4})"\s+OBS_VALUE="(-?[\d.]+)"/;
+    var sm;
+    while ((sm = seriesRe.exec(xml)) !== null) {
+      var om = obsRe.exec(sm[2]);
+      if (om && om[1] === String(year)) data[sm[1]] = parseFloat(om[2]);
     }
     if (Object.keys(data).length === 0) {
-      console.error('  IMF DataMapper has no ' + year + ' data for any country');
+      console.error('  IMF SDMX response had no parseable ' + year + ' observations');
       return null;
     }
 
-    var meta = (json.indicators && json.indicators.NGDP_RPCH) || {};
-    return {
-      source: meta.source || 'IMF World Economic Outlook',
-      year: year,
-      data: data
-    };
+    var pubMatch = /PUBLICATION_DATE="([^"]+)"/.exec(xml);
+    var source = 'IMF World Economic Outlook' +
+      (pubMatch ? ' (published ' + pubMatch[1].slice(0, 10) + ')' : '');
+
+    return { source: source, year: year, data: data };
   } catch (err) {
-    console.error('  IMF DataMapper fetch error:', err.message);
+    console.error('  IMF SDMX fetch error:', err.message);
     return null;
   }
 }
@@ -282,54 +282,10 @@ async function fetchOlympicMedals() {
 }
  
 // ═══════════════════════════════════════════════════════════════════════
-// TEMPORARY DIAGNOSTIC — testing whether api.imf.org (IMF's official SDMX
-// API, a different host than the datamapper.imf.org frontend that's
-// blocked by bot-detection) is reachable from Vercel. Does NOT touch the
-// database or any real scoring data — just reports what comes back.
-// Trigger: GET /api/cron/update-country?testImf=1 (no auth needed, since
-// it only calls a public read-only API). DELETE this block once we know
-// whether api.imf.org works from here.
-// ═══════════════════════════════════════════════════════════════════════
-async function testImfConnectivity(res) {
-  var attempts = [
-    {
-      label: 'Accept: application/vnd.sdmx.data+json',
-      headers: { 'Accept': 'application/vnd.sdmx.data+json' }
-    },
-    {
-      label: 'no Accept header (default)',
-      headers: {}
-    }
-  ];
-  var url = 'https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/GIN.NGDP_RPCH.A' +
-    '?startPeriod=2026&endPeriod=2026';
-  var results = [];
-  for (var a of attempts) {
-    try {
-      var r = await fetch(url, { headers: a.headers });
-      var text = await r.text();
-      results.push({
-        label: a.label,
-        status: r.status,
-        ok: r.ok,
-        contentType: r.headers.get('content-type'),
-        bodyPreview: text.slice(0, 1500)
-      });
-    } catch (err) {
-      results.push({ label: a.label, error: err.message });
-    }
-  }
-  return res.status(200).json({ test: 'imf-connectivity', url: url, timestamp: new Date().toISOString(), results: results });
-}
-
-// ═══════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════
 
 module.exports = async function handler(req, res) {
-  if (req.query && req.query.testImf) {
-    return testImfConnectivity(res);
-  }
   var authHeader = req.headers['authorization'];
   var cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== 'Bearer ' + cronSecret) {
