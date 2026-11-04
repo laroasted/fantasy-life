@@ -106,6 +106,18 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     return () => clearInterval(id);
   }, [liveSession && liveSession.timer_active, liveSession && liveSession.timer_started_at]);
 
+  // Seed the finalize screen's season-name input from the resumed
+  // session — otherwise a commissioner who refreshes (or opens a second
+  // tab) mid-draft sees today's year by default instead of whatever was
+  // actually chosen at Start Draft time, and finalize uses THIS field for
+  // the season year it saves under. Keyed on created_at (fixed for a
+  // given session's whole lifetime) rather than liveSession itself, so
+  // this fires once per resumed session, not on every pick/timer update —
+  // it shouldn't clobber an edit the commissioner is mid-typing.
+  useEffect(() => {
+    if (liveSession && liveSession.season_name) setSeasonName(liveSession.season_name);
+  }, [liveSession && liveSession.created_at]);
+
   // Anyone can run through setup and a full mock draft — only finalize is
   // gated — but until now nothing told a non-commissioner visitor that
   // none of it would be saved until the very last click. Only applies
@@ -194,9 +206,13 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   };
 
   // Commissioner: creates the shared live session so everyone else's
-  // Draft tab picks it up. Anyone else (and the commissioner too, if the
-  // write fails — a flaky network shouldn't eat their "Start Draft"
-  // click) falls through to the local-only mock draft, same as always.
+  // Draft tab picks it up. startDraftSession() is a plain insert, not an
+  // upsert (see its own comment in storage.js) — if one already exists
+  // this fails with a conflict rather than silently overwriting it, so
+  // re-fetch and resume the REAL session instead of assuming the write
+  // simply failed. Only once that re-fetch also comes back empty is it
+  // safe to fall through to the local-only mock draft — a confirmed
+  // absence, not just "this one request didn't work."
   const startDraft = async () => {
     if (draftOrder.length < 2) return;
     const so = generateSnakeOrder(draftOrder, DRAFT_CATEGORIES.length);
@@ -209,6 +225,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     if (isCommissioner) {
       const row = await startDraftSession({ seasonName, draftOrder, snakeOrder: so, timerDuration: TIMER_DURATION });
       if (row) { setLiveSession(row); return; }
+      const existing = await fetchDraftSession();
+      if (existing) { setLiveSession(existing); return; }
     }
     setSnakeOrder(so);
     setPhase("draft");

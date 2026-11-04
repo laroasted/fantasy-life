@@ -693,16 +693,27 @@ export function subscribeDraftSession(onChange) {
 
 /**
 * Creates the live draft session when the commissioner hits "Start
-* Draft!". Replaces any existing row outright (id=1 upsert) — starting a
-* fresh draft is only reachable from DraftTool's local setup phase, which
-* itself is only reached when fetchDraftSession() came back null, so this
-* should never clobber a session someone's still actively watching.
+* Draft!". A plain INSERT, deliberately not an upsert: id=1 is the
+* primary key, so if a session already exists this fails with a
+* unique-violation (23505) instead of silently overwriting it.
+*
+* That matters even though the caller only reaches this when it already
+* believes there's no live session — fetchDraftSession() came back null —
+* because that belief can be WRONG: a transient read failure returns null
+* the same as a confirmed-empty room (see that function), and a stale
+* local copy that missed an update could too. Either way, overwriting a
+* real in-progress draft because one earlier read happened to fail would
+* be silent, unrecoverable data loss. Making the write itself
+* non-destructive closes that regardless of how the caller's belief got
+* stale — see DraftTool.jsx's startDraft(), which re-fetches on a 23505
+* to resume the real session instead of falling back to a disconnected
+* local one.
 */
 export async function startDraftSession({ seasonName, draftOrder, snakeOrder, timerDuration }) {
 try {
  const { data, error } = await supabase
  .from('draft_sessions')
- .upsert({
+ .insert({
  id: 1,
  status: 'drafting',
  season_name: seasonName,
@@ -715,12 +726,11 @@ try {
  timer_remaining: timerDuration,
  timer_active: false,
  timer_started_at: null,
- updated_at: new Date().toISOString(),
- }, { onConflict: 'id' })
+ })
  .select()
  .single();
  if (error) {
- console.error('startDraftSession failed:', error.message);
+ if (error.code !== '23505') console.error('startDraftSession failed:', error.message);
  return null;
  }
  return data;
