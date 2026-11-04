@@ -38,13 +38,26 @@ function computeLiveRemaining(session, nowMs) {
   return Math.max(0, session.timer_remaining - elapsed);
 }
 
-export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail }) {
+export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail, currentSeasonYear, currentSeasonMembers }) {
   const [phase, setPhase] = useState("setup");
   const [draftOrder, setDraftOrder] = useState([]);
   const [searchPhrase, setSearchPhrase] = useState("");
   const [actualResults, setActualResults] = useState("");
   const [guesses, setGuesses] = useState({});
-  const [activeMembers, setActiveMembers] = useState([...DRAFT_MEMBERS]);
+  // Start from status quo — whoever's actually in the current season,
+  // not a hardcoded list that goes stale the moment the league's roster
+  // changes (a new member drafts in, someone sits a year out). Add/Remove
+  // below still works exactly the same; this only changes the starting
+  // point. DRAFT_MEMBERS is only a fallback for a brand-new league with
+  // no season to read from yet. This naturally makes each finalized
+  // draft's own roster the next year's starting point too, with no
+  // separate "save as new default" step — next year's setup just reads
+  // whatever season is active then, which by then is this one.
+  const [activeMembers, setActiveMembers] = useState(() =>
+    currentSeasonMembers && currentSeasonMembers.length
+      ? currentSeasonMembers.map((m) => ({ id: m.id, name: m.name, full: m.full || m.name }))
+      : [...DRAFT_MEMBERS]
+  );
   const [showMemberMgmt, setShowMemberMgmt] = useState(false);
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberFull, setNewMemberFull] = useState("");
@@ -61,7 +74,12 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [showRoster, setShowRoster] = useState(null);
   const [customInput, setCustomInput] = useState("");
   const [pickHistory, setPickHistory] = useState([]);
-  const [seasonName, setSeasonName] = useState("" + new Date().getFullYear());
+  // Defaults to NEXT season (current season's year + 1), not literally
+  // today's calendar year — a draft started partway through, say, 2026
+  // is drafting the 2027 season, not re-drafting the one already running.
+  const [seasonName, setSeasonName] = useState(
+    () => "" + ((currentSeasonYear || new Date().getFullYear()) + 1)
+  );
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState("");
@@ -269,8 +287,17 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     !Object.keys(effective.picks).some((k) => k.endsWith("-" + cat.id) && effective.picks[k] && k.startsWith((member ? member.id : "") + "-"))
   );
 
+  // Guards against a double-fire (fast double-click, or a second pick
+  // option clicked before the first one's round-trip to Supabase has
+  // finished) submitting two picks off the same stale `liveSession`
+  // snapshot — both would compute the same "next" current_pick/history
+  // from whatever was last confirmed, and the second write would just
+  // clobber the first. Clearing the pick-selection UI synchronously
+  // (not after the await) closes the window where it could even happen.
+  const makingPickRef = useRef(false);
   const makePick = async (catId, selection, isCustom) => {
-    if (!member) return;
+    if (!member || makingPickRef.current) return;
+    makingPickRef.current = true;
     const key = member.id + "-" + catId;
     track(EVENTS.DRAFT_PICK_MADE, {
       pick_number: effective.currentPick + 1,
@@ -281,28 +308,32 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       seconds_remaining: displayTimer,
       is_timer_active: displayTimerActive,
     });
-
-    if (liveSession) {
-      const newPicks = { ...liveSession.picks, [key]: selection };
-      const newHistory = [...liveSession.pick_history, { pick: liveSession.current_pick, memberId: member.id, categoryId: catId, selection }];
-      const newCurrentPick = liveSession.current_pick + 1;
-      const patch = {
-        picks: newPicks,
-        pick_history: newHistory,
-        current_pick: newCurrentPick,
-        status: newCurrentPick >= liveSession.snake_order.length ? "complete" : "drafting",
-        timer_active: false, timer_started_at: null, timer_remaining: TIMER_DURATION,
-      };
-      setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      await saveDraftSession(patch);
-    } else {
-      setPicks((p) => ({ ...p, [key]: selection }));
-      setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
-      setCurrentPick((c) => c + 1);
-      setTimer(TIMER_DURATION); setTimerActive(false);
-    }
     setSelectedCategory(null); setSearchFilter(""); setCustomInput("");
     if (isMobile) setMobilePanel("draft");
+
+    try {
+      if (liveSession) {
+        const newPicks = { ...liveSession.picks, [key]: selection };
+        const newHistory = [...liveSession.pick_history, { pick: liveSession.current_pick, memberId: member.id, categoryId: catId, selection }];
+        const newCurrentPick = liveSession.current_pick + 1;
+        const patch = {
+          picks: newPicks,
+          pick_history: newHistory,
+          current_pick: newCurrentPick,
+          status: newCurrentPick >= liveSession.snake_order.length ? "complete" : "drafting",
+          timer_active: false, timer_started_at: null, timer_remaining: TIMER_DURATION,
+        };
+        setLiveSession((s) => (s ? { ...s, ...patch } : s));
+        await saveDraftSession(patch);
+      } else {
+        setPicks((p) => ({ ...p, [key]: selection }));
+        setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
+        setCurrentPick((c) => c + 1);
+        setTimer(TIMER_DURATION); setTimerActive(false);
+      }
+    } finally {
+      makingPickRef.current = false;
+    }
   };
 
   const undoPick = async () => {

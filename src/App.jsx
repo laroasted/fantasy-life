@@ -1352,6 +1352,8 @@ export default function App() {
                 onFinalize={handleFinalize}
                 isCommissioner={isCommissioner}
                 commissionerEmail={commissionerSession?.user?.email || ""}
+                currentSeasonYear={activeSeason?.year}
+                currentSeasonMembers={activeSeason?.members}
               />
             </Suspense>
           </TabErrorBoundary>

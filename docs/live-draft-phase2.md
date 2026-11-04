@@ -75,6 +75,32 @@ A write only happens on start / pause / reset / pick-made (state
 transitions), not on ticks. See `computeLiveRemaining()` in
 `DraftTool.jsx`.
 
+## Realtime payloads and REPLICA IDENTITY (phase 15)
+
+Hit live, confirmed from the actual browser console error, not guessed:
+every pick tripped the Draft tab's error boundary on
+`effective.snakeOrder.length` — `snake_order` was simply missing
+(`undefined`, not `[]`) from the Realtime payload. Cause: Postgres
+logical replication omits an `UPDATE`'s unchanged large (TOASTed)
+columns from the replication stream unless the table's
+`REPLICA IDENTITY` is `FULL`. `saveDraftSession()` never touches
+`snake_order`/`draft_order` after the initial insert (only
+`picks`/`pick_history`/`current_pick`/`status`/`timer_*`), so once those
+two columns grew past Postgres's TOAST threshold — easy, one entry per
+member per category — every subsequent Realtime `UPDATE` arrived missing
+them.
+
+Fixed two ways, deliberately both:
+- `phase15_draft_sessions_replica_identity.sql` sets
+  `REPLICA IDENTITY FULL` on the table — Postgres's/Supabase's own
+  documented fix, so the payload is complete again at the source.
+- `subscribeDraftSession()` (`storage.js`) no longer trusts
+  `payload.new` directly — it re-fetches the row on any INSERT/UPDATE
+  notification instead, the same pattern the scoreboard's own realtime
+  effect in `App.jsx` already uses. Belt and suspenders: a correct render
+  then doesn't depend on every future write remembering to touch every
+  column, or on nothing else about Realtime's payload shape changing.
+
 ## Access
 
 - **Read**: public, same as `seasons`/`members`/`picks` — no login
