@@ -422,8 +422,14 @@ module.exports = async function handler(req, res) {
       var metricWritten = null;
 
       if (r.gdpGrowth !== null) {
-        var baseLocked = isFieldLocked(locks, 'Country', ownerName, 'base');
-        var metricLocked = isFieldLocked(locks, 'Country', ownerName, 'metric');
+        // Settings' Country panel has one lock button on the single "GDP %"
+        // input (SeasonSettings.jsx's `gdpKey` = "Country|<owner>|gdp") —
+        // not separate base/metric locks like other categories get. Both
+        // base and metric are derived from that one number, so one lock
+        // key guards both writes.
+        var gdpLocked = isFieldLocked(locks, 'Country', ownerName, 'gdp');
+        var baseLocked = gdpLocked;
+        var metricLocked = gdpLocked;
 
         var recordLabel = r.gdpGrowth + '% GDP';
 
@@ -515,7 +521,11 @@ module.exports = async function handler(req, res) {
           var rankIdx = medalData.findIndex(function(m) { return m.noc === noc; });
           var medalRank = rankIdx >= 0 ? rankIdx + 1 : null;
           var bonusPts = OLYMPIC_BONUS[medalRank] || 0;
-          var bonusLocked = isFieldLocked(locks, 'Country', ownerName2, 'bonus');
+          // Same pattern as the GDP lock above: Settings locks individual
+          // olympics.{gold,silver,bronze,rank} fields, not a "bonus" key.
+          // bonusPts is derived from rank specifically, so that's the lock
+          // that should guard it.
+          var bonusLocked = isFieldLocked(locks, 'Country', ownerName2, 'olympics.rank');
  
           var { error: olyErr } = await supabase
             .from('country_olympics')
