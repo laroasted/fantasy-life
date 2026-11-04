@@ -1,0 +1,26 @@
+-- Phase 15: Fix draft_sessions Realtime payloads missing snake_order/
+-- draft_order after the first update.
+--
+-- Reported live: the Draft tab's error boundary tripped on almost every
+-- pick, with "Cannot read properties of undefined (reading 'length')" at
+-- `effective.snakeOrder.length` in DraftTool.jsx. Root cause, confirmed
+-- from the actual browser console error (not guessed): a well-documented
+-- Postgres logical-replication behavior — an UPDATE that doesn't modify a
+-- large (TOASTed) column omits that column's value from the replication
+-- stream entirely, unless the table's REPLICA IDENTITY is FULL. Every
+-- write this app makes to draft_sessions after the initial insert
+-- (saveDraftSession() in storage.js — a pick, a timer start/pause/reset)
+-- only ever SETs picks/pick_history/current_pick/status/timer_* —
+-- snake_order and draft_order are written once at creation and never
+-- touched again, so once they grow past Postgres's TOAST threshold
+-- (easily hit — snake_order alone is one entry per member per category,
+-- e.g. 11 members x 15 categories = 165 small objects), every subsequent
+-- Realtime UPDATE payload arrives with those two fields simply missing,
+-- not null — `payload.new.snake_order` is `undefined`, not `[]` — which
+-- is exactly what made `.length` throw.
+--
+-- REPLICA IDENTITY FULL makes Postgres always include the complete row
+-- in logical-replication output, regardless of which columns an UPDATE's
+-- SET clause actually touched. This is Supabase's own documented fix for
+-- this exact "columns missing from Realtime payloads" symptom.
+alter table public.draft_sessions replica identity full;

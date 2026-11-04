@@ -690,13 +690,27 @@ try {
 * commissioner's own writes, so their browser is driven by the same
 * synced state as every spectator's rather than a separate local copy.
 * Returns an unsubscribe function.
+*
+* Deliberately does NOT hand the postgres_changes payload's own `new`
+* straight to onChange — re-fetches instead, same as the scoreboard's own
+* realtime effect in App.jsx already does. A raw payload.new isn't
+* trustworthy here: Postgres logical replication omits an UPDATE's
+* unchanged large (TOASTed) columns from the replication stream unless
+* REPLICA IDENTITY is FULL (see phase15_draft_sessions_replica_identity.sql
+* for the schema-level fix, applied for the same reason) — belt and
+* suspenders, since this way a correct render never depends on every
+* future write remembering to set that, or on nothing else about
+* Realtime's payload shape changing.
 */
 export function subscribeDraftSession(onChange) {
  const channel = supabasePublic
  .channel('draft-session-live')
  .on('postgres_changes',
  { event: '*', schema: 'public', table: 'draft_sessions', filter: 'id=eq.1' },
- (payload) => { onChange(payload.eventType === 'DELETE' ? null : payload.new); })
+ (payload) => {
+ if (payload.eventType === 'DELETE') { onChange(null); return; }
+ fetchDraftSession().then(onChange);
+ })
  .subscribe();
  return () => { supabasePublic.removeChannel(channel); };
 }
