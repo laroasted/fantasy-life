@@ -302,7 +302,7 @@ module.exports = async function handler(req, res) {
   var liveGdp = await fetchIMFGdpData(fantasyYear);
   var cachedGdp = season.gdp_forecasts;
 
-  var gdpData, gdpSource, gdpYear;
+  var gdpData, gdpSource, gdpYear, gdpIsLive;
 
   if (liveGdp) {
     console.log('Live IMF fetch OK — ' + Object.keys(liveGdp.data).length +
@@ -310,6 +310,7 @@ module.exports = async function handler(req, res) {
     gdpData = liveGdp.data;
     gdpSource = liveGdp.source;
     gdpYear = liveGdp.year;
+    gdpIsLive = true;
 
     var { error: cacheErr } = await supabase
       .from('seasons')
@@ -330,6 +331,7 @@ module.exports = async function handler(req, res) {
     gdpData = cachedGdp.data;
     gdpSource = (cachedGdp.source || 'unknown') + ' (cached — live fetch failed this run)';
     gdpYear = cachedGdp.year || fantasyYear;
+    gdpIsLive = false;
   } else {
     return res.status(200).json({
       message: 'IMF live fetch failed and no cached gdp_forecasts found on season ' + fantasyYear
@@ -402,27 +404,33 @@ module.exports = async function handler(req, res) {
  
     for (var r of gdpResults) {
       var ownerName = memberNameById[r.member_id] || r.member_id;
- 
+      var skipped = [];
+      var baseWritten = null;
+      var metricWritten = null;
+
       if (r.gdpGrowth !== null) {
         var baseLocked = isFieldLocked(locks, 'Country', ownerName, 'base');
         var metricLocked = isFieldLocked(locks, 'Country', ownerName, 'metric');
- 
+
         var recordLabel = r.gdpGrowth + '% GDP';
- 
+
         var updateObj = { updated_at: new Date().toISOString() };
-        if (!baseLocked) updateObj.base = r.newBase;
+        if (!baseLocked) {
+          updateObj.base = r.newBase;
+          baseWritten = r.newBase;
+        }
         if (!metricLocked) {
           updateObj.metric = r.gdpGrowth;
           updateObj.record = recordLabel;
+          metricWritten = r.gdpGrowth;
         }
- 
-        var skipped = [];
+
         if (baseLocked) skipped.push('base');
         if (metricLocked) skipped.push('metric');
         if (skipped.length > 0) {
           console.log('  🔒 ' + ownerName + ': skipped locked: ' + skipped.join(', '));
         }
- 
+
         var { error } = await supabase.from('picks').update(updateObj).eq('id', r.id);
         if (error) {
           console.error('  DB error updating ' + r.pick + ':', error.message);
@@ -430,7 +438,10 @@ module.exports = async function handler(req, res) {
           updated++;
         }
       }
- 
+
+      // Diagnostic fields so a QA pass can tell "nothing changed because the
+      // number is genuinely the same" apart from "nothing changed because a
+      // lock blocked the write" without needing to read Vercel's own logs.
       rankings.push({
         rank: r.rank || null,
         member: r.member_id,
@@ -438,7 +449,12 @@ module.exports = async function handler(req, res) {
         country: r.pick,
         iso: r.iso,
         gdpGrowth: r.gdpGrowth !== null ? r.gdpGrowth + '%' : 'No data',
-        base: r.newBase || null
+        base: r.newBase || null,
+        previousBase: r.base != null ? r.base : null,
+        previousMetric: r.metric != null ? r.metric : null,
+        locked: skipped.length > 0 ? skipped : null,
+        baseActuallyChanged: baseWritten !== null && baseWritten !== r.base,
+        metricActuallyChanged: metricWritten !== null && metricWritten !== r.metric
       });
     }
  
@@ -446,6 +462,7 @@ module.exports = async function handler(req, res) {
     results.gdp = {
       status: 'updated',
       source: gdpSource,
+      dataIsLive: gdpIsLive,
       dataYear: gdpYear,
       updated: updated,
       total: totalMembers,
@@ -547,6 +564,7 @@ module.exports = async function handler(req, res) {
     message: 'Country update complete',
     season: fantasyYear,
     gdpSource: gdpSource,
+    gdpIsLive: gdpIsLive,
     timestamp: new Date().toISOString(),
     results: results
   });
