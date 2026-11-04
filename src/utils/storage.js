@@ -748,8 +748,12 @@ try {
  current_pick: 0,
  timer_duration: timerDuration,
  timer_remaining: timerDuration,
- timer_active: false,
- timer_started_at: null,
+ // Starts running immediately, not paused — "keep the clock going the
+ // whole time" per live-draft feedback. timer_started_at is left unset:
+ // the draft_sessions_touch trigger (phase16) stamps it with the
+ // database's own clock, never a client's, since that's what was
+ // causing the countdown to start above 2:00 by an inconsistent amount.
+ timer_active: true,
  })
  .select()
  .single();
@@ -773,9 +777,13 @@ try {
 */
 export async function saveDraftSession(patch) {
 try {
+ // updated_at (and timer_started_at, when patch sets timer_active true)
+ // are stamped server-side by the draft_sessions_touch trigger
+ // (phase16) — not set here, deliberately: see that trigger's own
+ // comment for why a client clock can't be trusted for either.
  const { error } = await supabase
  .from('draft_sessions')
- .update({ ...patch, updated_at: new Date().toISOString() })
+ .update(patch)
  .eq('id', 1);
  if (error) {
  console.error('saveDraftSession failed:', error.message);
