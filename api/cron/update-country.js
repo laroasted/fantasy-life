@@ -282,10 +282,54 @@ async function fetchOlympicMedals() {
 }
  
 // ═══════════════════════════════════════════════════════════════════════
+// TEMPORARY DIAGNOSTIC — testing whether api.imf.org (IMF's official SDMX
+// API, a different host than the datamapper.imf.org frontend that's
+// blocked by bot-detection) is reachable from Vercel. Does NOT touch the
+// database or any real scoring data — just reports what comes back.
+// Trigger: GET /api/cron/update-country?testImf=1 (no auth needed, since
+// it only calls a public read-only API). DELETE this block once we know
+// whether api.imf.org works from here.
+// ═══════════════════════════════════════════════════════════════════════
+async function testImfConnectivity(res) {
+  var attempts = [
+    {
+      label: 'Accept: application/vnd.sdmx.data+json',
+      headers: { 'Accept': 'application/vnd.sdmx.data+json' }
+    },
+    {
+      label: 'no Accept header (default)',
+      headers: {}
+    }
+  ];
+  var url = 'https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/GIN.NGDP_RPCH.A' +
+    '?startPeriod=2026&endPeriod=2026';
+  var results = [];
+  for (var a of attempts) {
+    try {
+      var r = await fetch(url, { headers: a.headers });
+      var text = await r.text();
+      results.push({
+        label: a.label,
+        status: r.status,
+        ok: r.ok,
+        contentType: r.headers.get('content-type'),
+        bodyPreview: text.slice(0, 1500)
+      });
+    } catch (err) {
+      results.push({ label: a.label, error: err.message });
+    }
+  }
+  return res.status(200).json({ test: 'imf-connectivity', url: url, timestamp: new Date().toISOString(), results: results });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════
- 
+
 module.exports = async function handler(req, res) {
+  if (req.query && req.query.testImf) {
+    return testImfConnectivity(res);
+  }
   var authHeader = req.headers['authorization'];
   var cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== 'Bearer ' + cronSecret) {
