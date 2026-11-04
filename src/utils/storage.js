@@ -567,12 +567,22 @@ try {
  }
 
  // 7. Assemble final season object
+ // `members` (fetched in step 1) is the GLOBAL roster — everyone who's
+ // ever drafted, since that table is only ever upserted into, never
+ // pruned (see handleFinalize in DraftTool.jsx). Fine for the
+ // memberNameById lookups above, which just need any name a pick's
+ // member_id could reference — but wrong for what this function hands
+ // back as "this season's members": scope that to whoever actually has
+ // a pick THIS season, so someone dropped from a later draft doesn't
+ // keep reappearing in that season's member list, roster counts, etc.
+ const seasonMemberIds = new Set(picks.map(p => p.member_id));
+ const seasonMembers = members.filter(m => seasonMemberIds.has(m.id));
  return {
  year: season.year,
  name: season.name,
  draftDate: season.draft_date,
- memberCount: members.length,
- members: members.map(m => ({
+ memberCount: seasonMembers.length,
+ members: seasonMembers.map(m => ({
   id: m.id,
   name: m.name,
   full: m.full_name,
