@@ -1,12 +1,21 @@
 /**
  * Fantasy Life — Country GDP + Olympics Updater
  *
- * GDP DATA SOURCE: seasons.gdp_forecasts JSONB column in Supabase
- *   - Commissioner updates this twice a year when IMF publishes new WEO
- *     (April and October)
- *   - Format: { "source": "IMF WEO April 2025", "year": 2026,
- *               "data": { "GIN": 10.5, "USA": 1.8, ... } }
- *   - No external API calls = no 403s, no rate limits, no downtime
+ * GDP DATA SOURCE: IMF DataMapper API (NGDP_RPCH — Real GDP growth, annual
+ *   percent change), fetched live on every run from
+ *   https://www.imf.org/external/datamapper/api/v2/NGDP_RPCH
+ *   - Free, no key, no auth. Always returns the full indicator (all ~229
+ *     countries, all years) — filtering happens client-side below, not via
+ *     query params (confirmed live: the API's documented `periods`/country
+ *     path filters are ignored in practice).
+ *   - IMF only republishes WEO forecasts twice a year (April/October), so
+ *     this won't change more often than that — but it removes the old
+ *     dependency on a commissioner remembering to hand-run SQL each time.
+ *   - On fetch failure, falls back to the last successfully-fetched values
+ *     cached in seasons.gdp_forecasts (same column, now a cache rather than
+ *     the primary source):
+ *     { "source": "World Economic Outlook (October 2026)", "year": 2026,
+ *       "data": { "GIN": 10.5, "USA": 1.8, ... }, "fetched_at": "..." }
  *
  * OLYMPIC DATA: Still fetched live from ESPN during Olympic windows
  *
@@ -190,6 +199,44 @@ function matchOlympicMedals(pickName, medalData) {
   return noc ? (medalData.find(function(m) { return m.noc === noc; }) || null) : null;
 }
  
+async function fetchIMFGdpData(year) {
+  try {
+    var res = await fetch('https://www.imf.org/external/datamapper/api/v2/NGDP_RPCH', {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
+    });
+    if (!res.ok) {
+      console.error('  IMF DataMapper fetch failed: HTTP ' + res.status);
+      return null;
+    }
+    var json = await res.json();
+    var values = json && json.values && json.values.NGDP_RPCH;
+    if (!values) {
+      console.error('  IMF DataMapper response missing values.NGDP_RPCH');
+      return null;
+    }
+
+    var data = {};
+    for (var iso in values) {
+      var growth = values[iso][String(year)];
+      if (growth != null) data[iso] = growth;
+    }
+    if (Object.keys(data).length === 0) {
+      console.error('  IMF DataMapper has no ' + year + ' data for any country');
+      return null;
+    }
+
+    var meta = (json.indicators && json.indicators.NGDP_RPCH) || {};
+    return {
+      source: meta.source || 'IMF World Economic Outlook',
+      year: year,
+      data: data
+    };
+  } catch (err) {
+    console.error('  IMF DataMapper fetch error:', err.message);
+    return null;
+  }
+}
+
 async function fetchOlympicMedals() {
   try {
     var res = await fetch('https://www.espn.com/olympics/winter/2026/medals', {
@@ -237,32 +284,58 @@ module.exports = async function handler(req, res) {
  
   var supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   console.log('═══ Fantasy Life — Country GDP + Olympics Update ═══');
-  console.log('GDP source: seasons.gdp_forecasts (Supabase)\n');
- 
-  // ── Load active season (including gdp_forecasts) ──
+
+  // ── Load active season (including cached gdp_forecasts as fallback) ──
   var { data: season } = await supabase
     .from('seasons')
     .select('year, locks, gdp_forecasts')
     .eq('status', 'active')
     .single();
   if (!season) return res.status(200).json({ message: 'No active season found' });
- 
+
   var fantasyYear = season.year;
   var locks = season.locks || {};
-  var gdpForecasts = season.gdp_forecasts;
   console.log('Season: ' + fantasyYear);
- 
-  if (!gdpForecasts || !gdpForecasts.data) {
+
+  // ── GDP data: fetch live from IMF, fall back to last cached pull ──
+  console.log('\n── Fetching live IMF WEO GDP growth data ──');
+  var liveGdp = await fetchIMFGdpData(fantasyYear);
+  var cachedGdp = season.gdp_forecasts;
+
+  var gdpData, gdpSource, gdpYear;
+
+  if (liveGdp) {
+    console.log('Live IMF fetch OK — ' + Object.keys(liveGdp.data).length +
+      ' countries, source: ' + liveGdp.source);
+    gdpData = liveGdp.data;
+    gdpSource = liveGdp.source;
+    gdpYear = liveGdp.year;
+
+    var { error: cacheErr } = await supabase
+      .from('seasons')
+      .update({
+        gdp_forecasts: {
+          source: gdpSource,
+          year: gdpYear,
+          data: gdpData,
+          fetched_at: new Date().toISOString()
+        }
+      })
+      .eq('year', fantasyYear);
+    if (cacheErr) {
+      console.error('  Failed to cache fresh IMF data to gdp_forecasts:', cacheErr.message);
+    }
+  } else if (cachedGdp && cachedGdp.data) {
+    console.log('Live IMF fetch unavailable — falling back to cached gdp_forecasts');
+    gdpData = cachedGdp.data;
+    gdpSource = (cachedGdp.source || 'unknown') + ' (cached — live fetch failed this run)';
+    gdpYear = cachedGdp.year || fantasyYear;
+  } else {
     return res.status(200).json({
-      message: 'No gdp_forecasts found on season ' + fantasyYear +
-        '. Run: UPDATE seasons SET gdp_forecasts = \'{"source":"IMF WEO","year":' +
-        fantasyYear + ',"data":{"ISO":value,...}}\' WHERE year = ' + fantasyYear
+      message: 'IMF live fetch failed and no cached gdp_forecasts found on season ' + fantasyYear
     });
   }
- 
-  var gdpData = gdpForecasts.data;
-  var gdpSource = gdpForecasts.source || 'unknown';
-  var gdpYear = gdpForecasts.year || fantasyYear;
+
   console.log('GDP data source: ' + gdpSource);
   console.log('GDP data year: ' + gdpYear);
   console.log('GDP entries: ' + Object.keys(gdpData).length + ' countries');
