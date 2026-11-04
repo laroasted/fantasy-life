@@ -147,6 +147,37 @@ Fixed by leaving `timer_started_at` `null` in every optimistic patch
 there's one clean transition into the countdown once the real server
 timestamp lands, not a tick-then-correct glitch.
 
+**Second follow-up, smaller residual version of the same root cause**:
+after the fix above, a smaller ~2-second version of the exact same
+symptom (briefly over 2:00, then settling) was still reported. Cause:
+once the server-confirmed row lands, `computeLiveRemaining()` measures
+elapsed time as `Date.now() - timer_started_at` using *this device's
+own* clock — and this device's clock doesn't have to agree with the
+database server's by more than a second or two for that to show up as
+exactly this kind of brief overshoot. This is the smaller, residual
+skew source called out as a known remaining risk when phase16 shipped
+(directly above: "the remaining clock-skew exposure — one viewer's own
+device clock vs. the database's — is far smaller and far more
+consistent in practice than comparing two arbitrary client clocks to
+each other").
+
+Fixed with an NTP-style clock-offset correction, entirely client-side
+(no new SQL — it reuses `updated_at`, which the phase16 trigger already
+stamps with the server's `now()` on every write). `applyServerSession()`
+in `DraftTool.jsx` is now the only path that ever hands the component a
+server-confirmed row (the initial fetch, every Realtime
+INSERT/UPDATE-triggered refetch, `startDraft()`'s two success paths, and
+`reconcileAfterFailedSave()`); each time, it records
+`clockOffsetRef.current = new Date(session.updated_at).getTime() -
+Date.now()` — how far ahead or behind this device's clock is from the
+server's, as of the freshest timestamp available — before applying the
+row to state. Every place that previously fed a raw `Date.now()` or
+`liveNow` into `computeLiveRemaining()` now adds that offset first, so
+elapsed time is measured against an estimate of the server's clock
+instead of this device's raw one. A ref, not state, since updating it
+should never itself trigger a render — it only needs to be current by
+the next tick.
+
 ## Access
 
 - **Read**: public, same as `seasons`/`members`/`picks` — no login
