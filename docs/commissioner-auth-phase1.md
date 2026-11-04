@@ -55,15 +55,16 @@ No existing public read flow was removed.
 
 ## Next phases
 
-### Phase 2
+### Phase 2 — done, see `docs/live-draft-phase2.md`
 
 - move draft state from local component state into Supabase draft session tables
 - let everyone view the same live draft room
 - keep commissioner as the only one who submits picks at first
 
-### Phase 3
+### Phase 3 — player accounts done; self-service picking not started
 
-- add player accounts
-- map each player to their own member slot
-- only allow the current drafter to submit the next pick
-- keep commissioner pause / override / correction tools
+- ~~add player accounts~~ ~~map each player to their own member slot~~ — done, see AGENTS.md's Identity section
+- only allow the current drafter to submit the next pick — not started
+- keep commissioner pause / override / correction tools — the commissioner-only
+  controls already exist (phase 2); what's not started is extending any of
+  this to a second, non-commissioner writer

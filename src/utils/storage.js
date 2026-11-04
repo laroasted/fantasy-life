@@ -646,6 +646,135 @@ try {
 }
 }
 
+// ── Live draft (supabase/phase14_live_draft.sql) ──
+//
+// draft_sessions is a singleton row (id always 1) — this league runs one
+// draft at a time, so "is a draft currently live" is just "does the row
+// exist". Reads go through supabasePublic (same reasoning as every other
+// public read above: a spectator is never signed in, and routing this
+// through the session-bearing client would mean it inherits that
+// client's lock contention for no reason). Writes go through the
+// session-bearing `supabase` client — RLS requires is_commissioner().
+
+/**
+* The current live draft session, or null if none is in progress.
+*/
+export async function fetchDraftSession() {
+try {
+ const { data, error } = await supabasePublic
+ .from('draft_sessions').select('*').eq('id', 1).maybeSingle();
+ if (error) {
+ console.warn('fetchDraftSession failed:', error.message);
+ return null;
+ }
+ return data || null;
+} catch (err) {
+ console.warn('fetchDraftSession error:', err);
+ return null;
+}
+}
+
+/**
+* Subscribe to live changes on the draft session. onChange is called with
+* the new row (or null on DELETE) every time it changes — including the
+* commissioner's own writes, so their browser is driven by the same
+* synced state as every spectator's rather than a separate local copy.
+* Returns an unsubscribe function.
+*/
+export function subscribeDraftSession(onChange) {
+ const channel = supabasePublic
+ .channel('draft-session-live')
+ .on('postgres_changes',
+ { event: '*', schema: 'public', table: 'draft_sessions', filter: 'id=eq.1' },
+ (payload) => { onChange(payload.eventType === 'DELETE' ? null : payload.new); })
+ .subscribe();
+ return () => { supabasePublic.removeChannel(channel); };
+}
+
+/**
+* Creates the live draft session when the commissioner hits "Start
+* Draft!". Replaces any existing row outright (id=1 upsert) — starting a
+* fresh draft is only reachable from DraftTool's local setup phase, which
+* itself is only reached when fetchDraftSession() came back null, so this
+* should never clobber a session someone's still actively watching.
+*/
+export async function startDraftSession({ seasonName, draftOrder, snakeOrder, timerDuration }) {
+try {
+ const { data, error } = await supabase
+ .from('draft_sessions')
+ .upsert({
+ id: 1,
+ status: 'drafting',
+ season_name: seasonName,
+ draft_order: draftOrder,
+ snake_order: snakeOrder,
+ picks: {},
+ pick_history: [],
+ current_pick: 0,
+ timer_duration: timerDuration,
+ timer_remaining: timerDuration,
+ timer_active: false,
+ timer_started_at: null,
+ updated_at: new Date().toISOString(),
+ }, { onConflict: 'id' })
+ .select()
+ .single();
+ if (error) {
+ console.error('startDraftSession failed:', error.message);
+ return null;
+ }
+ return data;
+} catch (err) {
+ console.error('startDraftSession error:', err);
+ return null;
+}
+}
+
+/**
+* Patches the live draft session — pass only the columns that changed
+* (a pick made, timer start/pause/reset, undo). jsonb columns (picks,
+* pick_history, draft_order, snake_order) are whole-value overwrites, not
+* merges, so callers pass the full updated value for any of those they
+* include, the same way the equivalent local setState calls always did.
+*/
+export async function saveDraftSession(patch) {
+try {
+ const { error } = await supabase
+ .from('draft_sessions')
+ .update({ ...patch, updated_at: new Date().toISOString() })
+ .eq('id', 1);
+ if (error) {
+ console.error('saveDraftSession failed:', error.message);
+ return false;
+ }
+ return true;
+} catch (err) {
+ console.error('saveDraftSession error:', err);
+ return false;
+}
+}
+
+/**
+* Ends the live session — called on a successful finalize (the draft is
+* now permanently recorded in seasons/picks, so there's nothing left to
+* watch live) and from the commissioner's explicit "Cancel Draft" control
+* for one gone sideways. Either way, "no row" is what lets the next visit
+* fall back to a fresh local setup phase.
+*/
+export async function deleteDraftSession() {
+try {
+ const { error } = await supabase.from('draft_sessions').delete().eq('id', 1);
+ if (error) {
+ console.error('deleteDraftSession failed:', error.message);
+ return false;
+ }
+ return true;
+} catch (err) {
+ console.error('deleteDraftSession error:', err);
+ return false;
+}
+}
+
 // ── Utility ──
 function groupBy(arr, key) {
 const map = {};

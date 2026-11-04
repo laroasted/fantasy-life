@@ -1,22 +1,43 @@
 import { useState, useEffect, useRef } from "react";
-import { AlertTriangle, Target, Users, Shuffle, Trophy, Pencil, Rocket, History as HistoryIcon, PartyPopper, Download, BarChart3 } from "lucide-react";
+import { AlertTriangle, Target, Users, Shuffle, Trophy, Pencil, Rocket, History as HistoryIcon, PartyPopper, Download, BarChart3, Eye, XCircle } from "lucide-react";
 import { DRAFT_MEMBERS, MEMBER_COLORS, NEW_MEMBER_COLORS } from "../constants/members";
 import { DRAFT_CATEGORIES, CATEGORY_ORDER, CATEGORY_KEY_TO_ID } from "../constants/categories";
 import { PICK_OPTIONS } from "../constants/pickOptions";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { generateSnakeOrder } from "../utils/helpers";
-import { supabase } from "../utils/storage";
+import {
+  supabase,
+  fetchDraftSession,
+  subscribeDraftSession,
+  startDraftSession,
+  saveDraftSession,
+  deleteDraftSession,
+} from "../utils/storage";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
 import { Avatar } from "./Badges";
- 
+
 const TIMER_DURATION = 120;
- 
+
 // Invert CATEGORY_KEY_TO_ID: { nfl: "NFL", nba: "NBA", ... }
 const DRAFT_ID_TO_CATEGORY_KEY = {};
 Object.entries(CATEGORY_KEY_TO_ID).forEach(([key, id]) => {
   DRAFT_ID_TO_CATEGORY_KEY[id] = key;
 });
- 
+
+// How many seconds are left on a live session's clock right now — not a
+// value written to the DB every second (see phase14_live_draft.sql's own
+// comment on this), but derived locally from the three fields that ARE
+// written: frozen while paused, counting down from timer_started_at while
+// active. Every viewer (commissioner included) computes this the same
+// way, off the same synced row, so there's exactly one clock, not one per
+// browser that can drift from each other.
+function computeLiveRemaining(session, nowMs) {
+  if (!session) return 0;
+  if (!session.timer_active || !session.timer_started_at) return session.timer_remaining;
+  const elapsed = Math.floor((nowMs - new Date(session.timer_started_at).getTime()) / 1000);
+  return Math.max(0, session.timer_remaining - elapsed);
+}
+
 export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail }) {
   const [phase, setPhase] = useState("setup");
   const [draftOrder, setDraftOrder] = useState([]);
@@ -28,7 +49,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberFull, setNewMemberFull] = useState("");
   const [manualOrder, setManualOrder] = useState(null);
- 
+
   const [picks, setPicks] = useState({});
   const [currentPick, setCurrentPick] = useState(0);
   const [snakeOrder, setSnakeOrder] = useState([]);
@@ -44,17 +65,52 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [showFinalizeModal, setShowFinalizeModal] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState("");
- 
+  const [showCancelModal, setShowCancelModal] = useState(false);
+
   // Mobile: toggle panels instead of always showing
   const [mobilePanel, setMobilePanel] = useState("draft"); // "draft" | "rosters" | "history"
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
- 
+
   const timerRef = useRef(null);
+
+  // ═══════════════════════════════════════════════════════════════
+  // LIVE DRAFT — roadmap step 1 of 2 (see docs/live-draft-phase2.md
+  // and supabase/phase14_live_draft.sql). A real, in-progress draft is
+  // now one shared row in Supabase rather than private component state:
+  // `liveSession` is `undefined` while that's still being checked,
+  // `null` once confirmed there's no live draft (local setup/mock-draft
+  // flow below applies, same as before this existed), or the session row
+  // once one exists. Every viewer — including the commissioner's own
+  // browser, which no longer keeps a separate local copy once a session
+  // exists — subscribes and renders from this same row.
+  // ═══════════════════════════════════════════════════════════════
+  const [liveSession, setLiveSession] = useState(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe = null;
+    fetchDraftSession().then((row) => {
+      if (cancelled) return;
+      setLiveSession(row);
+      unsubscribe = subscribeDraftSession((next) => { if (!cancelled) setLiveSession(next); });
+    });
+    return () => { cancelled = true; if (unsubscribe) unsubscribe(); };
+  }, []);
+
+  // Local-only tick for a live session's countdown display — only runs
+  // while a live timer is actually active, and never writes anything;
+  // see computeLiveRemaining() above.
+  const [liveNow, setLiveNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!liveSession || !liveSession.timer_active) return;
+    const id = setInterval(() => setLiveNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [liveSession && liveSession.timer_active, liveSession && liveSession.timer_started_at]);
 
   // Anyone can run through setup and a full mock draft — only finalize is
   // gated — but until now nothing told a non-commissioner visitor that
-  // none of it would be saved until the very last click.
-  const nonCommissionerBanner = !isCommissioner && (
+  // none of it would be saved until the very last click. Only applies
+  // when there's no real draft to watch instead — see spectatorBanner.
+  const nonCommissionerBanner = !isCommissioner && !liveSession && (
     <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.yel,
       display: "flex", alignItems: "flex-start", gap: 10 }}>
       <AlertTriangle size={16} color={theme.yel} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -66,19 +122,33 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     </div>
   );
 
+  const spectatorBanner = !isCommissioner && liveSession && (
+    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.acc,
+      display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <Eye size={16} color={theme.acc} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
+        <b style={{ color: theme.acc }}>You're watching the live draft.</b> Only the commissioner
+        can make picks or control the timer — picks will appear here the moment they're made.
+      </div>
+    </div>
+  );
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
- 
+
+  // Local mock-draft timer only — a live session's countdown is derived
+  // (see computeLiveRemaining/liveNow above), never ticked via setState.
   useEffect(() => {
+    if (liveSession) return;
     if (timerActive && timer > 0) {
       timerRef.current = setTimeout(() => setTimer((t) => t - 1), 1000);
     } else { setTimerActive(false); }
     return () => clearTimeout(timerRef.current);
-  }, [timerActive, timer]);
- 
+  }, [timerActive, timer, liveSession]);
+
   const addMember = () => {
     if (!newMemberName.trim()) return;
     const id = newMemberName.trim().toLowerCase().replace(/\s+/g, "_");
@@ -91,7 +161,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     });
     setNewMemberName(""); setNewMemberFull("");
   };
- 
+
   const removeMember = (memberId) => {
     if (activeMembers.length <= 2) return;
     setActiveMembers((prev) => {
@@ -103,7 +173,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setDraftOrder((prev) => prev.filter((m) => m.id !== memberId));
     if (manualOrder) setManualOrder((prev) => prev.filter((m) => m.id !== memberId));
   };
- 
+
   const calculateOrder = () => {
     const actual = parseInt(actualResults);
     if (isNaN(actual)) return;
@@ -123,64 +193,162 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     track(EVENTS.DRAFT_ORDER_GENERATED, { method: "random", member_count: shuffled.length });
   };
 
-  const startDraft = () => {
+  // Commissioner: creates the shared live session so everyone else's
+  // Draft tab picks it up. Anyone else (and the commissioner too, if the
+  // write fails — a flaky network shouldn't eat their "Start Draft"
+  // click) falls through to the local-only mock draft, same as always.
+  const startDraft = async () => {
     if (draftOrder.length < 2) return;
     const so = generateSnakeOrder(draftOrder, DRAFT_CATEGORIES.length);
-    setSnakeOrder(so);
-    setPhase("draft");
-    setCurrentPick(0);
-    setTimer(TIMER_DURATION);
-    timeEvent(EVENTS.DRAFT_FINALIZED);
     track(EVENTS.DRAFT_STARTED, {
       member_count: draftOrder.length,
       round_count: DRAFT_CATEGORIES.length,
       total_picks: draftOrder.length * DRAFT_CATEGORIES.length,
     });
+    timeEvent(EVENTS.DRAFT_FINALIZED);
+    if (isCommissioner) {
+      const row = await startDraftSession({ seasonName, draftOrder, snakeOrder: so, timerDuration: TIMER_DURATION });
+      if (row) { setLiveSession(row); return; }
+    }
+    setSnakeOrder(so);
+    setPhase("draft");
+    setCurrentPick(0);
+    setTimer(TIMER_DURATION);
   };
- 
-  const isComplete = phase === "draft" && snakeOrder.length > 0 && currentPick >= snakeOrder.length;
-  const slot = !isComplete && snakeOrder[currentPick];
-  const member = slot ? draftOrder.find((m) => m.id === slot.memberId) : null;
- 
+
+  // ── Unified state: whichever source applies right now ──
+  // Everything below (rosters, history, the draft board, the on-the-clock
+  // card) reads from `effective` rather than caring whether it came from
+  // the live session or the local mock — see this file's "LIVE DRAFT"
+  // comment above. `canAct` is deliberately NOT just `isCommissioner`:
+  // a non-commissioner still has full control of their own private mock
+  // draft (unchanged, existing behavior) — it's only once a REAL draft is
+  // live that control narrows to the commissioner alone.
+  const effective = liveSession
+    ? {
+        draftOrder: liveSession.draft_order,
+        snakeOrder: liveSession.snake_order,
+        picks: liveSession.picks,
+        pickHistory: liveSession.pick_history,
+        currentPick: liveSession.current_pick,
+      }
+    : { draftOrder, snakeOrder, picks, pickHistory, currentPick };
+  const canAct = !liveSession || isCommissioner;
+  const displayTimerActive = liveSession ? !!liveSession.timer_active : timerActive;
+  const displayTimer = liveSession ? computeLiveRemaining(liveSession, liveNow) : timer;
+  const headerSeasonLabel = liveSession ? liveSession.season_name : seasonName;
+
+  const isComplete = effective.snakeOrder.length > 0 && effective.currentPick >= effective.snakeOrder.length;
+  const slot = !isComplete && effective.snakeOrder[effective.currentPick];
+  const member = slot ? effective.draftOrder.find((m) => m.id === slot.memberId) : null;
+
   const getRoster = (mid) =>
-    pickHistory.filter((h) => h.memberId === mid).map((h) => ({
+    effective.pickHistory.filter((h) => h.memberId === mid).map((h) => ({
       category: DRAFT_CATEGORIES.find((c) => c.id === h.categoryId), pick: h.selection,
     }));
- 
+
   const availCats = DRAFT_CATEGORIES.filter((cat) =>
-    !Object.keys(picks).some((k) => k.endsWith("-" + cat.id) && picks[k] && k.startsWith((member ? member.id : "") + "-"))
+    !Object.keys(effective.picks).some((k) => k.endsWith("-" + cat.id) && effective.picks[k] && k.startsWith((member ? member.id : "") + "-"))
   );
- 
-  const makePick = (catId, selection, isCustom) => {
+
+  const makePick = async (catId, selection, isCustom) => {
     if (!member) return;
     const key = member.id + "-" + catId;
-    setPicks((p) => ({ ...p, [key]: selection }));
-    setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
     track(EVENTS.DRAFT_PICK_MADE, {
-      pick_number: currentPick + 1,
-      round: snakeOrder[currentPick] ? snakeOrder[currentPick].round + 1 : null,
+      pick_number: effective.currentPick + 1,
+      round: effective.snakeOrder[effective.currentPick] ? effective.snakeOrder[effective.currentPick].round + 1 : null,
       category: DRAFT_ID_TO_CATEGORY_KEY[catId] || catId,
       member_id: member.id,
       is_custom_pick: !!isCustom,
-      seconds_remaining: timer,
-      is_timer_active: timerActive,
+      seconds_remaining: displayTimer,
+      is_timer_active: displayTimerActive,
     });
-    setCurrentPick((c) => c + 1);
+
+    if (liveSession) {
+      const newPicks = { ...liveSession.picks, [key]: selection };
+      const newHistory = [...liveSession.pick_history, { pick: liveSession.current_pick, memberId: member.id, categoryId: catId, selection }];
+      const newCurrentPick = liveSession.current_pick + 1;
+      const patch = {
+        picks: newPicks,
+        pick_history: newHistory,
+        current_pick: newCurrentPick,
+        status: newCurrentPick >= liveSession.snake_order.length ? "complete" : "drafting",
+        timer_active: false, timer_started_at: null, timer_remaining: TIMER_DURATION,
+      };
+      setLiveSession((s) => (s ? { ...s, ...patch } : s));
+      await saveDraftSession(patch);
+    } else {
+      setPicks((p) => ({ ...p, [key]: selection }));
+      setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
+      setCurrentPick((c) => c + 1);
+      setTimer(TIMER_DURATION); setTimerActive(false);
+    }
     setSelectedCategory(null); setSearchFilter(""); setCustomInput("");
-    setTimer(TIMER_DURATION); setTimerActive(false);
     if (isMobile) setMobilePanel("draft");
   };
- 
-  const undoPick = () => {
-    if (pickHistory.length === 0) return;
-    track(EVENTS.DRAFT_PICK_UNDONE, { pick_number: pickHistory.length });
-    const last = pickHistory[pickHistory.length - 1];
-    setPicks((p) => { const n = { ...p }; delete n[last.memberId + "-" + last.categoryId]; return n; });
-    setPickHistory((h) => h.slice(0, -1));
-    setCurrentPick((c) => c - 1);
+
+  const undoPick = async () => {
+    if (effective.pickHistory.length === 0) return;
+    track(EVENTS.DRAFT_PICK_UNDONE, { pick_number: effective.pickHistory.length });
+    const last = effective.pickHistory[effective.pickHistory.length - 1];
+    if (liveSession) {
+      const newPicks = { ...liveSession.picks };
+      delete newPicks[last.memberId + "-" + last.categoryId];
+      const patch = {
+        picks: newPicks,
+        pick_history: liveSession.pick_history.slice(0, -1),
+        current_pick: liveSession.current_pick - 1,
+        status: "drafting",
+      };
+      setLiveSession((s) => (s ? { ...s, ...patch } : s));
+      await saveDraftSession(patch);
+    } else {
+      setPicks((p) => { const n = { ...p }; delete n[last.memberId + "-" + last.categoryId]; return n; });
+      setPickHistory((h) => h.slice(0, -1));
+      setCurrentPick((c) => c - 1);
+    }
     setSelectedCategory(null);
   };
- 
+
+  const handleTimerStart = () => {
+    track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "start" });
+    if (liveSession) {
+      const remaining = computeLiveRemaining(liveSession, Date.now());
+      const patch = { timer_active: true, timer_started_at: new Date().toISOString(), timer_remaining: remaining };
+      setLiveSession((s) => (s ? { ...s, ...patch } : s));
+      saveDraftSession(patch);
+    } else {
+      setTimerActive(true);
+    }
+  };
+  const handleTimerPause = () => {
+    track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "pause" });
+    if (liveSession) {
+      const remaining = computeLiveRemaining(liveSession, Date.now());
+      const patch = { timer_active: false, timer_started_at: null, timer_remaining: remaining };
+      setLiveSession((s) => (s ? { ...s, ...patch } : s));
+      saveDraftSession(patch);
+    } else {
+      setTimerActive(false);
+    }
+  };
+  const handleTimerReset = () => {
+    track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "reset" });
+    if (liveSession) {
+      const patch = { timer_active: false, timer_started_at: null, timer_remaining: TIMER_DURATION };
+      setLiveSession((s) => (s ? { ...s, ...patch } : s));
+      saveDraftSession(patch);
+    } else {
+      setTimer(TIMER_DURATION); setTimerActive(false);
+    }
+  };
+
+  const cancelDraft = async () => {
+    await deleteDraftSession();
+    setLiveSession(null);
+    setShowCancelModal(false);
+  };
+
   // ═══════════════════════════════════════════════════════════════
   // FINALIZE — saves everything to Supabase then calls onFinalize
   // ═══════════════════════════════════════════════════════════════
@@ -188,16 +356,16 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     if (!isCommissioner) return;
     setFinalizing(true);
     setFinalizeError("");
- 
+
     const yearNum = parseInt(seasonName) || new Date().getFullYear();
- 
+
     try {
       // ── 0. Pre-flight: check if picks already exist for this year ──
       const { count, error: checkErr } = await supabase
         .from("picks")
         .select("id", { count: "exact", head: true })
         .eq("season_year", yearNum);
- 
+
       if (checkErr) {
         console.warn("Could not check existing picks:", checkErr.message);
       } else if (count && count > 0) {
@@ -207,57 +375,57 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           `or change the season year to ${yearNum + 1}.`
         );
       }
- 
+
       // ── 1. Build the draft board JSONB ──
       // For each member, record which Supabase category key they picked in each round.
       // pickHistory is in global chronological order. snakeOrder tells us which member
       // was on the clock for each pick. We rebuild per-member round arrays.
       const memberRoundCats = {};
-      draftOrder.forEach((m) => { memberRoundCats[m.id] = []; });
- 
-      snakeOrder.forEach((slot, idx) => {
-        const histEntry = pickHistory[idx];
+      effective.draftOrder.forEach((m) => { memberRoundCats[m.id] = []; });
+
+      effective.snakeOrder.forEach((slot, idx) => {
+        const histEntry = effective.pickHistory[idx];
         if (histEntry && histEntry.memberId === slot.memberId) {
           const catKey = DRAFT_ID_TO_CATEGORY_KEY[histEntry.categoryId] || histEntry.categoryId;
           memberRoundCats[slot.memberId].push(catKey);
         }
       });
- 
+
       const draftBoardData = {
-        memberOrder: draftOrder.map((m) => m.id),
+        memberOrder: effective.draftOrder.map((m) => m.id),
         board: memberRoundCats,
       };
- 
+
       // ── 2. Ensure all draft members exist in the members table ──
       // This handles new members added during draft setup (e.g. Scott in 2026).
       // Uses upsert so existing members are untouched.
-      const memberRows = draftOrder.map((m) => ({
+      const memberRows = effective.draftOrder.map((m) => ({
         id: m.id,
         name: m.name,
         full_name: m.full || m.name,
         color: MEMBER_COLORS[m.id] || "#64748b",
       }));
- 
+
       const { error: memberErr } = await supabase
         .from("members")
         .upsert(memberRows, { onConflict: "id" });
- 
+
       if (memberErr) {
         console.warn("Failed to upsert members:", memberErr.message);
         // Non-fatal — existing members will still work, only new members might fail on pick insert
       }
- 
+
       // ── 3. Archive the current active season ──
       const { error: archiveErr } = await supabase
         .from("seasons")
         .update({ status: "archived" })
         .eq("status", "active");
- 
+
       if (archiveErr) {
         console.warn("Failed to archive current season:", archiveErr.message);
         // Non-fatal — continue even if there's no active season to archive
       }
- 
+
       // ── 4. Create (or update) the new season row ──
       // Use upsert so it works whether the row already exists or not.
       // We do NOT overwrite locks — if the row already exists with locks, keep them.
@@ -266,7 +434,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         .select("locks")
         .eq("year", yearNum)
         .maybeSingle();
- 
+
       const { error: seasonErr } = await supabase
         .from("seasons")
         .upsert({
@@ -277,15 +445,15 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           draft_board: draftBoardData,
           locks: existingSeason?.locks || {},
         }, { onConflict: "year" });
- 
+
       if (seasonErr) throw new Error("Failed to create season: " + seasonErr.message);
- 
+
       // ── 5. Insert all picks (one row per member per category) ──
       const pickRows = [];
       CATEGORY_ORDER.forEach((catKey) => {
         const catId = CATEGORY_KEY_TO_ID[catKey];
-        draftOrder.forEach((m) => {
-          const selection = picks[m.id + "-" + catId] || "—";
+        effective.draftOrder.forEach((m) => {
+          const selection = effective.picks[m.id + "-" + catId] || "—";
           pickRows.push({
             season_year: yearNum,
             member_id: m.id,
@@ -297,43 +465,50 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           });
         });
       });
- 
+
       const { error: pickErr } = await supabase
         .from("picks")
         .insert(pickRows);
- 
+
       if (pickErr) throw new Error("Failed to insert picks: " + pickErr.message);
- 
+
       console.log(`✅ Season ${yearNum} saved to Supabase: ${pickRows.length} picks + draft board`);
-      track(EVENTS.DRAFT_FINALIZED, { season_year: yearNum, member_count: draftOrder.length, total_picks: pickRows.length });
- 
+      track(EVENTS.DRAFT_FINALIZED, { season_year: yearNum, member_count: effective.draftOrder.length, total_picks: pickRows.length });
+
+      // The live session (if any) is done its job — nothing left for
+      // anyone to watch, and deleting it is what lets the next season's
+      // draft start fresh instead of resuming this one.
+      if (liveSession) {
+        await deleteDraftSession();
+      }
+
       // ── 6. Build local season object and call onFinalize ──
       // This updates App.jsx state so Scoreboard shows the new season immediately.
       // On next refresh, App.jsx will re-fetch from Supabase anyway.
       const categories = {};
       CATEGORY_ORDER.forEach((catKey) => {
         const catId = CATEGORY_KEY_TO_ID[catKey];
-        categories[catKey] = draftOrder.map((m) => ({
+        categories[catKey] = effective.draftOrder.map((m) => ({
           owner: m.name,
-          pick: picks[m.id + "-" + catId] || "—",
+          pick: effective.picks[m.id + "-" + catId] || "—",
           base: 0,
           bonus: 0,
           total: 0,
         }));
       });
- 
+
       onFinalize({
         year: yearNum,
         name: "Fantasy Life " + seasonName,
         draftDate: new Date().toISOString(),
-        memberCount: draftOrder.length,
-        members: draftOrder.map((m) => ({ id: m.id, name: m.name, full: m.full })),
+        memberCount: effective.draftOrder.length,
+        members: effective.draftOrder.map((m) => ({ id: m.id, name: m.name, full: m.full })),
         categories,
         detailedData: {},
         locks: existingSeason?.locks || {},
         status: "active",
       });
- 
+
       setShowFinalizeModal(false);
     } catch (err) {
       console.error("Finalize error:", err);
@@ -343,20 +518,29 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       setFinalizing(false);
     }
   };
- 
+
   const exportCSV = () => {
-    track(EVENTS.DRAFT_CSV_EXPORTED, { member_count: draftOrder.length });
+    track(EVENTS.DRAFT_CSV_EXPORTED, { member_count: effective.draftOrder.length });
     const lines = ["Member," + DRAFT_CATEGORIES.map((c) => c.name).join(",")];
-    draftOrder.forEach((m) => {
-      lines.push(m.name + "," + DRAFT_CATEGORIES.map((c) => '"' + (picks[m.id + "-" + c.id] || "") + '"').join(","));
+    effective.draftOrder.forEach((m) => {
+      lines.push(m.name + "," + DRAFT_CATEGORIES.map((c) => '"' + (effective.picks[m.id + "-" + c.id] || "") + '"').join(","));
     });
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = "draft_" + seasonName + ".csv"; a.click();
   };
- 
-  // ===== SETUP PHASE =====
-  if (phase === "setup") {
+
+  // ===== Still checking whether a live draft exists =====
+  if (liveSession === undefined) {
+    return (
+      <div style={{ maxWidth: 600, margin: "40px auto", textAlign: "center", color: theme.dim, fontSize: 13 }}>
+        Checking for a live draft...
+      </div>
+    );
+  }
+
+  // ===== SETUP PHASE (local mock only — a live draft skips straight to the draft phase below) =====
+  if (phase === "setup" && !liveSession) {
     return (
       <div style={{ maxWidth: 600, margin: "0 auto" }}>
         <div style={{ ...cardStyle, marginBottom: 16, textAlign: "center" }}>
@@ -412,7 +596,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             </div>
           )}
         </div>
- 
+
         {/* Google Results */}
         <div style={{ ...cardStyle, marginBottom: 16 }}>
           <label style={{ fontSize: 13, fontWeight: 600, color: theme.mut, display: "block", marginBottom: 6 }}>Secret Word/Phrase</label>
@@ -424,7 +608,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               placeholder="e.g. 1234567" type="number" style={inputStyle} />
           </div>
         </div>
- 
+
         {/* Guesses — hidden while Manage is open so the member list isn't
             shown twice in a row the user has to scroll past */}
         {!showMemberMgmt && (
@@ -442,7 +626,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           </div>
         </div>
         )}
- 
+
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           <button onClick={calculateOrder} style={{ ...buttonStyle(), width: "100%" }}>Calculate Draft Order</button>
           <button onClick={randomizeOrder}
@@ -451,7 +635,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             <Shuffle size={14} /> Or Skip & Randomize Order
           </button>
         </div>
- 
+
         {draftOrder.length > 0 && (
           <div style={{ ...cardStyle, marginBottom: 16 }}>
             <h3 style={{ margin: "0 0 8px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
@@ -485,7 +669,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       </div>
     );
   }
- 
+
   // ===== DRAFT PHASE =====
   // Mobile panel toggle bar
   const panelToggle = isMobile && (
@@ -507,12 +691,12 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       ))}
     </div>
   );
- 
+
   // Roster panel content
   const rosterPanel = (
     <div style={{ width: isMobile ? "100%" : 200, flexShrink: 0 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: theme.mut, marginBottom: 8 }}>ROSTERS</div>
-      {draftOrder.map((m) => {
+      {effective.draftOrder.map((m) => {
         const roster = getRoster(m.id);
         const isOnClock = !isComplete && member && m.id === member.id;
         return (
@@ -541,14 +725,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       })}
     </div>
   );
- 
+
   // History panel content
   const historyPanel = (
     <div style={{ width: isMobile ? "100%" : 200, flexShrink: 0 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: theme.mut, marginBottom: 8 }}>PICK HISTORY</div>
       <div style={{ maxHeight: isMobile ? 400 : "calc(100vh - 200px)", overflowY: "auto" }}>
-        {[...pickHistory].reverse().map((h, i) => {
-          const mem = draftOrder.find((m) => m.id === h.memberId);
+        {[...effective.pickHistory].reverse().map((h, i) => {
+          const mem = effective.draftOrder.find((m) => m.id === h.memberId);
           const cat = DRAFT_CATEGORIES.find((c) => c.id === h.categoryId);
           return (
             <div key={i} style={{ ...cardStyle, padding: "8px 10px", marginBottom: 4 }}>
@@ -566,7 +750,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       </div>
     </div>
   );
- 
+
   // Main draft area
   const draftMainArea = (
     <div style={{ flex: 1, minWidth: 0 }}>
@@ -578,13 +762,13 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             </div>
             <h2 style={{ margin: "0 0 8px", fontSize: isMobile ? 20 : 24 }}>Draft Complete!</h2>
             <p style={{ color: theme.mut, fontSize: 13, marginBottom: 16 }}>
-              {draftOrder.length} members · Max base: {draftOrder.length}
+              {effective.draftOrder.length} members · Max base: {effective.draftOrder.length}
             </p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", marginBottom: 16,
               flexDirection: isMobile ? "column" : "row" }}>
               <label style={{ fontSize: 14, color: theme.mut, fontWeight: 600 }}>Season:</label>
-              <input value={seasonName} onChange={(e) => setSeasonName(e.target.value)}
-                style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700 }} />
+              <input value={seasonName} onChange={(e) => setSeasonName(e.target.value)} disabled={!canAct}
+                style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700, opacity: canAct ? 1 : 0.6 }} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
               <button onClick={() => { track(EVENTS.DRAFT_FINALIZE_MODAL_OPENED, { season_name: seasonName }); setShowFinalizeModal(true); }} disabled={!isCommissioner}
@@ -602,7 +786,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               </div>
             )}
           </div>
- 
+
           {/* Finalize confirmation modal */}
           {showFinalizeModal && (
             <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
@@ -613,7 +797,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                 </h3>
                 <div style={{ fontSize: 13, color: theme.mut, lineHeight: 1.7, marginBottom: 16 }}>
                   This will archive the current season and launch <strong>{seasonName}</strong> as the new active season.
-                  All {draftOrder.length} members × 15 categories = {draftOrder.length * 15} picks will be saved to Supabase.
+                  All {effective.draftOrder.length} members × 15 categories = {effective.draftOrder.length * 15} picks will be saved to Supabase.
                   Scores start at 0. The draft board will be saved for the Recap tab.
                 </div>
                 <div style={{ ...inputStyle, marginBottom: 8, opacity: 0.7 }}>
@@ -647,7 +831,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             border: `2px solid ${MEMBER_COLORS[member ? member.id : ""] || theme.acc}` }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, textTransform: "uppercase",
               letterSpacing: 1, marginBottom: isMobile ? 4 : 8 }}>
-              On The Clock · Pick #{currentPick + 1}
+              On The Clock · Pick #{effective.currentPick + 1}
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
               marginBottom: isMobile ? 8 : 12 }}>
@@ -658,104 +842,153 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               </span>
             </div>
             <div style={{ fontSize: isMobile ? 36 : 48, fontWeight: 800, fontFamily: "monospace",
-              color: timer <= 15 ? theme.red : timer <= 30 ? theme.yel : theme.txt, marginBottom: 8 }}>
-              {Math.floor(timer / 60)}:{String(timer % 60).padStart(2, "0")}
+              color: displayTimer <= 15 ? theme.red : displayTimer <= 30 ? theme.yel : theme.txt, marginBottom: 8 }}>
+              {Math.floor(displayTimer / 60)}:{String(displayTimer % 60).padStart(2, "0")}
             </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-              {timerActive
-                ? <button onClick={() => { track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "pause" }); setTimerActive(false); }} style={buttonStyle(theme.yel)}>⏸ Pause</button>
-                : <button onClick={() => { track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "start" }); setTimerActive(true); }} style={buttonStyle(theme.grn)}>▶ Start</button>}
-              <button onClick={() => { track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "reset" }); setTimer(TIMER_DURATION); setTimerActive(false); }}
-                style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↻ Reset</button>
-              {pickHistory.length > 0 && (
-                <button onClick={undoPick}
-                  style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↩ Undo</button>
-              )}
-            </div>
+            {canAct && (
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                {displayTimerActive
+                  ? <button onClick={handleTimerPause} style={buttonStyle(theme.yel)}>⏸ Pause</button>
+                  : <button onClick={handleTimerStart} style={buttonStyle(theme.grn)}>▶ Start</button>}
+                <button onClick={handleTimerReset}
+                  style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↻ Reset</button>
+                {effective.pickHistory.length > 0 && (
+                  <button onClick={undoPick}
+                    style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↩ Undo</button>
+                )}
+              </div>
+            )}
           </div>
- 
-          {/* Category selection */}
-          {!selectedCategory && (
-            <div style={cardStyle}>
-              <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Step 1: Category ({availCats.length} left)</h3>
-              <div style={{ display: "grid",
-                gridTemplateColumns: isMobile ? "repeat(auto-fill, minmax(120px, 1fr))" : "repeat(auto-fill, minmax(150px, 1fr))",
-                gap: 8 }}>
-                {availCats.map((cat) => (
-                  <button key={cat.id}
-                    onClick={() => { setSelectedCategory(cat); setSearchFilter(""); setCustomInput(""); }}
-                    style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
-                      textAlign: "left", padding: isMobile ? 10 : 12, fontSize: isMobile ? 12 : 13 }}>
-                    <span style={{ fontSize: isMobile ? 14 : 18 }}>{cat.icon}</span> {cat.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
- 
-          {/* Pick selection */}
-          {selectedCategory && (
-            <div style={cardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ margin: 0, fontSize: 16 }}>{selectedCategory.icon} {selectedCategory.name}</h3>
-                <button onClick={() => setSelectedCategory(null)}
-                  style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>← Back</button>
-              </div>
-              <input value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)}
-                placeholder="Search..." style={{ ...inputStyle, marginBottom: 8 }} />
-              <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-                {(PICK_OPTIONS[selectedCategory.id] || ["Custom..."])
-                  .filter((opt) => opt.toLowerCase().includes(searchFilter.toLowerCase()))
-                  .filter((opt) => !Object.values(picks).includes(opt))
-                  .map((opt) => {
-                    if (opt === "Custom...") {
-                      return (
-                        <div key="custom" style={{ display: "flex", gap: 8 }}>
-                          <input value={customInput} onChange={(e) => setCustomInput(e.target.value)}
-                            placeholder="Type custom pick..." style={{ ...inputStyle, flex: 1 }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
-                            }} />
-                          <button onClick={() => {
-                            if (customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
-                          }} style={{ ...buttonStyle(theme.grn), padding: "8px 16px" }}>Pick</button>
-                        </div>
-                      );
-                    }
-                    return (
-                      <button key={opt} onClick={() => makePick(selectedCategory.id, opt, false)}
+
+          {/* Category selection — commissioner (or local mock) only; a
+              spectator watching a live draft has nothing to pick */}
+          {canAct ? (
+            <>
+              {!selectedCategory && (
+                <div style={cardStyle}>
+                  <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Step 1: Category ({availCats.length} left)</h3>
+                  <div style={{ display: "grid",
+                    gridTemplateColumns: isMobile ? "repeat(auto-fill, minmax(120px, 1fr))" : "repeat(auto-fill, minmax(150px, 1fr))",
+                    gap: 8 }}>
+                    {availCats.map((cat) => (
+                      <button key={cat.id}
+                        onClick={() => { setSelectedCategory(cat); setSearchFilter(""); setCustomInput(""); }}
                         style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
-                          textAlign: "left", padding: "8px 12px" }}>
-                        {opt}
+                          textAlign: "left", padding: isMobile ? 10 : 12, fontSize: isMobile ? 12 : 13 }}>
+                        <span style={{ fontSize: isMobile ? 14 : 18 }}>{cat.icon}</span> {cat.name}
                       </button>
-                    );
-                  })}
-              </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedCategory && (
+                <div style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <h3 style={{ margin: 0, fontSize: 16 }}>{selectedCategory.icon} {selectedCategory.name}</h3>
+                    <button onClick={() => setSelectedCategory(null)}
+                      style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>← Back</button>
+                  </div>
+                  <input value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)}
+                    placeholder="Search..." style={{ ...inputStyle, marginBottom: 8 }} />
+                  <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                    {(PICK_OPTIONS[selectedCategory.id] || ["Custom..."])
+                      .filter((opt) => opt.toLowerCase().includes(searchFilter.toLowerCase()))
+                      .filter((opt) => !Object.values(effective.picks).includes(opt))
+                      .map((opt) => {
+                        if (opt === "Custom...") {
+                          return (
+                            <div key="custom" style={{ display: "flex", gap: 8 }}>
+                              <input value={customInput} onChange={(e) => setCustomInput(e.target.value)}
+                                placeholder="Type custom pick..." style={{ ...inputStyle, flex: 1 }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
+                                }} />
+                              <button onClick={() => {
+                                if (customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
+                              }} style={{ ...buttonStyle(theme.grn), padding: "8px 16px" }}>Pick</button>
+                            </div>
+                          );
+                        }
+                        return (
+                          <button key={opt} onClick={() => makePick(selectedCategory.id, opt, false)}
+                            style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
+                              textAlign: "left", padding: "8px 12px" }}>
+                            {opt}
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ ...cardStyle, textAlign: "center", color: theme.dim, fontSize: 13, padding: 20 }}>
+              Waiting for {member ? member.name : "the next member"} to pick...
             </div>
           )}
         </div>
       )}
     </div>
   );
- 
+
   return (
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20, display: "flex", alignItems: "center", gap: 8 }}>
-          <Target size={isMobile ? 17 : 20} /> {seasonName} Draft
+          <Target size={isMobile ? 17 : 20} /> {headerSeasonLabel} Draft
+          {liveSession && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 800,
+              color: theme.red, border: `1px solid ${theme.red}`, borderRadius: 999, padding: "2px 8px",
+              textTransform: "uppercase", letterSpacing: 0.5 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme.red }} /> Live
+            </span>
+          )}
         </h2>
-        {!isMobile && (
-          <button onClick={() => { track(EVENTS.DRAFT_HISTORY_PANEL_TOGGLED, { is_visible: !showHistory }); setShowHistory(!showHistory); }}
-            style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>
-            {showHistory ? "Hide History" : "History"}
-          </button>
-        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          {liveSession && isCommissioner && (
+            <button onClick={() => setShowCancelModal(true)}
+              style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}`, color: theme.red,
+                display: "flex", alignItems: "center", gap: 5 }}>
+              <XCircle size={13} /> Cancel Draft
+            </button>
+          )}
+          {!isMobile && (
+            <button onClick={() => { track(EVENTS.DRAFT_HISTORY_PANEL_TOGGLED, { is_visible: !showHistory }); setShowHistory(!showHistory); }}
+              style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>
+              {showHistory ? "Hide History" : "History"}
+            </button>
+          )}
+        </div>
       </div>
 
       {nonCommissionerBanner}
+      {spectatorBanner}
+
+      {/* Cancel-draft confirmation modal */}
+      {showCancelModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
+          <div style={{ ...cardStyle, maxWidth: 440, width: "100%", padding: 24 }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 18, color: theme.red, display: "flex", alignItems: "center", gap: 8 }}>
+              <AlertTriangle size={18} /> Cancel this live draft?
+            </h3>
+            <div style={{ fontSize: 13, color: theme.mut, lineHeight: 1.7, marginBottom: 16 }}>
+              Everyone watching will lose the live draft — picks made so far are not saved anywhere else.
+              You'll start over from setup.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setShowCancelModal(false)}
+                style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>Keep drafting</button>
+              <button onClick={cancelDraft}
+                style={{ ...buttonStyle(theme.red), flex: 2 }}>Cancel draft</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {panelToggle}
- 
+
       {isMobile ? (
         <div>
           {mobilePanel === "draft" && draftMainArea}
@@ -769,7 +1002,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           {showHistory && historyPanel}
         </div>
       )}
- 
+
       {/* Draft Board */}
       <div style={{ marginTop: 16, ...cardStyle, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
@@ -781,7 +1014,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               <th style={{ padding: isMobile ? "4px 6px" : "6px 8px", textAlign: "left", color: theme.mut,
                 borderBottom: `1px solid ${theme.bdr}`, position: "sticky", left: 0,
                 background: theme.card, zIndex: 2, fontSize: isMobile ? 9 : 11 }}>Category</th>
-              {draftOrder.map((m) => (
+              {effective.draftOrder.map((m) => (
                 <th key={m.id} style={{ padding: isMobile ? "4px 4px" : "6px 8px", textAlign: "center",
                   color: MEMBER_COLORS[m.id], borderBottom: `1px solid ${theme.bdr}`,
                   fontWeight: 700, minWidth: isMobile ? 60 : 80, fontSize: isMobile ? 9 : 11 }}>
@@ -798,8 +1031,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                   background: theme.card, whiteSpace: "nowrap", zIndex: 1, fontSize: isMobile ? 9 : 11 }}>
                   {cat.icon} {isMobile ? cat.name.slice(0, 8) : cat.name}
                 </td>
-                {draftOrder.map((m) => {
-                  const v = picks[m.id + "-" + cat.id];
+                {effective.draftOrder.map((m) => {
+                  const v = effective.picks[m.id + "-" + cat.id];
                   return (
                     <td key={m.id} style={{ padding: isMobile ? "4px 4px" : "6px 8px",
                       borderBottom: `1px solid ${theme.bdr}`,
