@@ -132,6 +132,21 @@ of N arbitrary device clocks. The same trigger also takes over
 `updated_at` for the same reason — `saveDraftSession()` no longer sets
 either field itself.
 
+**Follow-up, same root cause**: the fix above still had the client
+optimistically guessing its own `timer_started_at` for the brief window
+before the server-confirmed row arrives — which visibly glitched (a
+report of "counts up 2 seconds, then jumps to 2:00 and counts down").
+The server's stamped value is always a little LATER than the client's
+own guess (the trigger fires once the write actually commits, not when
+the browser started sending it), so replacing one with the other made
+the displayed time visibly jump forward before resuming its countdown.
+Fixed by leaving `timer_started_at` `null` in every optimistic patch
+(`makePick`/`handleTimerStart`/`handleTimerReset`) instead of guessing —
+`computeLiveRemaining()` already falls back to the flat, correct
+`timer_remaining` (not ticking) whenever `timer_started_at` is unset, so
+there's one clean transition into the countdown once the real server
+timestamp lands, not a tick-then-correct glitch.
+
 ## Access
 
 - **Read**: public, same as `seasons`/`members`/`picks` — no login

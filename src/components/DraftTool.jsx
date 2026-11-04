@@ -323,16 +323,21 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           status: newCurrentPick >= liveSession.snake_order.length ? "complete" : "drafting",
           // Keeps running for the next person instead of stopping —
           // per live-draft feedback, the commissioner shouldn't have to
-          // click Start after every single pick. The persisted
-          // timer_started_at always ends up being the server's own
-          // now() (phase16's trigger) regardless of what's sent here —
-          // but the optimistic merge below still needs a fresh value of
-          // its own, same reasoning as handleTimerStart/Reset: without
-          // it, this browser's own next render would compute the new
-          // person's remaining time using the PREVIOUS person's
-          // timer_started_at, showing something close to 0:00 until the
-          // realtime-triggered refetch corrects it a moment later.
-          timer_active: true, timer_started_at: new Date().toISOString(), timer_remaining: TIMER_DURATION,
+          // click Start after every single pick. timer_started_at is
+          // deliberately null here, not a client guess: an earlier
+          // version set `new Date().toISOString()` optimistically, which
+          // visibly glitched — this browser's own clock would start
+          // ticking down from ITS guess immediately, then the
+          // server-confirmed value (always a little LATER, since the
+          // trigger stamps now() only once the write actually commits)
+          // would replace it moments later and the displayed time would
+          // visibly jump forward before resuming its countdown. With
+          // timer_started_at left null, computeLiveRemaining() (below)
+          // falls back to showing the flat, correct timer_remaining —
+          // not ticking at all — until the real server timestamp arrives
+          // moments later, so there's one clean transition into the
+          // countdown instead of a tick-then-correct glitch.
+          timer_active: true, timer_started_at: null, timer_remaining: TIMER_DURATION,
         };
         setLiveSession((s) => (s ? { ...s, ...patch } : s));
         await saveDraftSession(patch);
@@ -374,11 +379,11 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "start" });
     if (liveSession) {
       const remaining = computeLiveRemaining(liveSession, Date.now());
-      // timer_started_at here is only this browser's own optimistic guess
-      // for its own immediate re-render — the persisted value always
-      // ends up being the server's now() instead (phase16's trigger),
-      // which is what every OTHER viewer's countdown is computed from.
-      const patch = { timer_active: true, timer_started_at: new Date().toISOString(), timer_remaining: remaining };
+      // timer_started_at left null (not a client guess) so this
+      // browser shows the flat `remaining` value, not yet ticking,
+      // until the server-confirmed timestamp arrives — see the longer
+      // comment on this same pattern in makePick() above.
+      const patch = { timer_active: true, timer_started_at: null, timer_remaining: remaining };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
       saveDraftSession(patch);
     } else {
@@ -401,7 +406,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     if (liveSession) {
       // Gives a fresh 2:00 and keeps it running — same "shouldn't have
       // to restart" reasoning as the auto-restart-on-pick behavior above.
-      const patch = { timer_active: true, timer_started_at: new Date().toISOString(), timer_remaining: TIMER_DURATION };
+      // timer_started_at left null for the same no-glitch reason too.
+      const patch = { timer_active: true, timer_started_at: null, timer_remaining: TIMER_DURATION };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
       saveDraftSession(patch);
     } else {
