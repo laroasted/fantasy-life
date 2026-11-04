@@ -323,9 +323,16 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           status: newCurrentPick >= liveSession.snake_order.length ? "complete" : "drafting",
           // Keeps running for the next person instead of stopping —
           // per live-draft feedback, the commissioner shouldn't have to
-          // click Start after every single pick. timer_started_at isn't
-          // set here; the server trigger (phase16) stamps it.
-          timer_active: true, timer_remaining: TIMER_DURATION,
+          // click Start after every single pick. The persisted
+          // timer_started_at always ends up being the server's own
+          // now() (phase16's trigger) regardless of what's sent here —
+          // but the optimistic merge below still needs a fresh value of
+          // its own, same reasoning as handleTimerStart/Reset: without
+          // it, this browser's own next render would compute the new
+          // person's remaining time using the PREVIOUS person's
+          // timer_started_at, showing something close to 0:00 until the
+          // realtime-triggered refetch corrects it a moment later.
+          timer_active: true, timer_started_at: new Date().toISOString(), timer_remaining: TIMER_DURATION,
         };
         setLiveSession((s) => (s ? { ...s, ...patch } : s));
         await saveDraftSession(patch);
