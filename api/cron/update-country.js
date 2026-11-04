@@ -201,11 +201,24 @@ function matchOlympicMedals(pickName, medalData) {
  
 async function fetchIMFGdpData(year) {
   try {
+    // IMF's site sits behind bot-detection (confirmed live: a bare
+    // "Mozilla/5.0" User-Agent gets HTTP 403, a full realistic browser
+    // fingerprint gets 200) — these headers mimic an actual Chrome request,
+    // not a trivial placeholder.
     var res = await fetch('https://www.imf.org/external/datamapper/api/v2/NGDP_RPCH', {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.imf.org/external/datamapper/NGDP_RPCH@WEO'
+      }
     });
     if (!res.ok) {
-      console.error('  IMF DataMapper fetch failed: HTTP ' + res.status);
+      var bodySnippet = '';
+      try { bodySnippet = (await res.text()).slice(0, 200); } catch (e) {}
+      console.error('  IMF DataMapper fetch failed: HTTP ' + res.status +
+        (bodySnippet ? ' — ' + bodySnippet : ''));
       return null;
     }
     var json = await res.json();
