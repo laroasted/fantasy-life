@@ -38,6 +38,19 @@ function computeLiveRemaining(session, nowMs) {
   return Math.max(0, session.timer_remaining - elapsed);
 }
 
+// Every live write below applies its patch to local state optimistically
+// before the Supabase round-trip even starts. If that write then fails
+// (network blip, RLS hiccup), the optimistic guess is left standing with
+// nothing to ever correct it — no successful write means no Realtime
+// notification triggers the usual re-fetch. Worst case for a timer patch
+// specifically: a clock shown as running but frozen at its starting
+// value forever. Called after any failed saveDraftSession() to discard
+// the bad guess and resync to whatever the server actually has.
+async function reconcileAfterFailedSave(setLiveSession) {
+  const real = await fetchDraftSession();
+  setLiveSession(real);
+}
+
 export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail, currentSeasonYear, currentSeasonMembers }) {
   const [phase, setPhase] = useState("setup");
   const [draftOrder, setDraftOrder] = useState([]);
@@ -340,7 +353,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           timer_active: true, timer_started_at: null, timer_remaining: TIMER_DURATION,
         };
         setLiveSession((s) => (s ? { ...s, ...patch } : s));
-        await saveDraftSession(patch);
+        if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
       } else {
         setPicks((p) => ({ ...p, [key]: selection }));
         setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
@@ -366,7 +379,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         status: "drafting",
       };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      await saveDraftSession(patch);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setPicks((p) => { const n = { ...p }; delete n[last.memberId + "-" + last.categoryId]; return n; });
       setPickHistory((h) => h.slice(0, -1));
@@ -375,7 +388,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     setSelectedCategory(null);
   };
 
-  const handleTimerStart = () => {
+  const handleTimerStart = async () => {
     track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "start" });
     if (liveSession) {
       const remaining = computeLiveRemaining(liveSession, Date.now());
@@ -385,23 +398,23 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       // comment on this same pattern in makePick() above.
       const patch = { timer_active: true, timer_started_at: null, timer_remaining: remaining };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      saveDraftSession(patch);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setTimerActive(true);
     }
   };
-  const handleTimerPause = () => {
+  const handleTimerPause = async () => {
     track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "pause" });
     if (liveSession) {
       const remaining = computeLiveRemaining(liveSession, Date.now());
       const patch = { timer_active: false, timer_started_at: null, timer_remaining: remaining };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      saveDraftSession(patch);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setTimerActive(false);
     }
   };
-  const handleTimerReset = () => {
+  const handleTimerReset = async () => {
     track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "reset" });
     if (liveSession) {
       // Gives a fresh 2:00 and keeps it running — same "shouldn't have
@@ -409,7 +422,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       // timer_started_at left null for the same no-glitch reason too.
       const patch = { timer_active: true, timer_started_at: null, timer_remaining: TIMER_DURATION };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      saveDraftSession(patch);
+      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
     } else {
       setTimer(TIMER_DURATION); setTimerActive(true);
     }
