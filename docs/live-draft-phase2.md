@@ -147,6 +147,54 @@ Fixed by leaving `timer_started_at` `null` in every optimistic patch
 there's one clean transition into the countdown once the real server
 timestamp lands, not a tick-then-correct glitch.
 
+**Second follow-up, smaller residual version of the same root cause**:
+after the fix above, a smaller ~2-second version of the exact same
+symptom (briefly over 2:00, then settling) was still reported. Cause:
+once the server-confirmed row lands, `computeLiveRemaining()` measures
+elapsed time as `Date.now() - timer_started_at` using *this device's
+own* clock — and this device's clock doesn't have to agree with the
+database server's by more than a second or two for that to show up as
+exactly this kind of brief overshoot. This is the smaller, residual
+skew source called out as a known remaining risk when phase16 shipped
+(directly above: "the remaining clock-skew exposure — one viewer's own
+device clock vs. the database's — is far smaller and far more
+consistent in practice than comparing two arbitrary client clocks to
+each other").
+
+Fixed with an NTP-style clock-offset correction, client-side plus one
+tiny new RPC (`server_now()`, `phase17_server_time_rpc.sql`) that just
+returns the database's `now()`.
+
+**First attempt, and why it was wrong**: the first version of this fix
+computed the offset from `draft_sessions.updated_at` — reasoning that
+since the phase16 trigger stamps it with the server's `now()` on every
+write, it's a free, already-available server timestamp. Codex caught
+the real bug in that: `updated_at` is only the time of the *last
+write*, not "now". A viewer who opens or refreshes the Draft tab
+mid-countdown, with no write happening right then, computed an offset
+of roughly *(last write's timestamp) − (now)* — which is approximately
+*minus how long the timer's already been running*, not this device's
+small genuine clock skew. That made `computeLiveRemaining()`
+drastically undercount elapsed time, so the countdown visibly jumped
+*backward* to its value as of the last write before correcting —
+exactly the kind of regression this whole section exists to prevent.
+
+**Fix**: ask the server directly instead of inferring its clock from
+whenever a row happened to last be written. `server_now()` is a plain
+`select now()` RPC, callable by anyone (same public-read posture as the
+rest of this table). `fetchServerClockOffset()` (`storage.js`) calls it,
+splitting the round-trip evenly — the reply is treated as simultaneous
+with the midpoint between when the request was sent and the response
+was seen, a better estimate than either endpoint alone — and returns
+`server time − local time`. `DraftTool.jsx` calibrates
+`clockOffsetRef.current` from this once on mount and every 60 seconds
+after, for as long as the Draft tab stays open (a ref, not state,
+since updating it should never itself trigger a render — it only needs
+to be current by the next tick). Every place that feeds a raw
+`Date.now()`/`liveNow` into `computeLiveRemaining()` adds this offset
+first, so elapsed time is measured against an estimate of the server's
+actual clock, independent of whenever the row itself was last touched.
+
 ## Access
 
 - **Read**: public, same as `seasons`/`members`/`picks` — no login

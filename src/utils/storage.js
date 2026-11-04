@@ -685,6 +685,38 @@ try {
 }
 
 /**
+* How far ahead or behind this device's own clock is from the database
+* server's, in ms (server minus local) — null if the round-trip failed.
+* Used to correct the live draft timer's countdown (see
+* docs/live-draft-phase2.md's "second follow-up" section and
+* supabase/phase17_server_time_rpc.sql): draft_sessions.updated_at is
+* only the time of the LAST WRITE, not "now", so it can't stand in for
+* the server's current time for a viewer who joins or refreshes mid-
+* countdown — this RPC asks the server directly instead.
+*
+* Splits the round-trip evenly: `server_now()`'s reply corresponds to
+* some moment between when this device sent the request and when it saw
+* the response, and the midpoint of that window is a better estimate of
+* "simultaneous with the reply" than either endpoint alone.
+*/
+export async function fetchServerClockOffset() {
+try {
+ const requestedAt = Date.now();
+ const { data, error } = await supabasePublic.rpc('server_now');
+ if (error || !data) {
+ console.warn('fetchServerClockOffset failed:', error && error.message);
+ return null;
+ }
+ const respondedAt = Date.now();
+ const serverMs = new Date(data).getTime();
+ return serverMs - (requestedAt + (respondedAt - requestedAt) / 2);
+} catch (err) {
+ console.warn('fetchServerClockOffset error:', err);
+ return null;
+}
+}
+
+/**
 * Subscribe to live changes on the draft session. onChange is called with
 * the new row (or null on DELETE) every time it changes — including the
 * commissioner's own writes, so their browser is driven by the same

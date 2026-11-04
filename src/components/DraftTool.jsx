@@ -12,6 +12,7 @@ import {
   startDraftSession,
   saveDraftSession,
   deleteDraftSession,
+  fetchServerClockOffset,
 } from "../utils/storage";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
 import { Avatar } from "./Badges";
@@ -116,13 +117,41 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // exists — subscribes and renders from this same row.
   // ═══════════════════════════════════════════════════════════════
   const [liveSession, setLiveSession] = useState(undefined);
+  // This device's clock minus the database server's, in ms. A ref, not
+  // state: updating it should never itself trigger a render, only feed
+  // into the next tick's computeLiveRemaining() call.
+  //
+  // Calibrated from server_now() (fetchServerClockOffset(), phase17),
+  // NOT from draft_sessions.updated_at — updated_at is only the time of
+  // the LAST WRITE, which is stale the moment anyone opens or refreshes
+  // the Draft tab without a write happening right then (the common
+  // case: joining or reloading mid-countdown). Using it anyway briefly
+  // made the countdown jump backward to its value as of that last write
+  // (a real Codex finding on the first version of this fix). Calibrates
+  // once on mount and every 60s after, for as long as this tab stays
+  // open — a long enough interval that this device's clock can't drift
+  // by anything the ~2-minute timer would ever show.
+  const clockOffsetRef = useRef(0);
+  useEffect(() => {
+    let cancelled = false;
+    const calibrate = () => {
+      fetchServerClockOffset().then((offset) => {
+        if (!cancelled && offset !== null) clockOffsetRef.current = offset;
+      });
+    };
+    calibrate();
+    const id = setInterval(calibrate, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     let unsubscribe = null;
     fetchDraftSession().then((row) => {
       if (cancelled) return;
       setLiveSession(row);
-      unsubscribe = subscribeDraftSession((next) => { if (!cancelled) setLiveSession(next); });
+      unsubscribe = subscribeDraftSession((next) => {
+        if (!cancelled) setLiveSession(next);
+      });
     });
     return () => { cancelled = true; if (unsubscribe) unsubscribe(); };
   }, []);
@@ -284,7 +313,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     : { draftOrder, snakeOrder, picks, pickHistory, currentPick };
   const canAct = !liveSession || isCommissioner;
   const displayTimerActive = liveSession ? !!liveSession.timer_active : timerActive;
-  const displayTimer = liveSession ? computeLiveRemaining(liveSession, liveNow) : timer;
+  const displayTimer = liveSession ? computeLiveRemaining(liveSession, liveNow + clockOffsetRef.current) : timer;
   const headerSeasonLabel = liveSession ? liveSession.season_name : seasonName;
 
   const isComplete = effective.snakeOrder.length > 0 && effective.currentPick >= effective.snakeOrder.length;
@@ -391,7 +420,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const handleTimerStart = async () => {
     track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "start" });
     if (liveSession) {
-      const remaining = computeLiveRemaining(liveSession, Date.now());
+      const remaining = computeLiveRemaining(liveSession, Date.now() + clockOffsetRef.current);
       // timer_started_at left null (not a client guess) so this
       // browser shows the flat `remaining` value, not yet ticking,
       // until the server-confirmed timestamp arrives — see the longer
@@ -406,7 +435,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const handleTimerPause = async () => {
     track(EVENTS.DRAFT_TIMER_TOGGLED, { action: "pause" });
     if (liveSession) {
-      const remaining = computeLiveRemaining(liveSession, Date.now());
+      const remaining = computeLiveRemaining(liveSession, Date.now() + clockOffsetRef.current);
       const patch = { timer_active: false, timer_started_at: null, timer_remaining: remaining };
       setLiveSession((s) => (s ? { ...s, ...patch } : s));
       if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
