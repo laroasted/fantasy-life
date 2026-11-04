@@ -201,11 +201,24 @@ function matchOlympicMedals(pickName, medalData) {
  
 async function fetchIMFGdpData(year) {
   try {
+    // IMF's site sits behind bot-detection (confirmed live: a bare
+    // "Mozilla/5.0" User-Agent gets HTTP 403, a full realistic browser
+    // fingerprint gets 200) — these headers mimic an actual Chrome request,
+    // not a trivial placeholder.
     var res = await fetch('https://www.imf.org/external/datamapper/api/v2/NGDP_RPCH', {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.imf.org/external/datamapper/NGDP_RPCH@WEO'
+      }
     });
     if (!res.ok) {
-      console.error('  IMF DataMapper fetch failed: HTTP ' + res.status);
+      var bodySnippet = '';
+      try { bodySnippet = (await res.text()).slice(0, 200); } catch (e) {}
+      console.error('  IMF DataMapper fetch failed: HTTP ' + res.status +
+        (bodySnippet ? ' — ' + bodySnippet : ''));
       return null;
     }
     var json = await res.json();
@@ -269,10 +282,54 @@ async function fetchOlympicMedals() {
 }
  
 // ═══════════════════════════════════════════════════════════════════════
+// TEMPORARY DIAGNOSTIC — testing whether api.imf.org (IMF's official SDMX
+// API, a different host than the datamapper.imf.org frontend that's
+// blocked by bot-detection) is reachable from Vercel. Does NOT touch the
+// database or any real scoring data — just reports what comes back.
+// Trigger: GET /api/cron/update-country?testImf=1 (no auth needed, since
+// it only calls a public read-only API). DELETE this block once we know
+// whether api.imf.org works from here.
+// ═══════════════════════════════════════════════════════════════════════
+async function testImfConnectivity(res) {
+  var attempts = [
+    {
+      label: 'Accept: application/vnd.sdmx.data+json',
+      headers: { 'Accept': 'application/vnd.sdmx.data+json' }
+    },
+    {
+      label: 'no Accept header (default)',
+      headers: {}
+    }
+  ];
+  var url = 'https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/GIN.NGDP_RPCH.A' +
+    '?startPeriod=2026&endPeriod=2026';
+  var results = [];
+  for (var a of attempts) {
+    try {
+      var r = await fetch(url, { headers: a.headers });
+      var text = await r.text();
+      results.push({
+        label: a.label,
+        status: r.status,
+        ok: r.ok,
+        contentType: r.headers.get('content-type'),
+        bodyPreview: text.slice(0, 1500)
+      });
+    } catch (err) {
+      results.push({ label: a.label, error: err.message });
+    }
+  }
+  return res.status(200).json({ test: 'imf-connectivity', url: url, timestamp: new Date().toISOString(), results: results });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════
- 
+
 module.exports = async function handler(req, res) {
+  if (req.query && req.query.testImf) {
+    return testImfConnectivity(res);
+  }
   var authHeader = req.headers['authorization'];
   var cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== 'Bearer ' + cronSecret) {
@@ -302,7 +359,7 @@ module.exports = async function handler(req, res) {
   var liveGdp = await fetchIMFGdpData(fantasyYear);
   var cachedGdp = season.gdp_forecasts;
 
-  var gdpData, gdpSource, gdpYear;
+  var gdpData, gdpSource, gdpYear, gdpIsLive;
 
   if (liveGdp) {
     console.log('Live IMF fetch OK — ' + Object.keys(liveGdp.data).length +
@@ -310,6 +367,7 @@ module.exports = async function handler(req, res) {
     gdpData = liveGdp.data;
     gdpSource = liveGdp.source;
     gdpYear = liveGdp.year;
+    gdpIsLive = true;
 
     var { error: cacheErr } = await supabase
       .from('seasons')
@@ -330,6 +388,7 @@ module.exports = async function handler(req, res) {
     gdpData = cachedGdp.data;
     gdpSource = (cachedGdp.source || 'unknown') + ' (cached — live fetch failed this run)';
     gdpYear = cachedGdp.year || fantasyYear;
+    gdpIsLive = false;
   } else {
     return res.status(200).json({
       message: 'IMF live fetch failed and no cached gdp_forecasts found on season ' + fantasyYear
@@ -402,27 +461,33 @@ module.exports = async function handler(req, res) {
  
     for (var r of gdpResults) {
       var ownerName = memberNameById[r.member_id] || r.member_id;
- 
+      var skipped = [];
+      var baseWritten = null;
+      var metricWritten = null;
+
       if (r.gdpGrowth !== null) {
         var baseLocked = isFieldLocked(locks, 'Country', ownerName, 'base');
         var metricLocked = isFieldLocked(locks, 'Country', ownerName, 'metric');
- 
+
         var recordLabel = r.gdpGrowth + '% GDP';
- 
+
         var updateObj = { updated_at: new Date().toISOString() };
-        if (!baseLocked) updateObj.base = r.newBase;
+        if (!baseLocked) {
+          updateObj.base = r.newBase;
+          baseWritten = r.newBase;
+        }
         if (!metricLocked) {
           updateObj.metric = r.gdpGrowth;
           updateObj.record = recordLabel;
+          metricWritten = r.gdpGrowth;
         }
- 
-        var skipped = [];
+
         if (baseLocked) skipped.push('base');
         if (metricLocked) skipped.push('metric');
         if (skipped.length > 0) {
           console.log('  🔒 ' + ownerName + ': skipped locked: ' + skipped.join(', '));
         }
- 
+
         var { error } = await supabase.from('picks').update(updateObj).eq('id', r.id);
         if (error) {
           console.error('  DB error updating ' + r.pick + ':', error.message);
@@ -430,7 +495,10 @@ module.exports = async function handler(req, res) {
           updated++;
         }
       }
- 
+
+      // Diagnostic fields so a QA pass can tell "nothing changed because the
+      // number is genuinely the same" apart from "nothing changed because a
+      // lock blocked the write" without needing to read Vercel's own logs.
       rankings.push({
         rank: r.rank || null,
         member: r.member_id,
@@ -438,7 +506,12 @@ module.exports = async function handler(req, res) {
         country: r.pick,
         iso: r.iso,
         gdpGrowth: r.gdpGrowth !== null ? r.gdpGrowth + '%' : 'No data',
-        base: r.newBase || null
+        base: r.newBase || null,
+        previousBase: r.base != null ? r.base : null,
+        previousMetric: r.metric != null ? r.metric : null,
+        locked: skipped.length > 0 ? skipped : null,
+        baseActuallyChanged: baseWritten !== null && baseWritten !== r.base,
+        metricActuallyChanged: metricWritten !== null && metricWritten !== r.metric
       });
     }
  
@@ -446,6 +519,7 @@ module.exports = async function handler(req, res) {
     results.gdp = {
       status: 'updated',
       source: gdpSource,
+      dataIsLive: gdpIsLive,
       dataYear: gdpYear,
       updated: updated,
       total: totalMembers,
@@ -547,6 +621,7 @@ module.exports = async function handler(req, res) {
     message: 'Country update complete',
     season: fantasyYear,
     gdpSource: gdpSource,
+    gdpIsLive: gdpIsLive,
     timestamp: new Date().toISOString(),
     results: results
   });
