@@ -18,8 +18,33 @@
  *   false positives on unrelated films sharing one common word.
  * - FIX: Title containment dedup — "X" inside "Y: X" dedupes regardless of month.
  * - FIX: /gala/i → /\bgala\b/i so "Galaxy" is not filtered as non-theatrical.
+ *
+ * CHANGELOG (2026-11) — Automated Oscar bonus
+ *   Bonus (CATEGORY_BONUS_RULES.Actor/Actress) used to be commissioner-only
+ *   manual entry. Now resolved from the Academy Awards' own Wikipedia
+ *   article — NOT Wikidata (its structured "award received" statements lag
+ *   real-time editing of the article's own prose/tables by hours to days;
+ *   Wikipedia's winners table gets edited live during the broadcast) — and
+ *   kept entirely separate from update-projections.js's `applyOscarBonus`,
+ *   which stays exactly what it is: a PRE-outcome probability estimate from
+ *   Kalshi/Polymarket odds for the "Projected Final" toggle, never mutating
+ *   a real score. This is the POST-outcome settlement of the real thing.
+ *   Evergreen: the article is looked up by trying "{year} Academy Awards"
+ *   (a title Wikipedia redirects to the real ordinal-numbered article, e.g.
+ *   "98th Academy Awards") for the current year then the prior year, and
+ *   "has this ceremony actually happened" is answered by whether a winner
+ *   can be parsed out — not a hardcoded date — so it self-corrects across
+ *   the New Year boundary before a given year's ceremony has aired yet.
+ *   Unlike the projections version, this covers the FULL bonus rule
+ *   (Supporting categories included) since it isn't limited to whatever
+ *   markets happen to exist.
+ *   Confidence: moderate. The winner-is-bold-wikitext convention is
+ *   long-standing and stable on this specific recurring article, but
+ *   wasn't live-verified from this build's network-restricted sandbox —
+ *   see docs/bonus-automation.md. Never guesses: if a category's winner
+ *   can't be confidently parsed, it's skipped and logged, never faked.
  */
- 
+
 const { createClient } = require('@supabase/supabase-js');
 const { writeScoreEventsAndNotify } = require('../_lib/push');
 
@@ -81,6 +106,126 @@ function assignBasePointsWithTiebreaker(rankings, totalMembers) {
 function isFieldLocked(locks, category, ownerName, field) {
   if (!locks) return false;
   return !!locks[category + '|' + ownerName + '|' + field];
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSCAR BONUS — resolved from the Academy Awards' own Wikipedia article.
+// See the 2026-11 changelog above for why Wikipedia (not Wikidata) and why
+// this is a separate concern from update-projections.js's market-based
+// version.
+// ═══════════════════════════════════════════════════════════════════════
+const OSCAR_CATEGORIES = {
+  Actor: [
+    { label: 'Best Actor', keywords: ['actor in a leading role'], winTier: 10, nomTier: 3 },
+    { label: 'Best Supporting Actor', keywords: ['actor in a supporting role'], winTier: 7, nomTier: 2 },
+  ],
+  Actress: [
+    { label: 'Best Actress', keywords: ['actress in a leading role'], winTier: 10, nomTier: 3 },
+    { label: 'Best Supporting Actress', keywords: ['actress in a supporting role'], winTier: 7, nomTier: 2 },
+  ],
+};
+
+async function fetchWikipediaWikitext(title) {
+  try {
+    var url = 'https://en.wikipedia.org/w/api.php?action=parse&page=' + encodeURIComponent(title) + '&prop=wikitext&format=json&redirects=1';
+    var res = await fetch(url, { headers: { 'User-Agent': 'FantasyLifeHub/1.0 (private league scoring tool)' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    var data = await res.json();
+    if (data.error) return null;
+    return (data.parse && data.parse.wikitext && data.parse.wikitext['*']) || null;
+  } catch (err) { console.error('  Wikipedia fetch failed for "' + title + '":', err.message); return null; }
+}
+
+// Isolates the wikitext between a heading matching `headingKeywords` and
+// the next heading at the same or a shallower level.
+function extractWikiSection(wikitext, headingKeywords) {
+  var lines = wikitext.split('\n');
+  var headingRegex = /^(={2,4})\s*(.+?)\s*\1\s*$/;
+  var collecting = false, collectedLevel = 0, buffer = [];
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(headingRegex);
+    if (m) {
+      var level = m[1].length, headingText = m[2].toLowerCase();
+      if (collecting && level <= collectedLevel) break;
+      if (!collecting && headingKeywords.some(function (k) { return headingText.includes(k); })) {
+        collecting = true; collectedLevel = level; continue;
+      }
+    }
+    if (collecting) buffer.push(lines[i]);
+  }
+  return buffer.length > 0 ? buffer.join('\n') : null;
+}
+
+// Winner-is-bold-wikitext is the long-standing convention on this specific
+// recurring article (not live-verified from this build's sandbox — see
+// docs/bonus-automation.md). Nominees are every other [[wikilinked]] name
+// in the section; a film-title wikilink landing in that list is harmless
+// noise here since namesMatch() below just won't match it to a person.
+function extractWinnerAndNominees(sectionText) {
+  if (!sectionText) return null;
+  var boldMatch = sectionText.match(/'''(?:\[\[([^\]|]+)(?:\|[^\]]+)?\]\]|([^']+))'''/);
+  if (!boldMatch) return null;
+  var winner = (boldMatch[1] || boldMatch[2] || '').trim();
+  if (!winner) return null;
+
+  var nomineeSet = {};
+  var linkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, lm;
+  while ((lm = linkRegex.exec(sectionText)) !== null) {
+    var n = lm[1].trim();
+    if (n && !/^(file|category|image):/i.test(n)) nomineeSet[n] = true;
+  }
+  return { winner: winner, nominees: Object.keys(nomineeSet) };
+}
+
+function namesMatch(pickName, candidateName) {
+  var a = (pickName || '').toLowerCase().trim();
+  var b = (candidateName || '').toLowerCase().trim();
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+// Tries "{year} Academy Awards" (a title Wikipedia redirects to the real
+// ordinal article, e.g. "98th Academy Awards") for the current year, then
+// the prior year. "Has this ceremony happened" is answered by whether a
+// winner can actually be parsed out of it — live API state, not a
+// hardcoded date — so this self-corrects across the New Year boundary
+// before a given year's ceremony has aired.
+async function resolveOscarWikitext() {
+  var allCategories = OSCAR_CATEGORIES.Actor.concat(OSCAR_CATEGORIES.Actress);
+  var currentYear = new Date().getFullYear();
+  for (var year of [currentYear, currentYear - 1]) {
+    var title = year + ' Academy Awards';
+    var wikitext = await fetchWikipediaWikitext(title);
+    if (!wikitext) { console.log('  Oscar: no Wikipedia page resolved for "' + title + '"'); continue; }
+    var hasWinner = allCategories.some(function (cat) {
+      var parsed = extractWinnerAndNominees(extractWikiSection(wikitext, cat.keywords));
+      return !!(parsed && parsed.winner);
+    });
+    if (hasWinner) { console.log('  Oscar: using "' + title + '"'); return wikitext; }
+    console.log('  Oscar: "' + title + '" has no resolvable winners yet (ceremony likely not aired)');
+  }
+  return null;
+}
+
+// Best (highest-tier) Oscar result per person this ceremony — a person
+// only has one line in CATEGORY_BONUS_RULES.Actor/Actress, not a per-GP
+// stacking rule like F1, so this is a max, not a sum.
+function computeOscarBonus(wikitext, categories) {
+  var bestByPerson = {};
+  for (var cat of categories) {
+    var parsed = extractWinnerAndNominees(extractWikiSection(wikitext, cat.keywords));
+    if (!parsed || !parsed.winner) { console.warn('  Oscar: could not resolve winner for "' + cat.label + '"'); continue; }
+    if (!bestByPerson[parsed.winner] || bestByPerson[parsed.winner].tier < cat.winTier) {
+      bestByPerson[parsed.winner] = { tier: cat.winTier, label: 'Won ' + cat.label };
+    }
+    for (var nominee of parsed.nominees) {
+      if (nominee === parsed.winner) continue;
+      if (!bestByPerson[nominee] || bestByPerson[nominee].tier < cat.nomTier) {
+        bestByPerson[nominee] = { tier: cat.nomTier, label: 'Nominated ' + cat.label };
+      }
+    }
+  }
+  return bestByPerson;
 }
  
 async function findPersonId(name) {
@@ -234,12 +379,18 @@ module.exports = async function handler(req, res) {
   // update-sports.js established first.
   var scoreEvents = [];
 
+  // Fetched once (same Wikipedia article serves both Actor and Actress
+  // categories), not per category — see resolveOscarWikitext() above.
+  var oscarWikitext = await resolveOscarWikitext();
+
   for (var category of ['Actor', 'Actress']) {
     console.log('  Processing ' + category + '...');
- 
+
     var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', seasonYear).eq('category', category);
     if (pickErr || !picks || picks.length === 0) { results[category] = { status: 'skipped', reason: 'no picks' }; continue; }
- 
+
+    var oscarBonusByPerson = oscarWikitext ? computeOscarBonus(oscarWikitext, OSCAR_CATEGORIES[category]) : {};
+
     var rankings = [];
  
     for (var pick of picks) {
@@ -356,19 +507,43 @@ module.exports = async function handler(req, res) {
       if (matchingPick) {
         var own = memberNameById[matchingPick.member_id] || matchingPick.member_id;
         var baseLocked = isFieldLocked(locks, category, own, 'base');
-        // newBaseVal / writeFailed feed the score_events diff below — a
-        // locked base is a legitimate no-op (newBaseVal = unchanged
-        // matchingPick.base), a failed write is NOT (nothing actually
-        // changed in the DB, so there's nothing to log a delta for).
-        var newBaseVal, writeFailed = false;
-        if (!baseLocked) {
-          var { error } = await supabase.from('picks').update({ base: r.base }).eq('id', matchingPick.id);
-          if (!error) { updated++; newBaseVal = Number(r.base) || 0; }
-          else { writeFailed = true; newBaseVal = Number(matchingPick.base) || 0; }
+
+        // Oscar bonus (see OSCAR_CATEGORIES/computeOscarBonus above) —
+        // matched by fuzzy name against whichever person this bonus run
+        // resolved for this category, never overwriting a lock, never
+        // guessed if nothing was confidently resolved for this person.
+        var bonusMatchName = Object.keys(oscarBonusByPerson).find(function(name) { return namesMatch(r.pick, name); });
+        var bonusEntry = bonusMatchName ? oscarBonusByPerson[bonusMatchName] : null;
+        var bonusLocked = isFieldLocked(locks, category, own, 'bonus');
+        var bonusWritable = !!bonusEntry && !bonusLocked;
+        r.bonusDetected = bonusEntry ? bonusEntry.label : undefined;
+
+        var updateObj = {};
+        if (!baseLocked) updateObj.base = r.base;
+        else console.log('    ' + own + ': base is locked, skipping');
+        if (bonusWritable) { updateObj.bonus = bonusEntry.tier; updateObj.bonus_note = bonusEntry.label; }
+        else if (bonusEntry && bonusLocked) console.log('    ' + own + ': bonus is locked, skipping');
+
+        // newBaseVal/newBonusVal/writeFailed feed the score_events diff
+        // below — a locked field is a legitimate no-op (value unchanged),
+        // a failed write is NOT (nothing actually changed in the DB, so
+        // there's nothing to log a delta for).
+        var newBaseVal, newBonusVal, writeFailed = false;
+        if (Object.keys(updateObj).length > 0) {
+          var { error } = await supabase.from('picks').update(updateObj).eq('id', matchingPick.id);
+          if (!error) {
+            updated++;
+            newBaseVal = baseLocked ? (Number(matchingPick.base) || 0) : (Number(r.base) || 0);
+            newBonusVal = bonusWritable ? bonusEntry.tier : (Number(matchingPick.bonus) || 0);
+          } else {
+            writeFailed = true;
+            newBaseVal = Number(matchingPick.base) || 0;
+            newBonusVal = Number(matchingPick.bonus) || 0;
+          }
         } else {
-          console.log('    ' + own + ': base is locked, skipping');
           updated++;
           newBaseVal = Number(matchingPick.base) || 0;
+          newBonusVal = Number(matchingPick.bonus) || 0;
         }
 
         // Diff against the pre-update row (matchingPick.base/bonus) — same
@@ -376,30 +551,33 @@ module.exports = async function handler(req, res) {
         // pass since that's where base actually gets written for this
         // cron (base is ranked/assigned only after ALL picks' metrics
         // are known, unlike sports/college/events/billboard where it's
-        // inline in the same per-pick loop).
+        // inline in the same per-pick loop). Now accounts for a bonus
+        // change too, not just base.
         if (!writeFailed) {
           var oldTotal = (Number(matchingPick.base) || 0) + (Number(matchingPick.bonus) || 0);
-          var newTotal = newBaseVal + (Number(matchingPick.bonus) || 0);
+          var newTotal = newBaseVal + newBonusVal;
           var delta = Math.round((newTotal - oldTotal) * 10) / 10;
           if (delta !== 0) {
-            var cause = r.pick + ' — ' + (Math.round((r.totalScore || 0) * 100) / 100) + ' pts' +
+            var causeParts = [];
+            if (!baseLocked) causeParts.push((Math.round((r.totalScore || 0) * 100) / 100) + ' pts' +
               (r.filmCount ? ' (' + r.filmCount + ' film' + (r.filmCount === 1 ? '' : 's') + ')' : '') +
-              (r.status ? ' [' + r.status + ']' : '');
+              (r.status ? ' [' + r.status + ']' : ''));
+            if (bonusWritable) causeParts.push(bonusEntry.label);
             scoreEvents.push({
               season_year: seasonYear,
               member_id: matchingPick.member_id,
               category: category,
               delta: delta,
-              cause: cause,
+              cause: r.pick + ' — ' + (causeParts.join(' — ') || 'updated'),
               source: 'update-entertainment',
             });
           }
         }
       }
     }
- 
+
     console.log('  ' + category + ': Updated ' + updated + '/' + picks.length + ' picks\n');
-    results[category] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings.map(function(r) { return { rank: r.rank, member: r.member, pick: r.pick, totalScore: r.totalScore, filmCount: r.filmCount, base: r.base, films: r.films }; }) };
+    results[category] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings.map(function(r) { return { rank: r.rank, member: r.member, pick: r.pick, totalScore: r.totalScore, filmCount: r.filmCount, base: r.base, bonusDetected: r.bonusDetected, films: r.films }; }) };
   }
 
   await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
