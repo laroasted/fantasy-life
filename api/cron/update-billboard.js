@@ -268,20 +268,46 @@ function computeGrammyCategoryResults(wikitext) {
   return results;
 }
 
+// The ceremony's own infobox date (e.g. "| date = February 2, 2025"), not
+// which year's ARTICLE happened to resolve — needed because "the most
+// recent ceremony with a winner" is wrong the moment a new season starts
+// (new picks drafted) before THAT season's own ceremony has aired: the
+// prior, already-decided ceremony would otherwise get silently credited
+// to the new season's unrelated picks (Codex review on PR #55).
+function extractCeremonyDate(wikitext) {
+  var m = wikitext.match(/\{\{Infobox[^\n]*/);
+  if (!m) return null;
+  var block = wikitext.slice(m.index, m.index + 3000); // date field lives near the top
+  var dm = block.match(/\|\s*date\s*=\s*([^\n|]+)/);
+  if (!dm) return null;
+  var parsed = new Date(dm[1].trim());
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
 // Tries "{year} Grammy Awards" (this show's articles are titled by
-// calendar year directly, unlike the Oscars' ordinal titles) for the
-// current year, then the prior year. "Has this ceremony happened" is
-// answered by whether a winner can actually be parsed out of it — live
-// API state, not a hardcoded date — so this self-corrects across the New
-// Year boundary before a given year's ceremony has aired.
-async function resolveGrammyWikitext() {
-  var currentYear = new Date().getFullYear();
-  for (var year of [currentYear, currentYear - 1]) {
+// calendar year directly, unlike the Oscars' ordinal titles) for each
+// calendar year this season's Fantasy Year window spans (newest first) —
+// not the wall-clock year, which can resolve to a real but WRONG
+// (already-scored, prior-season) ceremony. A candidate is only accepted
+// if its own ceremony date actually falls inside [fyStart, fyEnd]; "has
+// this ceremony happened yet" beyond that is answered by whether a
+// winner can actually be parsed out of it — live content state, not a
+// hardcoded date — so this still self-corrects before a given year's
+// ceremony has aired.
+async function resolveGrammyWikitext(fyStart, fyEnd) {
+  var fyStartDate = new Date(fyStart), fyEndDate = new Date(fyEnd);
+  var candidateYears = Array.from(new Set([fyEndDate.getFullYear(), fyStartDate.getFullYear()]));
+  for (var year of candidateYears) {
     var title = year + ' Grammy Awards';
     var wikitext = await fetchWikipediaWikitext(title);
     if (!wikitext) { console.log('  Grammy: no Wikipedia page resolved for "' + title + '"'); continue; }
+    var ceremonyDate = extractCeremonyDate(wikitext);
+    if (!ceremonyDate || ceremonyDate < fyStartDate || ceremonyDate > fyEndDate) {
+      console.log('  Grammy: "' + title + '" ceremony date (' + (ceremonyDate ? ceremonyDate.toISOString().slice(0, 10) : 'unknown') + ') is outside this season\'s Fantasy Year window (' + fyStart + ' to ' + fyEnd + ') — skipping');
+      continue;
+    }
     var hasWinner = computeGrammyCategoryResults(wikitext).length > 0;
-    if (hasWinner) { console.log('  Grammy: using "' + title + '"'); return wikitext; }
+    if (hasWinner) { console.log('  Grammy: using "' + title + '" (ceremony ' + ceremonyDate.toISOString().slice(0, 10) + ')'); return wikitext; }
     console.log('  Grammy: "' + title + '" has no resolvable winners yet (ceremony likely not aired)');
   }
   return null;
@@ -759,7 +785,7 @@ module.exports = async function handler(req, res) {
   // Grammy bonus (see GRAMMY_CATEGORIES/computeGrammyCategoryResults
   // above) — fetched once per run, independent of the chart-data
   // pagination below.
-  var grammyWikitext = await resolveGrammyWikitext();
+  var grammyWikitext = await resolveGrammyWikitext(FY_START, FY_END);
   var grammyCategoryResults = grammyWikitext ? computeGrammyCategoryResults(grammyWikitext) : [];
 
   // Paginate all chart entries in FY window
