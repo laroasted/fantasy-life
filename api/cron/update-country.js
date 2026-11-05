@@ -38,6 +38,7 @@
  */
  
 const { createClient } = require('@supabase/supabase-js');
+const { writeScoreEventsAndNotify } = require('../_lib/push');
  
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -374,6 +375,13 @@ module.exports = async function handler(req, res) {
   console.log('Found ' + totalMembers + ' Country picks\n');
  
   var results = { gdp: null, olympics: null };
+  // Shared across both the GDP and Olympics sections below — Country is
+  // the only category where two independent mechanisms can each produce
+  // a nonzero change for the same member in the same run; both feed one
+  // writeScoreEventsAndNotify() call at the end so that member still gets
+  // exactly one push (see buildScoreDigest()'s own comment in push.js for
+  // how the digest text stays accurate when that happens).
+  var scoreEvents = [];
  
   // ════════════════════════════════════════════════════════════════════
   // GDP UPDATE (from Supabase)
@@ -455,6 +463,19 @@ module.exports = async function handler(req, res) {
           console.error('  DB error updating ' + r.pick + ':', error.message);
         } else {
           updated++;
+
+          var newBaseVal = baseLocked ? (Number(r.base) || 0) : (Number(r.newBase) || 0);
+          var gdpDelta = Math.round((newBaseVal - (Number(r.base) || 0)) * 10) / 10;
+          if (gdpDelta !== 0) {
+            scoreEvents.push({
+              season_year: fantasyYear,
+              member_id: r.member_id,
+              category: 'Country',
+              delta: gdpDelta,
+              cause: r.pick + ' (' + recordLabel + (r.rank ? ', #' + r.rank : '') + ')',
+              source: 'update-country-gdp',
+            });
+          }
         }
       }
 
@@ -526,7 +547,12 @@ module.exports = async function handler(req, res) {
           // bonusPts is derived from rank specifically, so that's the lock
           // that should guard it.
           var bonusLocked = isFieldLocked(locks, 'Country', ownerName2, 'olympics.rank');
- 
+          var medalNote = medalRank && medalRank <= 5
+            ? '#' + medalRank + ' by total medals (' + medals.total + ')'
+            : medals.total > 0
+              ? medals.total + ' medals, outside top 5'
+              : 'No medals';
+
           var { error: olyErr } = await supabase
             .from('country_olympics')
             .upsert({
@@ -537,25 +563,46 @@ module.exports = async function handler(req, res) {
               bronze: medals.bronze,
               total_medals: medals.total,
               pts: bonusPts,
-              note: medalRank && medalRank <= 5
-                ? '#' + medalRank + ' by total medals (' + medals.total + ')'
-                : medals.total > 0
-                  ? medals.total + ' medals, outside top 5'
-                  : 'No medals'
+              note: medalNote
             }, { onConflict: 'pick_id' });
- 
+
+          var picksWriteOk = true;
           if (!olyErr && !bonusLocked) {
-            await supabase.from('picks').update({
+            var { error: picksErr } = await supabase.from('picks').update({
               bonus: bonusPts,
-              bonus_note: bonusPts > 0
-                ? '#' + medalRank + ' by total medals (' + medals.total + ')'
-                : '',
+              bonus_note: bonusPts > 0 ? medalNote : '',
               updated_at: new Date().toISOString()
             }).eq('id', pick.id);
-            olympicsUpdated++;
+            if (picksErr) {
+              console.error('  DB error updating bonus for ' + pick.pick + ':', picksErr.message);
+              picksWriteOk = false;
+            } else {
+              olympicsUpdated++;
+            }
           } else if (bonusLocked) {
             console.log('  🔒 ' + ownerName2 + ': bonus locked');
             olympicsUpdated++;
+          }
+
+          // Diff against the pre-fetched `picks` bonus — skipped if either
+          // write failed (the country_olympics upsert or the picks bonus
+          // update itself), same as every other cron's "don't diff a write
+          // that didn't happen" rule. A locked bonus leaves picksWriteOk at
+          // its default `true` with newBonusVal equal to the old value, so
+          // the diff below naturally computes to 0 — no special-casing needed.
+          if (!olyErr && picksWriteOk) {
+            var newBonusVal = bonusLocked ? (Number(pick.bonus) || 0) : (Number(bonusPts) || 0);
+            var olympicsDelta = Math.round((newBonusVal - (Number(pick.bonus) || 0)) * 10) / 10;
+            if (olympicsDelta !== 0) {
+              scoreEvents.push({
+                season_year: fantasyYear,
+                member_id: pick.member_id,
+                category: 'Country',
+                delta: olympicsDelta,
+                cause: pick.pick + ' (' + medalNote + ')',
+                source: 'update-country-olympics',
+              });
+            }
           }
  
           medalRankings.push({
@@ -582,6 +629,8 @@ module.exports = async function handler(req, res) {
     results.olympics = { status: 'skipped', reason: 'not Olympic season' };
   }
  
+  await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
+
   console.log('\n═══ Done! ═══');
   return res.status(200).json({
     message: 'Country update complete',

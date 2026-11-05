@@ -35,11 +35,9 @@ already run against Supabase needs to be redone.
 
 `update-sports.js` (NFL/NBA/NHL/MLB/MLS), `update-college.js`
 (NCAAF/NCAAB), `update-events.js` (Tennis/Golf/F1), `update-billboard.js`
-(Musician), `update-entertainment.js` (Actor/Actress), and
-`update-stocks.js` (Stock) write to `score_events` as of this pass. Only
-`update-country.js` doesn't yet — it has two separate update loops (GDP
-→ base, Olympics → bonus) with two different lock-key schemes, and was
-deliberately skipped in this pass rather than rushed, not forgotten.
+(Musician), `update-entertainment.js` (Actor/Actress), `update-stocks.js`
+(Stock), and `update-country.js` (Country) write to `score_events` as of
+this pass — every cron this table was ever meant to cover now does.
 
 ### Extension: college + events (same session, follow-up pass)
 
@@ -60,7 +58,7 @@ block. `update-sports.js` was refactored to call it too, so there's
 exactly one copy of this logic, not one that happens to be first and two
 copies that happen to match it today.
 
-### Extension: billboard + entertainment + stocks (follow-up pass, country skipped)
+### Extension: billboard + entertainment + stocks (follow-up pass)
 
 All three needed real thought, not a direct copy of the diff block:
 
@@ -85,15 +83,47 @@ All three needed real thought, not a direct copy of the diff block:
   not a real change. Confirmed with the user before building this rather
   than guessing at the intent.
 
-**`update-country.js` was deliberately left out of this pass.** It has
-two separate update loops in one run — GDP (writes `base`/`metric`,
-gated by one combined `'gdp'` lock key) and Olympics (writes
-`bonus`/`bonus_note`, gated by a different `'olympics.rank'` key, and
-only runs during Olympic windows) — needing the diff added in both
-places, each diffing its own field, plus its own "cause" text design
-(there's no ESPN-style team/athlete match here — GDP growth % + rank for
-the base event, a medal count for the bonus event). Real work, not a
-blocker for shipping the other three.
+### Extension: country (final pass)
+
+`update-country.js` was deliberately left out of the previous pass — it
+needed real design, not a copy of the diff block, because it has two
+separate update loops in one run: GDP (writes `base`/`metric`, gated by
+one combined `'gdp'` lock key) and Olympics (writes `bonus`/`bonus_note`,
+gated by a different `'olympics.rank'` key, and only runs during Olympic
+windows). Both got their own diff, in place, against the field they
+actually write:
+
+- **GDP** diffs `r.base` (pre-fetched) against the rank-based `r.newBase`
+  computed earlier in the same loop, skipped when the shared `gdp` lock
+  blocks the write. Cause text reuses the existing `recordLabel`
+  (`"7.2% GDP"`) plus the rank: `"Germany (7.2% GDP, #3)"`.
+- **Olympics** diffs the pre-fetched `pick.bonus` against `bonusPts`,
+  skipped when `olympics.rank` is locked or the upsert/update failed.
+  Cause text reuses the same medal-rank string already built for the
+  `country_olympics` row and `bonus_note` (`"#2 by total medals (15)"`),
+  factored into one `medalNote` variable so there's a single source for
+  all three places it was previously duplicated inline.
+
+The real design question wasn't the diffing itself — it's that Country is
+the only category where **both** loops can produce a nonzero
+`score_events` row for the *same member in the same run* (a GDP rank
+shift and an Olympic medal shift landing together during an Olympic
+window). Every other category writes at most one event per member per
+run, so `writeScoreEventsAndNotify()`'s existing per-member grouping
+(which already calls `sendPushToMember()` once per member regardless of
+how many events they have that run) was never actually exercised with
+more than one same-category event — meaning the real risk wasn't a
+*second push* (that was already prevented), it was `buildScoreDigest()`'s
+multi-event title claiming `"${name}: 2 categories updated"` when it's
+truly one category, two mechanisms. Fixed in `buildScoreDigest()`
+(`api/_lib/push.js`) by counting *distinct* categories in the member's
+batch: when they're all the same one, the title names that category
+(`"${name}: Country updated"`) and the body joins each event's own
+`cause` text instead of the generic `"${category} ±${delta}"` parts
+(which would otherwise literally repeat "Country" twice). The
+multi-category branch is untouched — every other cron still hits it
+exactly as before, since for them distinct-category count always equals
+event count.
 
 ## How to configure
 
@@ -131,9 +161,10 @@ Additive and isolated:
 
 - remove `<ActivityFeed .../>` from `src/components/Scoreboard.jsx`
 - revert the `scoreEvents` diffing block in `api/cron/update-sports.js`,
-  `update-college.js`, and `update-events.js`, and the shared
-  `writeScoreEventsAndNotify()`/`buildScoreDigest()`/`scoreboardUrl()`
-  functions in `api/_lib/push.js`
+  `update-college.js`, `update-events.js`, `update-billboard.js`,
+  `update-entertainment.js`, `update-stocks.js`, and `update-country.js`,
+  and the shared `writeScoreEventsAndNotify()`/`buildScoreDigest()`/
+  `scoreboardUrl()` functions in `api/_lib/push.js`
 - drop the `score_events` table in Supabase if you want it fully gone
 
 No existing table, cron, or read path is modified.
