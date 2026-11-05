@@ -15,6 +15,24 @@
  *   - F1: Added Jolpica API (Ergast successor) as PRIMARY data source
  *   - F1: ESPN kept as fallback (currently returning empty for 2026)
  *   - F1: Added season year parameter to Jolpica request
+ *
+ * CHANGELOG (2026-11) — Automated F1 featured-GP + Tennis/Golf major bonus
+ *   Bonus for these three used to be commissioner-only manual entry
+ *   (Settings → Scores & Bonus). Now resolved from the same data vendors
+ *   already trusted for base scoring (Jolpica for F1, ESPN for Tennis/Golf).
+ *   Deliberately NOT date-driven: F1's 4 bonus-eligible Grands Prix are
+ *   matched by raceName (FEATURED_GPS), and Tennis/Golf majors are matched
+ *   by tournament NAME (MAJOR_NAMES) against whatever ESPN returns for the
+ *   current calendar year — none of the three needs a yearly date edit
+ *   when a race/major's exact week moves. See docs/bonus-automation.md for
+ *   the full design and per-feature confidence notes. F1 and Golf majors
+ *   are high/high-moderate confidence (stable, well-documented endpoint
+ *   shapes); Tennis majors is the lowest confidence of the three — it
+ *   classifies Final/semifinal exits from free-text match labels rather
+ *   than a flat leaderboard, and that text shape wasn't verified live.
+ *   Like every bonus write in this file: never overwrites a locked
+ *   `bonus` field, and never guesses — an unresolved pick's existing
+ *   bonus (including a manual commissioner entry) is left untouched.
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -61,6 +79,172 @@ function assignBasePointsWithTiebreaker(matched, totalMembers) {
 }
  
 function isFieldLocked(locks, category, ownerName, field) { return locks ? !!locks[category + '|' + ownerName + '|' + field] : false; }
+
+// ═══════════════════════════════════════════════════════════════════════
+// F1 FEATURED-GP BONUS — matched by RACE NAME, never by calendar date.
+// F1 moves its calendar by weeks every year; matching the 4 bonus-eligible
+// Grands Prix by their stable raceName (not a hardcoded month/week) keeps
+// this working without a yearly edit. High confidence: Jolpica's
+// /races.json and /{round}/results.json shapes are long-documented,
+// stable Ergast-compatible endpoints.
+// ═══════════════════════════════════════════════════════════════════════
+const FEATURED_GPS = [
+  { tier: 'AUS', keywords: ['australian grand prix'] },
+  { tier: 'MIA', keywords: ['miami grand prix'] },
+  { tier: 'ATX', keywords: ['united states grand prix'] },
+  { tier: 'LV', keywords: ['las vegas grand prix'] },
+];
+const FEATURED_GP_BONUS = { 1: 3, 2: 2, 3: 1 };
+
+async function fetchFeaturedGPPodiums(seasonYear) {
+  var podiums = [];
+  try {
+    var url = 'https://api.jolpi.ca/ergast/f1/' + seasonYear + '/races.json?limit=40';
+    var res = await fetch(url, { headers: { 'User-Agent': 'FantasyLifeHub/1.0' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return podiums;
+    var data = await res.json();
+    var races = data?.MRData?.RaceTable?.Races || [];
+    var now = Date.now();
+    for (var race of races) {
+      var raceName = (race.raceName || '').toLowerCase();
+      var gp = FEATURED_GPS.find(function (g) { return g.keywords.some(function (k) { return raceName.includes(k); }); });
+      if (!gp) continue;
+      var hasHappened = race.date ? new Date(race.date).getTime() <= now : false;
+      if (!hasHappened) continue;
+      try {
+        var resultsUrl = 'https://api.jolpi.ca/ergast/f1/' + seasonYear + '/' + race.round + '/results.json';
+        var rres = await fetch(resultsUrl, { headers: { 'User-Agent': 'FantasyLifeHub/1.0' }, signal: AbortSignal.timeout(10000) });
+        if (!rres.ok) continue;
+        var rdata = await rres.json();
+        var raceResults = rdata?.MRData?.RaceTable?.Races?.[0]?.Results || [];
+        for (var r of raceResults) {
+          var pos = parseInt(r.position, 10);
+          if (!FEATURED_GP_BONUS[pos]) continue;
+          var driver = r.Driver || {};
+          var fullName = ((driver.givenName || '') + ' ' + (driver.familyName || '')).trim();
+          if (!fullName) continue;
+          podiums.push({ gpTier: gp.tier, raceName: race.raceName, driverName: fullName, position: pos, bonus: FEATURED_GP_BONUS[pos] });
+        }
+      } catch (err) { console.error('  F1 featured GP results fetch failed for ' + race.raceName + ':', err.message); }
+    }
+  } catch (err) { console.error('  F1 featured GP schedule fetch failed:', err.message); }
+  return podiums;
+}
+
+// Sums podium bonus per driver across every featured GP already run this
+// season (a driver can podium at more than one of the 4) and keyed by the
+// driver's own full name so matchAthlete() can resolve it the same way it
+// resolves base-scoring driver names.
+function aggregateF1Bonus(podiums) {
+  var byDriver = {};
+  for (var p of podiums) {
+    if (!byDriver[p.driverName]) byDriver[p.driverName] = { total: 0, notes: [] };
+    byDriver[p.driverName].total += p.bonus;
+    byDriver[p.driverName].notes.push(p.gpTier + ' P' + p.position + ' (+' + p.bonus + ')');
+  }
+  return byDriver;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// TENNIS / GOLF MAJOR BONUS — matched by TOURNAMENT NAME, never by
+// calendar date. Majors drift by a week or two year to year; scanning the
+// whole current calendar year for an event whose name contains one of
+// these (rather than assuming e.g. "Wimbledon is always late June") keeps
+// this working without a yearly edit.
+// Golf: high-moderate confidence — flat per-tournament leaderboard.
+// Tennis: lowest confidence of everything in this file — classifies
+// Final/semifinal exits from free-text match-event labels rather than a
+// single leaderboard call, and that exact label shape wasn't verified
+// live from this build environment (network-policy blocked). Watch its
+// first live run's logs (classification misses are logged, never guessed).
+// ═══════════════════════════════════════════════════════════════════════
+const MAJOR_NAMES = {
+  Tennis: ['australian open', 'french open', 'roland garros', 'wimbledon', 'us open'],
+  Golf: ['masters tournament', 'the masters', 'pga championship', 'u.s. open', 'us open', 'the open championship', 'british open'],
+};
+const TENNIS_MAJOR_BONUS = { win: 5, final: 3, semifinal: 2 };
+const GOLF_MAJOR_BONUS = { win: 5, runnerup: 3, top10: 2 };
+
+async function fetchGolfMajorBonus() {
+  var byGolfer = {};
+  try {
+    var year = new Date().getFullYear();
+    var url = 'https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?dates=' + year + '0101-' + year + '1231';
+    var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return byGolfer;
+    var data = await res.json();
+    var events = data?.events || [];
+    var majors = events.filter(function (e) {
+      var name = (e.name || e.shortName || '').toLowerCase();
+      var completed = !!e?.status?.type?.completed;
+      return completed && MAJOR_NAMES.Golf.some(function (m) { return name.includes(m); });
+    });
+    for (var major of majors) {
+      try {
+        var lbUrl = 'https://site.api.espn.com/apis/site/v2/sports/golf/pga/leaderboard?tournamentId=' + major.id;
+        var lres = await fetch(lbUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+        if (!lres.ok) continue;
+        var ldata = await lres.json();
+        var competitors = ldata?.events?.[0]?.competitions?.[0]?.competitors || [];
+        for (var c of competitors) {
+          var posRaw = c?.status?.position?.displayValue ?? c?.status?.position?.id ?? '';
+          var posMatch = String(posRaw).match(/\d+/);
+          if (!posMatch) continue;
+          var pos = parseInt(posMatch[0], 10);
+          var tier = 0, label = '';
+          if (pos === 1) { tier = GOLF_MAJOR_BONUS.win; label = 'Won ' + major.name; }
+          else if (pos === 2) { tier = GOLF_MAJOR_BONUS.runnerup; label = 'Runner-up ' + major.name; }
+          else if (pos <= 10) { tier = GOLF_MAJOR_BONUS.top10; label = 'Top 10 ' + major.name; }
+          if (tier === 0) continue;
+          var name = c?.athlete?.displayName || c?.athlete?.name;
+          if (!name) continue;
+          if (!byGolfer[name]) byGolfer[name] = { total: 0, notes: [] };
+          byGolfer[name].total += tier;
+          byGolfer[name].notes.push(label);
+        }
+      } catch (err) { console.error('  Golf major leaderboard fetch failed for ' + major.name + ':', err.message); }
+    }
+  } catch (err) { console.error('  Golf major scoreboard fetch failed:', err.message); }
+  return byGolfer;
+}
+
+async function fetchTennisMajorBonus() {
+  var byPlayer = {};
+  try {
+    var year = new Date().getFullYear();
+    var url = 'https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard?dates=' + year + '0101-' + year + '1231';
+    var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return byPlayer;
+    var data = await res.json();
+    var events = data?.events || [];
+    for (var e of events) {
+      if (!e?.status?.type?.completed) continue;
+      var textParts = [e?.name, e?.shortName].concat((e?.competitions?.[0]?.notes || []).map(function (n) { return n?.headline; })).filter(Boolean);
+      var lower = textParts.join(' | ').toLowerCase();
+      var majorName = MAJOR_NAMES.Tennis.find(function (m) { return lower.includes(m); });
+      if (!majorName) continue;
+      var isSemi = lower.includes('semifinal') || lower.includes('semi-final');
+      var isFinal = lower.includes('final') && !isSemi;
+      if (!isFinal && !isSemi) continue;
+
+      var competitors = e?.competitions?.[0]?.competitors || [];
+      for (var c of competitors) {
+        var name = c?.athlete?.displayName || c?.athlete?.name;
+        if (!name) continue;
+        var won = !!c?.winner;
+        var tier = 0, label = '';
+        if (isFinal && won) { tier = TENNIS_MAJOR_BONUS.win; label = 'Won ' + majorName; }
+        else if (isFinal && !won) { tier = TENNIS_MAJOR_BONUS.final; label = 'Runner-up ' + majorName; }
+        else if (isSemi && !won) { tier = TENNIS_MAJOR_BONUS.semifinal; label = 'Lost ' + majorName + ' SF'; }
+        if (tier === 0) continue;
+        if (!byPlayer[name]) byPlayer[name] = { total: 0, notes: [] };
+        byPlayer[name].total += tier;
+        byPlayer[name].notes.push(label);
+      }
+    }
+  } catch (err) { console.error('  Tennis major fetch failed:', err.message); }
+  return byPlayer;
+}
  
 function isActive(config) {
   var now = new Date(), month = now.getMonth() + 1, day = now.getDate(), today = month * 100 + day;
@@ -339,40 +523,64 @@ module.exports = async function handler(req, res) {
       }
       matched.push({ ...pick, espnName: athlete ? athlete.name : null, metric: metric, record: record });
     }
- 
+
     var totalMetric = matched.reduce(function(sum, m) { return sum + m.metric; }, 0);
     if (totalMetric === 0) { results[league] = { status: 'skipped', reason: 'all metrics zero' }; continue; }
- 
+
     if (config.sortDirection === 'asc') matched.sort(function(a, b) { return a.metric - b.metric; });
     else matched.sort(function(a, b) { return b.metric - a.metric; });
- 
+
     matched = assignBasePointsWithTiebreaker(matched, picks.length);
- 
+
+    // ── Bonus resolution (F1 featured GPs / Tennis+Golf majors) ──
+    // See FEATURED_GPS/MAJOR_NAMES + the 2026-11 changelog at the top of
+    // this file. Keyed by athlete display name so matchAthlete() resolves
+    // a pick against it exactly the same way it resolves base-score names.
+    var bonusByAthlete = {};
+    if (league === 'F1') {
+      var podiums = await fetchFeaturedGPPodiums(seasonYear);
+      bonusByAthlete = aggregateF1Bonus(podiums);
+    } else if (league === 'Golf') {
+      bonusByAthlete = await fetchGolfMajorBonus();
+    } else if (league === 'Tennis') {
+      bonusByAthlete = await fetchTennisMajorBonus();
+    }
+    var bonusAthleteList = Object.keys(bonusByAthlete).map(function (name) { return { name: name }; });
+
     var updated = 0, rankings = [];
- 
+
     for (var m of matched) {
       var ownerName = memberNameById[m.member_id] || m.member_id;
       var baseLocked = isFieldLocked(locks, league, ownerName, 'base');
       var metricLocked = isFieldLocked(locks, league, ownerName, 'metric');
       var recordLocked = isFieldLocked(locks, league, ownerName, 'record');
- 
+      var bonusLocked = isFieldLocked(locks, league, ownerName, 'bonus');
+
+      var bonusMatch = bonusAthleteList.length > 0 ? matchAthlete(m.pick, bonusAthleteList) : null;
+      var bonusEntry = bonusMatch ? bonusByAthlete[bonusMatch.name] : null;
+      var bonusWritable = !!bonusEntry && !bonusLocked;
+      var newBonusVal = bonusWritable ? bonusEntry.total : (Number(m.bonus) || 0);
+
       var updateObj = { updated_at: new Date().toISOString() };
       if (!baseLocked) updateObj.base = m.newBase;
       if (!metricLocked) updateObj.metric = m.metric;
       if (!recordLocked) updateObj.record = m.record;
- 
+      if (bonusWritable) { updateObj.bonus = bonusEntry.total; updateObj.bonus_note = bonusEntry.notes.join(' | '); }
+
       var skipped = [];
       if (baseLocked) skipped.push('base');
       if (metricLocked) skipped.push('metric');
       if (recordLocked) skipped.push('record');
+      if (bonusEntry && bonusLocked) skipped.push('bonus');
       if (skipped.length > 0) console.log('  ' + ownerName + ': skipped locked: ' + skipped.join(', '));
- 
+
       var { error: updateErr } = await supabase.from('picks').update(updateObj).eq('id', m.id);
       if (updateErr) { console.error(' Failed to update ' + m.member_id + ':', updateErr.message); continue; }
       updated++;
-      rankings.push({ rank: m.rank, member: m.member_id, pick: m.pick, espnMatch: m.espnName || 'Not found', metric: m.metric, record: m.record, base: baseLocked ? m.base : m.newBase, bonus: Number(m.bonus) || 0, total: (baseLocked ? m.base : m.newBase) + (Number(m.bonus) || 0), lockedFields: skipped.length > 0 ? skipped : undefined });
+      var newBaseVal = baseLocked ? m.base : m.newBase;
+      rankings.push({ rank: m.rank, member: m.member_id, pick: m.pick, espnMatch: m.espnName || 'Not found', metric: m.metric, record: m.record, base: newBaseVal, bonus: newBonusVal, total: newBaseVal + newBonusVal, bonusDetected: bonusEntry ? bonusEntry.notes.join(' | ') : undefined, lockedFields: skipped.length > 0 ? skipped : undefined });
     }
- 
+
     console.log(' ' + league + ': Updated ' + updated + '/' + matched.length + ' picks');
     results[league] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings };
   }
