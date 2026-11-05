@@ -6,6 +6,7 @@ import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
 import { storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
+import { sendTestPush } from "../utils/push";
 import ScrollFadeEdges from "./ScrollFadeEdges";
 
 // ─── Which type of category is this? ───
@@ -74,6 +75,11 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  var _k = useState(null), confirmDelete = _k[0], setConfirmDelete = _k[1];
  var _l = useState({}), paywallEdits = _l[0], setPaywallEdits = _l[1];
  var _m = useState(false), savedPaywall = _m[0], setSavedPaywall = _m[1];
+ // Per-member test-push status, keyed by member id — "sending", a
+ // result string to show, or absent. Local/ephemeral only, same as the
+ // rest of this component's non-persisted UI state; nothing here is
+ // saved with the season.
+ var _n = useState({}), testPushStatus = _n[0], setTestPushStatus = _n[1];
  var pillsRef = useRef(null);
  // Guards the persist effect below against writing a PREVIOUS season's
  // still-in-memory changelog under a NEW season's storage key. Holds the
@@ -273,6 +279,28 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   onSave(newSeason);
   setSavedPaywall(true);
   setPaywallEdits({});
+ }
+
+ // ─── Push tab: send one test push to a single member ───
+ async function handleSendTestPush(memberId) {
+  setTestPushStatus(function (prev) { return Object.assign({}, prev, { [memberId]: "sending" }); });
+  var result = await sendTestPush(memberId);
+  var label;
+  if (!result.ok) {
+   label = result.reason === "not_signed_in" ? "Not signed in" : "Failed: " + result.reason;
+  } else if (result.sent > 0) {
+   label = "Sent (" + result.sent + " device" + (result.sent === 1 ? "" : "s") + ")";
+  } else if (result.failed > 0) {
+   // Codex-caught, real: sent:0 doesn't mean "no subscription" by
+   // itself — a subscribed device whose actual delivery failed (bad
+   // VAPID config, push service error, etc.) ALSO lands here, and
+   // conflating the two would send the commissioner chasing "tell them
+   // to enable push" when the real problem is push delivery itself.
+   label = "Delivery failed (" + result.failed + " device" + (result.failed === 1 ? "" : "s") + " subscribed, but push didn't go through)";
+  } else {
+   label = "No active subscription for this member";
+  }
+  setTestPushStatus(function (prev) { return Object.assign({}, prev, { [memberId]: label }); });
  }
 
  // ─── Add a detail row ───
@@ -736,6 +764,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
      { id: "swaps", label: isMobile ? "Swaps" : "Swap Picks", pending: Object.keys(swaps).length },
      { id: "locks", label: isMobile ? "Locks" : "Locks (" + Object.keys(locks).length + ")", pending: 0 },
      { id: "paywall", label: isMobile ? "Paywall" : "💰 Paywall", pending: Object.keys(paywallEdits).length },
+     { id: "push", label: isMobile ? "Push" : "🔔 Push Test", pending: 0 },
      { id: "log", label: isMobile ? "Log" : "Log" + (changelog.length ? " (" + changelog.length + ")" : ""), pending: 0 },
     ].map(function (tab) {
      return (
@@ -760,7 +789,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    )}
 
    {/* ─── Category pills ─── */}
-   {mode !== "log" && mode !== "paywall" && (
+   {mode !== "log" && mode !== "paywall" && mode !== "push" && (
     <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
     <div ref={pillsRef} style={{
      display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
@@ -1135,6 +1164,48 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        Paywall settings saved and synced to scoreboard.
       </div>
      )}
+    </div>
+   )}
+
+   {/* ═══ PUSH TEST ═══ */}
+   {mode === "push" && (
+    <div style={cardStyle}>
+     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{"🔔"} Push Test</h3>
+     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
+      Send a one-off test notification straight to a member's own device(s) — useful for
+      confirming push actually reaches someone before relying on it during a live draft or a
+      real score update. "No active subscription" means that member hasn't enabled push (or
+      enabled it on a different device than the one you're checking).
+     </p>
+     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {members.map(function (m) {
+       var status = testPushStatus[m.id];
+       return (
+        <div key={m.id} style={{
+         padding: "10px 12px", borderRadius: 8, background: "rgba(51,65,85,0.2)",
+         border: "1px solid " + theme.bdr,
+         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+        }}>
+         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[m.id] || theme.txt }}>
+           {m.name}
+          </span>
+          {status && status !== "sending" && (
+           <span style={{ fontSize: 10, color: theme.dim, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {status}
+           </span>
+          )}
+         </div>
+         <button onClick={function () { handleSendTestPush(m.id); }} disabled={status === "sending"}
+          style={{ ...buttonStyle(theme.srf), border: "1px solid " + theme.bdr, fontSize: 11,
+           padding: "6px 10px", flexShrink: 0, opacity: status === "sending" ? 0.6 : 1,
+           cursor: status === "sending" ? "default" : "pointer" }}>
+          {status === "sending" ? "Sending…" : "Send test push"}
+         </button>
+        </div>
+       );
+      })}
+     </div>
     </div>
    )}
 
