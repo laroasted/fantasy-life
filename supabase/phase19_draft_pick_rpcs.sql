@@ -35,6 +35,15 @@
 -- for exactly what they implement. A short statement_timeout is set so
 -- one stuck connection can never hold this lock, and therefore the whole
 -- draft room, hostage.
+--
+-- last_notified_pick (below) is unrelated to picking itself — it backs
+-- the notify-turn push dedup in api/push.js (Codex-caught, real finding:
+-- the 15s updated_at freshness check there only bounds WHEN a call can
+-- do anything, not how many repeated/concurrent calls land inside that
+-- window, so without this a caller could flood the on-clock member's
+-- device with duplicate "you're on the clock" pushes for the same turn).
+alter table public.draft_sessions
+  add column if not exists last_notified_pick int;
 
 create or replace function public.submit_draft_pick(
   p_expected_pick int,
@@ -50,6 +59,7 @@ set statement_timeout = '3s'
 as $func$
 declare
   v_session record;
+  v_result jsonb;
   v_is_commissioner boolean := public.is_commissioner();
   v_caller_member_id text;
   v_caller_claim_method text;
@@ -117,9 +127,20 @@ begin
     -- actually commits.
     timer_active = true, timer_started_at = null, timer_remaining = v_session.timer_duration
   where id = 1
-  returning to_jsonb(draft_sessions.*) into v_session;
+  -- Into v_result (jsonb), NOT v_session (record) — a Codex-caught bug
+  -- in an earlier version of this function did exactly that, and
+  -- `returning <single jsonb expression> into a record variable` makes
+  -- plpgsql treat the result set as one column named "to_jsonb" and
+  -- wrap it INTO that record's one field, rather than spreading the
+  -- row's own columns across the record. A subsequent `to_jsonb(v_session)`
+  -- then double-wraps it as {"to_jsonb": {...the real row...}} instead of
+  -- the flat row DraftTool.jsx expects — it would have broken on the
+  -- very first live pick (effective.snakeOrder.length throwing again,
+  -- the same crash phase15 fixed for a different reason). Assigning
+  -- straight into a plain jsonb variable avoids the ambiguity entirely.
+  returning to_jsonb(draft_sessions.*) into v_result;
 
-  return to_jsonb(v_session);
+  return v_result;
 end;
 $func$;
 
@@ -144,6 +165,7 @@ set statement_timeout = '3s'
 as $func$
 declare
   v_session record;
+  v_result jsonb;
   v_last jsonb;
 begin
   if not public.is_commissioner() then
@@ -169,9 +191,11 @@ begin
     current_pick = v_session.current_pick - 1,
     status = 'drafting'
   where id = 1
-  returning to_jsonb(draft_sessions.*) into v_session;
+  -- Into v_result (jsonb) — see submit_draft_pick's own comment on this
+  -- same line for why NOT the record variable.
+  returning to_jsonb(draft_sessions.*) into v_result;
 
-  return to_jsonb(v_session);
+  return v_result;
 end;
 $func$;
 

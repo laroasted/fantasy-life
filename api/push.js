@@ -81,13 +81,21 @@ async function handleUnsubscribe(req, res, supabase) {
 // this reads draft_sessions itself (service role, same client as every
 // other action here) and derives the target from the server's own
 // current_pick/snake_order — the caller can trigger a check, never choose
-// who gets pushed. The updated_at freshness check on top of that caps it
-// to "within 15s of a real state change", so even a repeated/malicious
-// call can't do more than nudge whoever's turn it already is.
+// who gets pushed. The updated_at freshness check on top of that caps
+// WHEN a call can do anything to "within 15s of a real state change" —
+// but on its own that only bounds the window, not how many calls land
+// inside it (Codex-caught, real finding: a repeated or concurrent call
+// within that window would otherwise send another duplicate push every
+// time). last_notified_pick (phase19_draft_pick_rpcs.sql) closes that:
+// the UPDATE below only succeeds for the ONE caller that actually flips
+// it from its previous value to the current pick number — the same
+// optimistic-concurrency idiom submit_draft_pick uses for current_pick
+// itself. Every other call (repeated, racing, or just late) updates 0
+// rows and skips sending, so a given turn can ever cause one push.
 async function handleNotifyTurn(req, res, supabase) {
   const { data: session, error } = await supabase
     .from('draft_sessions')
-    .select('snake_order, current_pick, status, updated_at')
+    .select('snake_order, current_pick, status, updated_at, last_notified_pick')
     .eq('id', 1)
     .maybeSingle();
   if (error || !session || session.status === 'complete') {
@@ -102,6 +110,29 @@ async function handleNotifyTurn(req, res, supabase) {
   if (!memberId) {
     return res.status(200).json({ ok: true, skipped: 'no_one_on_clock' });
   }
+  if (session.last_notified_pick === session.current_pick) {
+    return res.status(200).json({ ok: true, skipped: 'already_notified' });
+  }
+
+  let claim = supabase
+    .from('draft_sessions')
+    .update({ last_notified_pick: session.current_pick })
+    .eq('id', 1)
+    .eq('current_pick', session.current_pick);
+  claim = session.last_notified_pick === null
+    ? claim.is('last_notified_pick', null)
+    : claim.eq('last_notified_pick', session.last_notified_pick);
+  const { data: claimed, error: claimErr } = await claim.select('id');
+  if (claimErr) {
+    console.error('push/notify-turn: claim failed:', claimErr.message);
+    return res.status(200).json({ ok: true, skipped: 'claim_error' });
+  }
+  if (!claimed || claimed.length === 0) {
+    // Someone else's call (or an earlier one of this same caller's own
+    // retries) already claimed this turn's notification first.
+    return res.status(200).json({ ok: true, skipped: 'already_claimed' });
+  }
+
   const result = await sendPushToMember(supabase, memberId, {
     title: "You're on the clock!",
     body: "It's your turn to pick in the Fantasy Life draft.",
