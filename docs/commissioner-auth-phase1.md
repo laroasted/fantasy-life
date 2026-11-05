@@ -61,10 +61,10 @@ No existing public read flow was removed.
 - let everyone view the same live draft room
 - keep commissioner as the only one who submits picks at first
 
-### Phase 3 — player accounts done; self-service picking not started
+### Phase 3 — done, see `docs/live-draft-phase2.md`'s "Self-service picking" section
 
 - ~~add player accounts~~ ~~map each player to their own member slot~~ — done, see AGENTS.md's Identity section
-- only allow the current drafter to submit the next pick — not started
-- keep commissioner pause / override / correction tools — the commissioner-only
-  controls already exist (phase 2); what's not started is extending any of
-  this to a second, non-commissioner writer
+- ~~only allow the current drafter to submit the next pick~~ — done (`submit_draft_pick`/`undo_last_draft_pick`, phases 18/19)
+- ~~keep commissioner pause / override / correction tools~~ — done; commissioner
+  keeps a standing pick override and sole control of the timer/undo, unchanged
+  from phase 2

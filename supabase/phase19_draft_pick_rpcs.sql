@@ -203,7 +203,19 @@ begin
     picks = v_session.picks - ((v_last ->> 'memberId') || '-' || (v_last ->> 'categoryId')),
     pick_history = v_session.pick_history - (jsonb_array_length(v_session.pick_history) - 1),
     current_pick = v_session.current_pick - 1,
-    status = 'drafting'
+    status = 'drafting',
+    -- Codex-caught, real: without this, undoing a draft's FINAL pick
+    -- reactivates a current_pick value that's still stamped in
+    -- last_notified_pick from the original "you're up" push sent before
+    -- that pick was ever made (completing the draft skips updating this
+    -- column — see api/push.js's handleNotifyTurn — so it's left
+    -- pointing at exactly the pick index undo reverts back to). The
+    -- player ends up back on the clock but the dedup check in
+    -- handleNotifyTurn treats it as already-notified and sends nothing.
+    -- Clearing it on every undo (not just this one edge case) is the
+    -- simpler, fully correct fix: an undo always means the person now on
+    -- the clock deserves a fresh notification, never a stale dedup hit.
+    last_notified_pick = null
   where id = 1
   -- Into v_result (jsonb) — see submit_draft_pick's own comment on this
   -- same line for why NOT the record variable.
