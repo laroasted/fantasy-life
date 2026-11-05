@@ -101,6 +101,20 @@ begin
     raise exception 'selection_already_taken';
   end if;
 
+  -- Codex-caught, real: without this, a client that (bug or otherwise)
+  -- calls this RPC with a category this exact member already has on
+  -- their board silently OVERWRITES that earlier pick in `picks` (the
+  -- `||` merge below just replaces the existing key) while still
+  -- appending a new pick_history entry and advancing current_pick — the
+  -- member ends up missing one category and double-counted in another,
+  -- with pick_history showing more entries than the member actually has
+  -- distinct categories for. availCats (DraftTool.jsx) already filters
+  -- this out of the UI, but that's advisory only, the same way the
+  -- now-server-revalidated selection_already_taken check used to be.
+  if v_session.picks ? (v_on_clock_member_id || '-' || p_category_id) then
+    raise exception 'category_already_picked';
+  end if;
+
   v_new_current_pick := v_session.current_pick + 1;
   v_new_status := case
     when v_new_current_pick >= jsonb_array_length(v_session.snake_order) then 'complete'
