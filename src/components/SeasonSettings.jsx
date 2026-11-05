@@ -290,6 +290,13 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    label = result.reason === "not_signed_in" ? "Not signed in" : "Failed: " + result.reason;
   } else if (result.sent > 0) {
    label = "Sent (" + result.sent + " device" + (result.sent === 1 ? "" : "s") + ")";
+  } else if (result.failed > 0) {
+   // Codex-caught, real: sent:0 doesn't mean "no subscription" by
+   // itself — a subscribed device whose actual delivery failed (bad
+   // VAPID config, push service error, etc.) ALSO lands here, and
+   // conflating the two would send the commissioner chasing "tell them
+   // to enable push" when the real problem is push delivery itself.
+   label = "Delivery failed (" + result.failed + " device" + (result.failed === 1 ? "" : "s") + " subscribed, but push didn't go through)";
   } else {
    label = "No active subscription for this member";
   }
