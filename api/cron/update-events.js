@@ -224,8 +224,13 @@ async function fetchTennisMajorBonus() {
       var lower = textParts.join(' | ').toLowerCase();
       var majorName = MAJOR_NAMES.Tennis.find(function (m) { return lower.includes(m); });
       if (!majorName) continue;
+      // 'final' is a substring of 'quarterfinal' (and would be of
+      // 'semifinal' too, hence that exclusion already being here) — a
+      // quarterfinal exit has no Tennis bonus tier, so it must fall
+      // through to the `continue` below, not get misread as a Final.
+      var isQuarterfinal = lower.includes('quarterfinal') || lower.includes('quarter-final');
       var isSemi = lower.includes('semifinal') || lower.includes('semi-final');
-      var isFinal = lower.includes('final') && !isSemi;
+      var isFinal = lower.includes('final') && !isSemi && !isQuarterfinal;
       if (!isFinal && !isSemi) continue;
 
       var competitors = e?.competitions?.[0]?.competitors || [];
