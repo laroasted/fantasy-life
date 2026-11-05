@@ -101,6 +101,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState("");
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   // Mobile: toggle panels instead of always showing
   const [mobilePanel, setMobilePanel] = useState("draft"); // "draft" | "rosters" | "history"
@@ -549,9 +550,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   };
 
   const cancelDraft = async () => {
-    await deleteDraftSession();
-    setLiveSession(null);
-    setShowCancelModal(false);
+    setCancelling(true);
+    try {
+      await deleteDraftSession();
+      setLiveSession(null);
+      setShowCancelModal(false);
+    } finally {
+      setCancelling(false);
+    }
   };
 
   // ═══════════════════════════════════════════════════════════════
@@ -1186,10 +1192,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               You'll start over from setup.
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setShowCancelModal(false)}
-                style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>Keep drafting</button>
-              <button onClick={cancelDraft}
-                style={{ ...buttonStyle(theme.red), flex: 2 }}>Cancel draft</button>
+              <button onClick={() => setShowCancelModal(false)} disabled={cancelling}
+                style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}`,
+                  opacity: cancelling ? 0.5 : 1, cursor: cancelling ? "default" : "pointer" }}>Keep drafting</button>
+              <button onClick={cancelDraft} disabled={cancelling}
+                style={{ ...buttonStyle(theme.red), flex: 2,
+                  opacity: cancelling ? 0.7 : 1, cursor: cancelling ? "default" : "pointer" }}>
+                {cancelling ? "Cancelling..." : "Cancel draft"}
+              </button>
             </div>
           </div>
         </div>
