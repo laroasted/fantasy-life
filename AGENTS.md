@@ -261,11 +261,19 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   `score_history` (phase 2's one-row-per-member-per-category-per-day
   snapshot that powers Trends). Each row has a `cause` string and a
   `source` naming which cron wrote it.
-- Only `api/cron/update-sports.js` (NFL/NBA/NHL/MLB/MLS) writes here —
-  diffing each pick's old vs. new total at write time, reusing the matched
-  ESPN team/record it already has in memory for the `cause` text. The
-  other `update-*.js` crons don't write to `score_events` yet; see
-  `docs/score-events-phase7.md` for why that's deliberate, not missing.
+- `api/cron/update-sports.js` (NFL/NBA/NHL/MLB/MLS), `update-college.js`
+  (NCAAF/NCAAB), and `update-events.js` (Tennis/Golf/F1) write here —
+  each diffs its own pick's old vs. new total at write time, reusing the
+  matched ESPN team/athlete and record it already has in memory for the
+  `cause` text, then calls the shared `writeScoreEventsAndNotify()`
+  (`api/_lib/push.js`) to batch-insert the run's `scoreEvents` and send
+  the resulting pushes — extracted there (originally inline, only in
+  update-sports.js) specifically so this logic has one copy shared across
+  every cron, not one per file. `update-country.js`, `-entertainment.js`,
+  `-billboard.js`, and `-stocks.js` don't write to `score_events` yet;
+  see `docs/score-events-phase7.md` for why that was originally
+  deliberate, not missing — now it's purely "not gotten to this one yet,"
+  being extended one cron at a time.
 - Rendered by `src/components/ActivityFeed.jsx` in `Scoreboard.jsx`'s
   sidebar. A paywalled member's entries still show (name, category,
   cause) but the delta number is blurred with the same
@@ -388,10 +396,13 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   wherever it already was, which used to silently swallow the deep link
   whenever the app was already open — the common case for an engaged
   user. This cron runs once daily (`vercel.json`), so there's no spam
-  risk from either call site. Every other cron stays silent for now —
-  wiring in college/stocks/entertainment/etc. is a
-  deliberate future follow-up, same reasoning as `score_events` itself
-  only covering sports so far (see phase7's own note).
+  risk from either call site. `update-college.js` and `update-events.js`
+  now call the same `writeScoreEventsAndNotify()` and run on the same
+  once-daily cadence, so the same reasoning holds for them. The
+  remaining crons (country, stocks, entertainment, billboard) stay
+  silent for now — wiring each in is a deliberate future follow-up,
+  same `score_events`-coverage reasoning as phase7's own note, now being
+  worked through one cron at a time.
 - **Second caller, added for self-service draft picking**
   (`docs/live-draft-phase2.md`'s self-service section): `DraftTool.jsx`
   calls `notifyTurn()` (`src/utils/push.js`) after any pick lands, which

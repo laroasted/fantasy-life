@@ -70,7 +70,7 @@
  */
 
 const { createClient } = require('@supabase/supabase-js');
-const { sendPushToUnclaimedSubscribers, sendPushToMember } = require('../_lib/push');
+const { writeScoreEventsAndNotify } = require('../_lib/push');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -455,64 +455,6 @@ function assignBasePointsWithTies(matched, totalMembers) {
   return result;
 }
 
-// Deep-links into the exact category the notification is about, reusing
-// the same `cat` URL param Scoreboard.jsx already reads on mount and
-// keeps in sync (see its own `selCat` effect) — no new wiring needed on
-// the frontend side, just pointing the push at a URL it already handles.
-function scoreboardUrl(category) {
-  const params = new URLSearchParams({ tab: 'scoreboard' });
-  if (category) params.set('cat', category);
-  return `/?${params.toString()}`;
-}
-
-// One push per run, not one per event — this cron runs once daily
-// (vercel.json), so there's no spam risk, but 12 people don't need 7
-// separate notifications when 7 picks moved overnight.
-//
-// title carries the actual message, not the app name: Safari/iOS already
-// shows "from Fantasy Life" as a platform-level second line on every web
-// push notification (not something the Notification API can suppress),
-// so a literal "Fantasy Life" title just duplicated it. Putting the real
-// content in title instead removes that redundancy and is more useful.
-//
-// `targeted`: true when every event in `scoreEvents` belongs to the same
-// member (the per-member loop below) — lets the multi-event case name
-// each category instead of falling back to a bare count, since there's
-// one person to be specific for. The broad digest (unclaimed
-// subscribers, potentially many different members in one `scoreEvents`
-// batch) leaves `targeted` unset and keeps the generic count — there's
-// no single "the deep link" to point it at.
-function buildScoreDigest(scoreEvents, memberNameById, { targeted = false } = {}) {
-  if (scoreEvents.length === 0) return null;
-  if (scoreEvents.length === 1) {
-    const e = scoreEvents[0];
-    const name = memberNameById[e.member_id] || e.member_id;
-    const sign = e.delta > 0 ? '+' : '';
-    return {
-      title: `${name} ${sign}${e.delta} in ${e.category}`,
-      body: e.cause || 'Scoreboard updated',
-      url: scoreboardUrl(e.category),
-    };
-  }
-  if (targeted) {
-    const name = memberNameById[scoreEvents[0].member_id] || scoreEvents[0].member_id;
-    const parts = scoreEvents.map((e) => {
-      const sign = e.delta > 0 ? '+' : '';
-      return `${e.category} ${sign}${e.delta}`;
-    });
-    return {
-      title: `${name}: ${scoreEvents.length} categories updated`,
-      body: parts.join(' · '),
-      url: scoreboardUrl(),
-    };
-  }
-  return {
-    title: `${scoreEvents.length} score updates`,
-    body: 'Tap to see what changed.',
-    url: scoreboardUrl(),
-  };
-}
-
 module.exports = async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   const cronSecret = process.env.CRON_SECRET;
@@ -748,50 +690,12 @@ module.exports = async function handler(req, res) {
     else console.log(`Wrote ${Object.keys(autoLockWrites).length} auto-lock entries (${Object.keys(autoLockFiredWrites).length} newly fired)`);
   }
 
-  if (scoreEvents.length > 0) {
-    const { error: eventsErr } = await supabase.from('score_events').insert(scoreEvents);
-    // Logged, not surfaced in the response or returned as a failure: the
-    // activity feed is additive. If supabase/phase7_score_events.sql
-    // hasn't been applied yet, this just fails quietly on every run until
-    // it is — same as snapshot-scores.js's relationship to score_history.
-    if (eventsErr) console.error(`Failed to write score_events: ${eventsErr.message}`);
-    else console.log(`Wrote ${scoreEvents.length} score_events rows`);
-
-    // Broad "N score updates" digest goes to subscribers who haven't
-    // claimed a member identity — unchanged behavior for them. A claimed
-    // member gets a targeted push about their OWN change instead (below),
-    // not this, per AGENTS.md's push section: once identity is known,
-    // targeted replaces broad rather than adding to it.
-    const digest = buildScoreDigest(scoreEvents, memberNameById);
-    if (digest) {
-      // Belt-and-suspenders on top of sendPushToUnclaimedSubscribers()'s
-      // own internal error handling: scores and score_events have already
-      // been written above, so nothing past this point may ever fail the
-      // cron's response, whatever goes wrong sending the digest.
-      try {
-        await sendPushToUnclaimedSubscribers(supabase, digest);
-      } catch (pushErr) {
-        console.error('Push: broad digest send failed:', pushErr.message);
-      }
-    }
-
-    // One targeted push per member whose score actually moved this run —
-    // grouped so a member with picks in two different leagues that both
-    // updated in the same run still gets exactly one notification, not two.
-    const eventsByMember = {};
-    scoreEvents.forEach((e) => {
-      (eventsByMember[e.member_id] = eventsByMember[e.member_id] || []).push(e);
-    });
-    for (const [memberId, memberEvents] of Object.entries(eventsByMember)) {
-      const memberDigest = buildScoreDigest(memberEvents, memberNameById, { targeted: true });
-      if (!memberDigest) continue;
-      try {
-        await sendPushToMember(supabase, memberId, memberDigest);
-      } catch (pushErr) {
-        console.error(`Push: targeted send to ${memberId} failed:`, pushErr.message);
-      }
-    }
-  }
+  // Logs/sends are internal to this helper and never throw — see its own
+  // comment (api/_lib/push.js) for why: score_events/push are additive on
+  // top of the real score writes already committed above, never allowed
+  // to fail this cron's own response. Shared with every other cron that
+  // writes score_events, so this orchestration lives in one place.
+  await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
 
   console.log('\nDone!');
   return res.status(200).json({

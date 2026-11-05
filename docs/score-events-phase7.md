@@ -31,13 +31,36 @@ already run against Supabase needs to be redone.
   bare "event happened" with no number doesn't undercut the paywall the
   way a visible delta would.
 
-## Scope: sports only, deliberately
+## Scope: being extended one cron at a time
 
-Only `update-sports.js` (NFL/NBA/NHL/MLB/MLS) writes to `score_events` so
-far. The other `update-*.js` crons (college, country, entertainment,
-events, billboard, stocks) do not yet — each has a different shape of
-"cause" data (stock price vs. chart position vs. odds), so wiring them up
-is future work, one cron at a time, not a blocker for shipping this.
+`update-sports.js` (NFL/NBA/NHL/MLB/MLS), `update-college.js`
+(NCAAF/NCAAB), and `update-events.js` (Tennis/Golf/F1) write to
+`score_events` as of this pass. The remaining `update-*.js` crons
+(country, entertainment, billboard, stocks) do not yet — each has a
+different shape of "cause" data (stock price vs. chart position vs.
+odds) and, for a few of them, doesn't even fetch the pre-update
+base/bonus value yet (needed to compute a diff at all) — so wiring each
+one up is still future work, one cron at a time, not a blocker for
+shipping any of this.
+
+### Extension: college + events (same session, follow-up pass)
+
+Both crons were already structurally identical to `update-sports.js`'s
+own diff pattern — same per-member loop, same pre-fetched `base`/`bonus`,
+same `isFieldLocked` scheme — so extending them was close to a direct
+copy of the diff block, not new design. The one thing worth doing
+first: `buildScoreDigest()`/`scoreboardUrl()` were originally written
+*inline inside* `update-sports.js`, the only caller at the time. Copying
+~80 lines of that into two more files (and inevitably more crons after)
+would mean the same digest-formatting bug fixed in one place silently
+staying broken in the others. Extracted both, plus the "insert
+score_events, send broad + per-member pushes" orchestration itself, into
+one new shared function — `writeScoreEventsAndNotify(supabase,
+scoreEvents, memberNameById)` in `api/_lib/push.js` — that every
+score_events-writing cron now calls instead of reimplementing that
+block. `update-sports.js` was refactored to call it too, so there's
+exactly one copy of this logic, not one that happens to be first and two
+copies that happen to match it today.
 
 ## How to configure
 
@@ -74,7 +97,10 @@ Reuses the same `SUPABASE_SERVICE_KEY` / `SUPABASE_URL` env vars
 Additive and isolated:
 
 - remove `<ActivityFeed .../>` from `src/components/Scoreboard.jsx`
-- revert the `scoreEvents` diffing block in `api/cron/update-sports.js`
+- revert the `scoreEvents` diffing block in `api/cron/update-sports.js`,
+  `update-college.js`, and `update-events.js`, and the shared
+  `writeScoreEventsAndNotify()`/`buildScoreDigest()`/`scoreboardUrl()`
+  functions in `api/_lib/push.js`
 - drop the `score_events` table in Supabase if you want it fully gone
 
 No existing table, cron, or read path is modified.
