@@ -1352,6 +1352,7 @@ export default function App() {
                 onFinalize={handleFinalize}
                 isCommissioner={isCommissioner}
                 commissionerEmail={commissionerSession?.user?.email || ""}
+                memberId={memberId}
                 currentSeasonYear={activeSeason?.year}
                 currentSeasonMembers={activeSeason?.members}
               />

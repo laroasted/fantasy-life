@@ -70,6 +70,22 @@ export async function subscribeToPush(memberId = null) {
   }
 }
 
+// Fire-and-forget: tells the server to push whoever is currently on the
+// clock in the live draft (see api/push.js's own comment on
+// ?action=notify-turn for why this call carries no memberId itself — the
+// server derives the target from draft_sessions directly). Called right
+// after a pick lands, win or lose a race; never awaited for its result
+// by the caller, and never allowed to surface as a user-visible error —
+// a missed "it's your turn" push is a worse UX than a thrown exception
+// breaking the pick flow that just succeeded.
+export async function notifyTurn() {
+  try {
+    await fetch("/api/push?action=notify-turn", { method: "POST" });
+  } catch (e) {
+    console.warn("Push: notify-turn failed.", e);
+  }
+}
+
 export async function unsubscribeFromPush() {
   if (!("serviceWorker" in navigator)) return { ok: true };
   try {
