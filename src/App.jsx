@@ -479,6 +479,16 @@ export default function App() {
         writeCachedIdentity(role, claimedMemberId);
         setAuthReady(true);
         setAuthConfirmed(true);
+        // Fire-and-forget: this early-return path used to skip
+        // auto_claim_member_identity() entirely once member_id was
+        // already set, which silently broke phase18's own "backfills
+        // claim_method the next time this member signs in" promise for
+        // EVERY already-claimed profile — the one case that promise was
+        // actually meant to cover. The RPC is idempotent and already
+        // swallows its own errors (autoClaimMemberIdentityRpc(), above),
+        // and nothing here needs its result — claimedMemberId is already
+        // known — so it's called without awaiting it.
+        autoClaimMemberIdentityRpc();
         return;
       }
 
