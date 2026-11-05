@@ -181,6 +181,23 @@ function buildScoreDigest(scoreEvents, memberNameById, { targeted = false } = {}
   }
   if (targeted) {
     const name = memberNameById[scoreEvents[0].member_id] || scoreEvents[0].member_id;
+    // Country is the one category with two independent scoring mechanisms
+    // (GDP rank + Olympic medal count), so a single run can produce more
+    // than one event for the same member in the same category — every
+    // other cron writes at most one event per member per run, so until
+    // Country this branch only ever saw one event per distinct category.
+    // Name the actual category instead of claiming "N categories" when
+    // they're all the same one, and use each event's own cause text
+    // (not a repeated "Country +3 · Country +7") so the two sub-events
+    // stay distinguishable.
+    const categories = new Set(scoreEvents.map((e) => e.category));
+    if (categories.size === 1) {
+      const [category] = categories;
+      const body = scoreEvents
+        .map((e) => e.cause || `${e.delta > 0 ? '+' : ''}${e.delta}`)
+        .join(' · ');
+      return { title: `${name}: ${category} updated`, body, url: scoreboardUrl(category) };
+    }
     const parts = scoreEvents.map((e) => {
       const sign = e.delta > 0 ? '+' : '';
       return `${e.category} ${sign}${e.delta}`;

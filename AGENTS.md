@@ -263,20 +263,26 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   `source` naming which cron wrote it.
 - `api/cron/update-sports.js` (NFL/NBA/NHL/MLB/MLS), `update-college.js`
   (NCAAF/NCAAB), `update-events.js` (Tennis/Golf/F1), `update-billboard.js`
-  (Musician), `update-entertainment.js` (Actor/Actress), and
-  `update-stocks.js` (Stock) write here — each diffs its own pick's old
-  vs. new total at write time, reusing whatever stat it already has in
-  memory (matched ESPN team/athlete, chart weeks, box-office/RT score,
-  % price change) for the `cause` text, then calls the shared
-  `writeScoreEventsAndNotify()` (`api/_lib/push.js`) to batch-insert the
-  run's `scoreEvents` and send the resulting pushes — extracted there
-  (originally inline, only in update-sports.js) specifically so this
-  logic has one copy shared across every cron, not one per file.
-  `update-country.js` doesn't write to `score_events` yet — it has two
-  separate update loops (GDP → base, Olympics → bonus) with two
-  different lock-key schemes, deliberately skipped for now rather than
-  rushed; see `docs/score-events-phase7.md`. Two things worth noting
-  from the extension itself: `update-stocks.js` deliberately diffs
+  (Musician), `update-entertainment.js` (Actor/Actress), `update-stocks.js`
+  (Stock), and `update-country.js` (Country) write here — each diffs its
+  own pick's old vs. new total at write time, reusing whatever stat it
+  already has in memory (matched ESPN team/athlete, chart weeks,
+  box-office/RT score, % price change, GDP growth %, Olympic medal rank)
+  for the `cause` text, then calls the shared `writeScoreEventsAndNotify()`
+  (`api/_lib/push.js`) to batch-insert the run's `scoreEvents` and send
+  the resulting pushes — extracted there (originally inline, only in
+  update-sports.js) specifically so this logic has one copy shared across
+  every cron, not one per file. `update-country.js` is the one category
+  where a single run can write *two* score_events rows for the same
+  member: GDP (→ `base`) and Olympics (→ `bonus`) are independent
+  mechanisms with their own lock keys, so both a rank shift and a medal-
+  count shift can land in the same run. `buildScoreDigest()` handles this
+  — see its own comment in `api/_lib/push.js` — by naming the one real
+  category instead of claiming "2 categories updated" when a member's
+  batch of events all share the same `category`, and `writeScoreEventsAndNotify()`'s
+  existing per-member grouping already guarantees exactly one push either
+  way. Two things worth noting from the billboard/entertainment/stocks
+  extension pass: `update-stocks.js` deliberately diffs
   `base` only, never `bonus` — `bonus` is unconditionally reset to 0
   every run regardless of any real change (there's no actual Stock bonus
   mechanism), so diffing it would generate a misleading "bonus −X" event
@@ -407,15 +413,18 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   whenever the app was already open — the common case for an engaged
   user. This cron runs once daily (`vercel.json`), so there's no spam
   risk from either call site. `update-college.js`, `update-events.js`,
-  `update-billboard.js`, `update-entertainment.js`, and
-  `update-stocks.js` all now call the same `writeScoreEventsAndNotify()`
+  `update-billboard.js`, `update-entertainment.js`, `update-stocks.js`,
+  and `update-country.js` all now call the same `writeScoreEventsAndNotify()`
   too — each on its own `vercel.json` schedule (college/events daily
   like sports, stocks daily on weekdays, billboard weekly on Fridays,
-  entertainment weekly on Mondays), every one infrequent enough that the
-  same "no spam risk" reasoning holds regardless of the exact cadence.
-  Only `update-country.js` stays silent for now — deliberately skipped
-  (two separate update loops, two different lock schemes) rather than
-  rushed; see `docs/score-events-phase7.md`.
+  entertainment weekly on Mondays, country monthly), every one infrequent
+  enough that the same "no spam risk" reasoning holds regardless of the
+  exact cadence. `update-country.js`'s GDP and Olympics loops each push
+  their own `scoreEvents` entries into one shared array before the single
+  `writeScoreEventsAndNotify()` call at the end, so a run where both a
+  member's GDP rank and their Olympic medal count move still sends that
+  member exactly one push, not two — see the Activity feed section above
+  for how `buildScoreDigest()` keeps that push's wording accurate.
 - **Second caller, added for self-service draft picking**
   (`docs/live-draft-phase2.md`'s self-service section): `DraftTool.jsx`
   calls `notifyTurn()` (`src/utils/push.js`) after any pick lands, which
