@@ -6,7 +6,9 @@
  *   2. Billboard.com HTML scraping (fallback if GitHub returns 404 or invalid data)
  *
  * Respects commissioner locks from seasons.locks column.
- * Bonus points are NEVER touched (locked from Grammy results).
+ * Bonus points are resolved from the Grammy's own Wikipedia article (see
+ * GRAMMY_CATEGORIES/the 2026-11 changelog entry below) — no longer purely
+ * manual, though a locked `bonus` field is still never overwritten.
  * Paginates all billboard_weeks rows (Supabase caps at 1000 per query).
  *
  * Fantasy year dates are read dynamically from seasons.fy_start and seasons.fy_end
@@ -45,6 +47,20 @@
  * - FIX (April 2026): cleanText() handles &#039; apostrophe entity.
  * - FIX (April 2026): Scoring query filters rank <= 100 as belt-and-suspenders
  *        so any rank > 100 rows that slipped into the DB are never scored.
+ * - NEW (2026-11): Automated Grammy bonus. Resolved from the ceremony's own
+ *        Wikipedia article — NOT Wikidata (its structured statements lag
+ *        real-time article editing by hours to days) — and kept entirely
+ *        separate from update-projections.js's market-based
+ *        `applyGrammyBonus` (pre-outcome odds for the "Projected Final"
+ *        toggle, never a real score). Evergreen: looked up by trying
+ *        "{year} Grammy Awards" for the current year then the prior year;
+ *        "has this ceremony happened" is answered by whether a winner can
+ *        be parsed out, not a hardcoded date. Covers the FULL bonus rule
+ *        (Pop/Rock/Rap/New Artist all at tier 3, plus nomination-without-
+ *        win) since it isn't limited to whatever market happens to exist.
+ *        See docs/bonus-automation.md for the confidence-level writeup —
+ *        the winner-is-bold-wikitext parsing wasn't live-verified from
+ *        this build's network-restricted sandbox.
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -116,7 +132,212 @@ function isFieldLocked(locks, category, ownerName, field) {
   if (!locks) return false;
   return !!locks[category + '|' + ownerName + '|' + field];
 }
- 
+
+// ═══════════════════════════════════════════════════════════════════════
+// GRAMMY BONUS — resolved from the ceremony's own Wikipedia article.
+// Same rationale as update-entertainment.js's Oscar bonus (see its own
+// 2026-11 changelog): Wikipedia over Wikidata for freshness, kept entirely
+// separate from update-projections.js's market-based `applyGrammyBonus`
+// (pre-outcome odds for the "Projected Final" toggle, never a real
+// score), and this version covers the FULL bonus rule — Pop/Rock/Rap/New
+// Artist all at tier 3, plus the nomination-without-win tier — since it
+// isn't limited to whatever Polymarket/Kalshi market happens to exist.
+// ═══════════════════════════════════════════════════════════════════════
+const GRAMMY_CATEGORIES = [
+  { label: 'Album of the Year', keywords: ['album of the year'], winTier: 7, nomTier: 1 },
+  { label: 'Record of the Year', keywords: ['record of the year'], winTier: 7, nomTier: 1 },
+  { label: 'Song of the Year', keywords: ['song of the year'], winTier: 7, nomTier: 1 },
+  { label: 'Best Pop Vocal Album', keywords: ['best pop vocal album'], winTier: 3, nomTier: 1 },
+  { label: 'Best Rock Album', keywords: ['best rock album'], winTier: 3, nomTier: 1 },
+  { label: 'Best Rap Album', keywords: ['best rap album'], winTier: 3, nomTier: 1 },
+  { label: 'Best New Artist', keywords: ['best new artist'], winTier: 3, nomTier: 1 },
+];
+
+async function fetchWikipediaWikitext(title) {
+  try {
+    var url = 'https://en.wikipedia.org/w/api.php?action=parse&page=' + encodeURIComponent(title) + '&prop=wikitext&format=json&redirects=1';
+    var res = await fetch(url, { headers: { 'User-Agent': 'FantasyLifeHub/1.0 (private league scoring tool)' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    var data = await res.json();
+    if (data.error) return null;
+    return (data.parse && data.parse.wikitext && data.parse.wikitext['*']) || null;
+  } catch (err) { console.error('  Wikipedia fetch failed for "' + title + '":', err.message); return null; }
+}
+
+// FIX (2026-11, Codex review on PR #55): categories on these ceremony
+// pages are NOT ==heading== sections — verified live against the 2025
+// Grammy Awards article's real wikitext. Each category is a
+// `{{Award category|color|[[Real Name|Display Name]]}}` template marker
+// inside a wikitable (one or two categories per row). Two different
+// nominee shapes exist on the SAME page: "General Field" categories
+// (Album/Record/Song of the Year) list one `*` bullet PER NOMINEE with a
+// `**` producer/engineer credits sub-line each; genre categories (Best
+// Rock Album, etc.) list only the WINNER as a `*` bullet with every other
+// nominee as a `**` sub-line. extractWinnerAndNominees() below handles
+// both: winner = first bolded bullet at any depth, nominees = every
+// other bullet line that isn't a credits line.
+function extractCategoryBlock(wikitext, categoryKeywords) {
+  var lines = wikitext.split('\n');
+  var markerRegex = /\{\{Award category\|/i;
+  var startIdx = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (markerRegex.test(lines[i])) {
+      var lower = lines[i].toLowerCase();
+      if (categoryKeywords.some(function(k) { return lower.includes(k); })) { startIdx = i; break; }
+    }
+  }
+  if (startIdx === -1) return null;
+  var buffer = [];
+  for (var j = startIdx + 1; j < lines.length; j++) {
+    var line = lines[j];
+    if (markerRegex.test(line)) break;   // next category's marker
+    if (/^\s*\|-/.test(line)) break;     // table row separator
+    if (/^={2,4}/.test(line)) break;     // next real heading
+    buffer.push(line);
+  }
+  return buffer.length > 0 ? buffer.join('\n') : null;
+}
+
+function extractWikiNames(line) {
+  var names = [], m, re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+  while ((m = re.exec(line)) !== null) {
+    var n = m[1].trim();
+    if (n && !/^(file|category|image):/i.test(n)) names.push(n);
+  }
+  return names;
+}
+
+// A credit sub-line (producer/engineer/songwriter/mixer wording) belongs
+// to whichever entry immediately precedes it, not a competing nominee.
+function isCreditLine(line) { return /\b(producers?|engineers?|mixers?|songwriters?|mastering engineer)\b/i.test(line); }
+
+// Returns candidate NAME LISTS, not one resolved name — deliberately:
+// which wikilink on a line is "the artist" vs. "the song/album" differs
+// by line (`"[[Song]]" – [[Artist]]` or `''[[Album]]'' – [[Artist]]`), so
+// every name on the line is kept as a candidate and left to
+// artistMatches() at the call site, which only ever matches a real
+// artist's name — a song/album title just won't match. No blanket
+// credit-line filtering: verified live that excluding every
+// "songwriter"/"producer" line actively loses real matches — Grammy's
+// "General Field" categories (Album/Record/Song of the Year) put the
+// performer's name ONLY on that sub-line for some nominees (Song of the
+// Year's winner line is just the song title in quotes; the songwriter/
+// performer is named on the `**` line beneath it), so that line has to
+// stay in the candidate pool. A producer or engineer's own name landing
+// in there too is harmless noise for the same reason a film/song title is.
+function extractWinnerAndNominees(sectionText) {
+  if (!sectionText) return null;
+  var bulletLines = sectionText.split('\n').filter(function(l) { return /^\s*\*/.test(l); });
+  if (bulletLines.length === 0) return null;
+  var winnerIdx = bulletLines.findIndex(function(l) { return l.includes("'''"); });
+  if (winnerIdx === -1) return null;
+  var winnerCandidates = extractWikiNames(bulletLines[winnerIdx]);
+  // The winner's own very-next bullet line is its own credit sub-line
+  // when it READS like one (producer/songwriter/engineer wording) —
+  // merge it into winnerCandidates (not the general nominee pool) since
+  // it's the same winner's own credit, not a competing entry. Checked by
+  // CONTENT, not by whether it's also bolded: verified live (Codex review
+  // on PR #55) that a winner's own credit sub-line isn't bolded with
+  // 100% consistency across every category on these pages, so relying
+  // on bold alone silently lost a real win in that case. A genuinely
+  // different nominee's plain `**` line right under the winner (the
+  // genre-category shape) correctly reads as not-a-credit-line and is
+  // left alone, going to the nominee pool instead.
+  var nextLine = bulletLines[winnerIdx + 1];
+  var nextIsOwnCredit = !!(nextLine && isCreditLine(nextLine));
+  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(nextLine));
+  if (winnerCandidates.length === 0) return null;
+
+  var nomineeSet = {};
+  for (var i = 0; i < bulletLines.length; i++) {
+    if (i === winnerIdx || (i === winnerIdx + 1 && nextIsOwnCredit)) continue;
+    for (var n of extractWikiNames(bulletLines[i])) nomineeSet[n] = true;
+  }
+  return { winnerCandidates: winnerCandidates, nomineeCandidates: Object.keys(nomineeSet) };
+}
+
+// Each category's parsed result, cached for reuse across every pick
+// (parsing the wikitext per-pick would be redundant work).
+function computeGrammyCategoryResults(wikitext) {
+  var results = [];
+  for (var cat of GRAMMY_CATEGORIES) {
+    var parsed = extractWinnerAndNominees(extractCategoryBlock(wikitext, cat.keywords));
+    if (!parsed) { console.warn('  Grammy: could not resolve winner for "' + cat.label + '"'); continue; }
+    results.push({ cat: cat, winnerCandidates: parsed.winnerCandidates, nomineeCandidates: parsed.nomineeCandidates });
+  }
+  return results;
+}
+
+// The ceremony's own infobox date (e.g. "| date = February 2, 2025"), not
+// which year's ARTICLE happened to resolve — needed because "the most
+// recent ceremony with a winner" is wrong the moment a new season starts
+// (new picks drafted) before THAT season's own ceremony has aired: the
+// prior, already-decided ceremony would otherwise get silently credited
+// to the new season's unrelated picks (Codex review on PR #55).
+function extractCeremonyDate(wikitext) {
+  var m = wikitext.match(/\{\{Infobox[^\n]*/);
+  if (!m) return null;
+  var block = wikitext.slice(m.index, m.index + 3000); // date field lives near the top
+  var dm = block.match(/\|\s*date\s*=\s*([^\n|]+)/);
+  if (!dm) return null;
+  var parsed = new Date(dm[1].trim());
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Tries "{year} Grammy Awards" (this show's articles are titled by
+// calendar year directly, unlike the Oscars' ordinal titles) for each
+// calendar year this season's Fantasy Year window spans (newest first) —
+// not the wall-clock year, which can resolve to a real but WRONG
+// (already-scored, prior-season) ceremony. A candidate is only accepted
+// if its own ceremony date actually falls inside [fyStart, fyEnd]; "has
+// this ceremony happened yet" beyond that is answered by whether a
+// winner can actually be parsed out of it — live content state, not a
+// hardcoded date — so this still self-corrects before a given year's
+// ceremony has aired.
+async function resolveGrammyWikitext(fyStart, fyEnd) {
+  var fyStartDate = new Date(fyStart), fyEndDate = new Date(fyEnd);
+  var candidateYears = Array.from(new Set([fyEndDate.getFullYear(), fyStartDate.getFullYear()]));
+  for (var year of candidateYears) {
+    var title = year + ' Grammy Awards';
+    var wikitext = await fetchWikipediaWikitext(title);
+    if (!wikitext) { console.log('  Grammy: no Wikipedia page resolved for "' + title + '"'); continue; }
+    var ceremonyDate = extractCeremonyDate(wikitext);
+    if (!ceremonyDate || ceremonyDate < fyStartDate || ceremonyDate > fyEndDate) {
+      console.log('  Grammy: "' + title + '" ceremony date (' + (ceremonyDate ? ceremonyDate.toISOString().slice(0, 10) : 'unknown') + ') is outside this season\'s Fantasy Year window (' + fyStart + ' to ' + fyEnd + ') — skipping');
+      continue;
+    }
+    var hasWinner = computeGrammyCategoryResults(wikitext).length > 0;
+    if (hasWinner) { console.log('  Grammy: using "' + title + '" (ceremony ' + ceremonyDate.toISOString().slice(0, 10) + ')'); return wikitext; }
+    console.log('  Grammy: "' + title + '" has no resolvable winners yet (ceremony likely not aired)');
+  }
+  return null;
+}
+
+// SUMS credit across every DISTINCT category this pick's name matches —
+// NOT a max. Confirmed against this league's own historical record
+// (src/data/musician.js): e.g. Bad Bunny's bonus=9 breaks down as
+// bonusNote "AOTY win, ROTY nom, SOTY nom" = 7 (AOTY win) + 1 (ROTY nom)
+// + 1 (SOTY nom); Kendrick Lamar's bonus=15 = 7 + 3 + 3 + 1 + 1 across 5
+// categories. An artist nominated in several Grammy categories the same
+// year is common (the "General Field" categories are explicitly
+// cross-nominated with genre categories), so this has to accumulate.
+// Within a single category a win always replaces a nomination — never
+// double-counted — because extractWinnerAndNominees() already excludes
+// the winner's own line(s) from that category's nomineeCandidates.
+function resolveGrammyBonusForPick(pickName, categoryResults) {
+  var total = 0, labels = [];
+  for (var r of categoryResults) {
+    if (r.winnerCandidates.some(function(c) { return artistMatches(pickName, c); })) {
+      total += r.cat.winTier;
+      labels.push('Won ' + r.cat.label);
+    } else if (r.nomineeCandidates.some(function(c) { return artistMatches(pickName, c); })) {
+      total += r.cat.nomTier;
+      labels.push('Nominated ' + r.cat.label);
+    }
+  }
+  return labels.length > 0 ? { tier: total, label: labels.join(' | ') } : null;
+}
+
 /**
  * Generates Saturday-aligned chart dates within the Fantasy Year window.
  * Includes a 6-day lookahead so charts published Tuesday (dated next Saturday)
@@ -560,7 +781,13 @@ module.exports = async function handler(req, res) {
  
   var { data: picks } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', season.year).eq('category', 'Musician');
   if (!picks || picks.length === 0) return res.status(200).json({ message: 'No Musician picks found' });
- 
+
+  // Grammy bonus (see GRAMMY_CATEGORIES/computeGrammyCategoryResults
+  // above) — fetched once per run, independent of the chart-data
+  // pagination below.
+  var grammyWikitext = await resolveGrammyWikitext(FY_START, FY_END);
+  var grammyCategoryResults = grammyWikitext ? computeGrammyCategoryResults(grammyWikitext) : [];
+
   // Paginate all chart entries in FY window
   // rank <= 100 is belt-and-suspenders: never score rank > 100 rows
   // even if any slipped through into the DB
@@ -637,7 +864,12 @@ module.exports = async function handler(req, res) {
     var ownerName = memberNameById[r.member_id] || r.member_id;
     var baseLocked = isFieldLocked(locks, 'Musician', ownerName, 'base');
     var metricLocked = isFieldLocked(locks, 'Musician', ownerName, 'metric');
- 
+    var bonusLocked = isFieldLocked(locks, 'Musician', ownerName, 'bonus');
+
+    var bonusEntry = resolveGrammyBonusForPick(r.pick, grammyCategoryResults);
+    var bonusWritable = !!bonusEntry && !bonusLocked;
+    var newBonusVal = bonusWritable ? bonusEntry.tier : (Number(r.bonus) || 0);
+
     var totalNumOne = r.songs.reduce(function(sum, s) { return sum + s.numOneWeeks; }, 0);
     // e.g. "144 chart wks (17 at #1)" — computed unconditionally (not just
     // when !metricLocked) since the score_events cause text below wants
@@ -653,10 +885,12 @@ module.exports = async function handler(req, res) {
       updateObj.metric = r.totalWeeks;
       updateObj.record = recordText;
     }
- 
+    if (bonusWritable) { updateObj.bonus = bonusEntry.tier; updateObj.bonus_note = bonusEntry.label; }
+
     var skipped = [];
     if (baseLocked) skipped.push('base');
     if (metricLocked) skipped.push('metric');
+    if (bonusEntry && bonusLocked) skipped.push('bonus');
     if (skipped.length > 0) console.log('  ' + ownerName + ': locked — ' + skipped.join(', '));
  
     var { error: pickErr } = await supabase.from('picks').update(updateObj).eq('id', r.id);
@@ -680,20 +914,23 @@ module.exports = async function handler(req, res) {
     updated++;
 
     // Diff against the pre-update row (r.base, r.bonus) to log what
-    // actually moved — same pattern as update-sports.js. A locked base
-    // means updateObj.base was never set, so newBaseVal === r.base and
-    // delta is naturally 0, no special case needed to skip locked no-ops.
+    // actually moved — same pattern as update-sports.js, now accounting
+    // for a Grammy bonus change too, not just base. A locked field's
+    // "new" value stays equal to the pre-update value, so it contributes
+    // 0 to delta — no special case needed to skip locked no-ops.
     var newBaseVal = baseLocked ? (Number(r.base) || 0) : (Number(r.newBase) || 0);
     var oldTotal = (Number(r.base) || 0) + (Number(r.bonus) || 0);
-    var newTotal = newBaseVal + (Number(r.bonus) || 0);
+    var newTotal = newBaseVal + newBonusVal;
     var delta = Math.round((newTotal - oldTotal) * 10) / 10;
     if (delta !== 0) {
+      var causeParts = [recordText];
+      if (bonusWritable) causeParts.push(bonusEntry.label);
       scoreEvents.push({
         season_year: season.year,
         member_id: r.member_id,
         category: 'Musician',
         delta: delta,
-        cause: r.pick + ' (' + recordText + ')',
+        cause: r.pick + ' (' + causeParts.join(' — ') + ')',
         source: 'update-billboard',
       });
     }
@@ -705,13 +942,12 @@ module.exports = async function handler(req, res) {
       totalWeeks: r.totalWeeks,
       numOneWeeks: totalNumOne,
       songCount: r.songs.length,
-      // Pre-existing display bug, fixed in passing: this used to read
-      // r.bonus here instead of r.base when locked — r.base didn't exist
-      // at all before this pass added it to the select, so there was
-      // nothing else to show. Now shows the actual (unchanged) base.
+      // Pre-existing display bug, fixed in passing (by main, PR #53):
+      // this used to read r.bonus here instead of r.base when locked.
       base: baseLocked ? (Number(r.base) || 0) : r.newBase,
-      bonus: Number(r.bonus) || 0,
-      total: (baseLocked ? (Number(r.base) || 0) : r.newBase) + (Number(r.bonus) || 0),
+      bonus: newBonusVal,
+      total: (baseLocked ? (Number(r.base) || 0) : r.newBase) + newBonusVal,
+      bonusDetected: bonusEntry ? bonusEntry.label : undefined,
       lockedFields: skipped.length > 0 ? skipped : undefined,
     });
   }

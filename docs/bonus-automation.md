@@ -1,13 +1,13 @@
-# Automated bonus scoring (F1, sports playoffs, majors)
+# Automated bonus scoring (F1, sports playoffs, majors, Oscars, Grammys)
 
 Added 2026-11. Context: before this, every bonus number in `categories.js`'s
 `CATEGORY_BONUS_RULES` was commissioner-only manual entry via Settings →
 Scores & Bonus (a plain number input + free-text note per member per
-category — see `SeasonSettings.jsx`). This automates three of those bonus
-types from the same data vendors already trusted for base scoring. It does
-**not** change how bonus is entered — it just means the automated crons now
-also write to `picks.bonus`/`picks.bonus_note`, the same columns the manual
-UI writes, respecting the same per-field locks.
+category — see `SeasonSettings.jsx`). This automates those bonus types from
+real-world sources instead. It does **not** change how bonus is entered —
+it just means the automated crons now also write to
+`picks.bonus`/`picks.bonus_note`, the same columns the manual UI writes,
+respecting the same per-field locks.
 
 ## What's automated now
 
@@ -17,15 +17,97 @@ UI writes, respecting the same per-field locks.
 | Tennis majors (win/final/SF) | `api/cron/update-events.js` | ESPN tennis scoreboard |
 | Golf majors (win/runner-up/top 10) | `api/cron/update-events.js` | ESPN golf scoreboard + leaderboard |
 | NFL/MLB/NBA/NHL/MLS playoff bracket round | `api/cron/update-sports.js` | ESPN team postseason schedule |
+| Oscar win/nomination (incl. Supporting) | `api/cron/update-entertainment.js` | English Wikipedia (ceremony article wikitext) |
+| Grammy win/nomination (incl. Pop/Rock/Rap/New Artist) | `api/cron/update-billboard.js` | English Wikipedia (ceremony article wikitext) |
 | Country Olympic medal rank | `api/cron/update-country.js` | ESPN Olympics medal table (pre-existing, unchanged) |
 
-Still manual (deliberately, see the original brainstorm): Oscar/Grammy
-win/nomination bonus, NCAAF/NCAAB bowl and tournament bonus, and the
+Still manual (deliberately): NCAAF/NCAAB bowl and tournament bonus, and the
 "Most Pro Bowl / Most All-Star selections" sub-tier on NFL/MLB/NBA. The
 NCAAF/NCAAB bowl bonus was already flagged as not worth automating in
 `docs/projections-feature-plan.md` (named bowl games, not one bracket); the
 All-Star sub-tier needs per-player roster data, a different shape of API
 call than anything else here, for a bonus that only fires once a year.
+
+## Oscar/Grammy: Wikipedia, not Wikidata — and not `update-projections.js`
+
+`update-projections.js` already had `applyOscarBonus`/`applyGrammyBonus`,
+but those stay exactly what they are: a **pre-outcome probability estimate**
+from Kalshi/Polymarket odds, feeding the Scoreboard's "Current / Projected
+Final" toggle, and that cron remains explicitly read-only with respect to
+`picks` — this change doesn't touch it, the `projections` table, or that
+toggle at all. What's new here is the **post-outcome settlement** of the
+real thing, a fully separate pipeline living in the base-scoring crons for
+those categories (`update-entertainment.js` for Actor/Actress,
+`update-billboard.js` for Musician) — same split already established
+between "what might happen" (projections) and "what did happen" (real
+`picks.bonus`) for F1/sports/majors above.
+
+The source is the ceremony's own Wikipedia article's **wikitext**, fetched
+live via `action=parse` on `en.wikipedia.org`'s API — deliberately not
+Wikidata's structured "award received" statements, which lag real-time
+editing of the article's own prose/tables by hours to days; Wikipedia's
+winners table gets edited live during the broadcast. Evergreen lookup:
+- **Grammy** (`resolveGrammyWikitext`): tries `"{year} Grammy Awards"` —
+  this show's articles are titled by calendar year directly.
+- **Oscar** (`resolveOscarWikitext`): tries `"{year} Academy Awards"`,
+  relying on Wikipedia's own redirect to the real ordinal-numbered article
+  (e.g. "98th Academy Awards") — since the Oscars aren't titled by year.
+
+Both try the current year, then the prior year, and "has this ceremony
+actually happened" is answered by whether a winner can be parsed out of the
+page — live content state, not a hardcoded date — so this self-corrects
+across the New Year boundary before a given year's ceremony has aired.
+
+**Full bonus-rule coverage, not just what a market happened to list:** the
+projections' market-based version explicitly skips Best Supporting
+Actor/Actress (no Polymarket market found) and Best Pop/Rock Album (same
+reason), even though both are real tiers in `CATEGORY_BONUS_RULES`. This
+version isn't constrained by what a prediction market lists — Wikipedia has
+every category's section regardless — so `OSCAR_CATEGORIES`/
+`GRAMMY_CATEGORIES` cover the complete rule: both Leading and Supporting for
+Oscars, and Album/Record/Song of the Year plus Pop/Rock/Rap/New Artist (all
+at CATEGORY_BONUS_RULES's tier 3) plus the nomination-without-win tier for
+Grammys.
+
+**Parsing approach (live-verified 2026-11 against the 97th Academy Awards
+and 2025 Grammy Awards articles' real wikitext — see the Confidence
+section below for what changed and why):** categories on these pages are
+NOT `==heading==` sections — a first version of this assumed they were,
+and Codex's review on PR #55 caught that it silently never matched
+anything. Each category is actually a
+`{{Award category|color|[[Real Name|Display Name]]}}` template marker
+inside a wikitable; `extractCategoryBlock()` finds that marker by keyword
+and reads until the next one (or a table-row break, or a real heading).
+Within that block, `extractWinnerAndNominees()` takes the first **bold**
+(`'''...'''`) bulleted line as the winner and every other bulleted line as
+a nominee candidate — bullet depth varies by category shape (Oscar acting
+categories: one winner `*` + four nominee `**` lines; Grammy's "General
+Field" categories: one `*` per nominee, each with its own producer/
+engineer-credit `**` sub-line; Grammy's genre categories: one winner `*`
+with every other nominee as a `**` beneath it), so nothing here assumes a
+fixed depth. A song/album/film title or a producer's name landing in a
+candidate list is harmless noise: `namesMatch()`/`artistMatches()` just
+won't match it to the real person/artist being checked. One wrinkle
+worth knowing: a winner's own credit sub-line (e.g. Grammy Song of the
+Year's winner line is just the song title in quotes — the actual
+songwriter/performer is named only on the `**` line beneath it) gets
+merged into that winner's own candidate list rather than treated as a
+separate nominee, specifically so that name isn't lost.
+A person/artist's result is **summed across every distinct category**
+they match — not a max, despite `CATEGORY_BONUS_RULES.Actor`/`Actress`/
+`Musician`'s single-line phrasing initially reading like "whichever of
+these applies." Caught by Codex's review on PR #55, which traced it to
+this league's own historical record (`src/data/musician.js`): Bad
+Bunny's real `bonus: 9` breaks down as `bonusNote: "AOTY win, ROTY nom,
+SOTY nom"` = 7 (Album of the Year win) + 1 (Record of the Year nom) + 1
+(Song of the Year nom); Kendrick Lamar's `bonus: 15` = 7 + 3 + 3 + 1 + 1
+across 5 categories. Multi-category nominations are the norm, not the
+exception, for the Grammys' "General Field" (every General Field nominee
+is also cross-nominated in a genre category) and plausible, if rarer,
+for Oscar dual Lead/Supporting nominations too — same rule applied to
+both for consistency. Within a single category a win always replaces a
+nomination, never double-counted, since a category's own winner is
+excluded from its own nominee-candidate list.
 
 ## Evergreen by design — no hardcoded dates
 
@@ -86,6 +168,22 @@ calls, not a verified live response for every endpoint added here.
   are classified from free-text match labels the same way the sports
   bracket is — and that label shape is the least-verified piece in this
   whole change.
+- **High** — Oscar and Grammy bonus. Upgraded from "moderate" after Codex's
+  review on PR #55 caught that the first version's heading-based category
+  matching never matched anything on either real page (there are no
+  `==heading==` sections per category at all), which sent this through an
+  actual live-data fetch (via Firecrawl, since `en.wikipedia.org` is
+  blocked from this sandbox's own network) against the real 97th Academy
+  Awards and 2025 Grammy Awards articles to find the true
+  `{{Award category|...}}`-marker structure described above and confirm
+  the rewrite resolves every one of the 11 tracked categories to the
+  actual, correct real-world winner (Adrien Brody, Mikey Madison, Kieran
+  Culkin, Zoe Saldaña, Beyoncé, Kendrick Lamar ×2, Sabrina Carpenter, The
+  Rolling Stones, Doechii, Chappell Roan). `extractWinnerAndNominees()`
+  only ever returns a winner when it finds one clean bold match; anything
+  messier (a tie, a future markup change, a category this wasn't tested
+  against) falls through to "could not resolve," logged and skipped,
+  never guessed.
 
 **On the first live run after this ships**, check the cron's logs/response
 for each of the above, specifically:
@@ -96,6 +194,11 @@ for each of the above, specifically:
    warning — that's the raw text ESPN returned that didn't match a known
    keyword; it tells you exactly what to add to `PLAYOFF_ROUNDS`/
    `MAJOR_NAMES`'s keyword lists if a real result was missed.
+3. Any `Oscar: could not resolve winner for "..."` / `Grammy: could not
+   resolve winner for "..."` warning, or a `"{year} ... has no resolvable
+   winners yet"` log line right after a ceremony you know already aired —
+   that means the heading-keyword match or the bold-text parse missed, and
+   is the first place to look.
 
 ## Auto-lock (NFL/MLB/MLS/NBA/NHL)
 

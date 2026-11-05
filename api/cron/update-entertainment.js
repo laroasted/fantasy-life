@@ -18,8 +18,33 @@
  *   false positives on unrelated films sharing one common word.
  * - FIX: Title containment dedup — "X" inside "Y: X" dedupes regardless of month.
  * - FIX: /gala/i → /\bgala\b/i so "Galaxy" is not filtered as non-theatrical.
+ *
+ * CHANGELOG (2026-11) — Automated Oscar bonus
+ *   Bonus (CATEGORY_BONUS_RULES.Actor/Actress) used to be commissioner-only
+ *   manual entry. Now resolved from the Academy Awards' own Wikipedia
+ *   article — NOT Wikidata (its structured "award received" statements lag
+ *   real-time editing of the article's own prose/tables by hours to days;
+ *   Wikipedia's winners table gets edited live during the broadcast) — and
+ *   kept entirely separate from update-projections.js's `applyOscarBonus`,
+ *   which stays exactly what it is: a PRE-outcome probability estimate from
+ *   Kalshi/Polymarket odds for the "Projected Final" toggle, never mutating
+ *   a real score. This is the POST-outcome settlement of the real thing.
+ *   Evergreen: the article is looked up by trying "{year} Academy Awards"
+ *   (a title Wikipedia redirects to the real ordinal-numbered article, e.g.
+ *   "98th Academy Awards") for the current year then the prior year, and
+ *   "has this ceremony actually happened" is answered by whether a winner
+ *   can be parsed out — not a hardcoded date — so it self-corrects across
+ *   the New Year boundary before a given year's ceremony has aired yet.
+ *   Unlike the projections version, this covers the FULL bonus rule
+ *   (Supporting categories included) since it isn't limited to whatever
+ *   markets happen to exist.
+ *   Confidence: moderate. The winner-is-bold-wikitext convention is
+ *   long-standing and stable on this specific recurring article, but
+ *   wasn't live-verified from this build's network-restricted sandbox —
+ *   see docs/bonus-automation.md. Never guesses: if a category's winner
+ *   can't be confidently parsed, it's skipped and logged, never faked.
  */
- 
+
 const { createClient } = require('@supabase/supabase-js');
 const { writeScoreEventsAndNotify } = require('../_lib/push');
 
@@ -81,6 +106,205 @@ function assignBasePointsWithTiebreaker(rankings, totalMembers) {
 function isFieldLocked(locks, category, ownerName, field) {
   if (!locks) return false;
   return !!locks[category + '|' + ownerName + '|' + field];
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// OSCAR BONUS — resolved from the Academy Awards' own Wikipedia article.
+// See the 2026-11 changelog above for why Wikipedia (not Wikidata) and why
+// this is a separate concern from update-projections.js's market-based
+// version.
+// ═══════════════════════════════════════════════════════════════════════
+const OSCAR_CATEGORIES = {
+  Actor: [
+    { label: 'Best Actor', keywords: ['actor in a leading role'], winTier: 10, nomTier: 3 },
+    { label: 'Best Supporting Actor', keywords: ['actor in a supporting role'], winTier: 7, nomTier: 2 },
+  ],
+  Actress: [
+    { label: 'Best Actress', keywords: ['actress in a leading role'], winTier: 10, nomTier: 3 },
+    { label: 'Best Supporting Actress', keywords: ['actress in a supporting role'], winTier: 7, nomTier: 2 },
+  ],
+};
+
+async function fetchWikipediaWikitext(title) {
+  try {
+    var url = 'https://en.wikipedia.org/w/api.php?action=parse&page=' + encodeURIComponent(title) + '&prop=wikitext&format=json&redirects=1';
+    var res = await fetch(url, { headers: { 'User-Agent': 'FantasyLifeHub/1.0 (private league scoring tool)' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    var data = await res.json();
+    if (data.error) return null;
+    return (data.parse && data.parse.wikitext && data.parse.wikitext['*']) || null;
+  } catch (err) { console.error('  Wikipedia fetch failed for "' + title + '":', err.message); return null; }
+}
+
+// FIX (2026-11, Codex review on PR #55): categories on these ceremony
+// pages are NOT ==heading== sections — verified live against the 97th
+// Academy Awards article's real wikitext. Each category is a
+// `{{Award category|color|[[Real Name|Display Name]]}}` template marker
+// inside a wikitable (two categories per row, `|-` separating rows), e.g.:
+//   | {{Award category|#F9EFAA|[[Academy Award for Best Actor|Best Actor in a Leading Role]]}}
+//   * '''[[Adrien Brody]] – ''[[The Brutalist]]'' as László Tóth ‡'''
+//   ** [[Timothée Chalamet]] – ''[[A Complete Unknown]]'' as [[Bob Dylan]]
+//   ** ...
+// Matches the keyword against the marker line itself (its target or
+// display text, either way) rather than a heading, and the block runs
+// until the next marker, the next table row, or the next real heading.
+function extractCategoryBlock(wikitext, categoryKeywords) {
+  var lines = wikitext.split('\n');
+  var markerRegex = /\{\{Award category\|/i;
+  var startIdx = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (markerRegex.test(lines[i])) {
+      var lower = lines[i].toLowerCase();
+      if (categoryKeywords.some(function (k) { return lower.includes(k); })) { startIdx = i; break; }
+    }
+  }
+  if (startIdx === -1) return null;
+  var buffer = [];
+  for (var j = startIdx + 1; j < lines.length; j++) {
+    var line = lines[j];
+    if (markerRegex.test(line)) break;   // next category's marker
+    if (/^\s*\|-/.test(line)) break;     // table row separator
+    if (/^={2,4}/.test(line)) break;     // next real heading
+    buffer.push(line);
+  }
+  return buffer.length > 0 ? buffer.join('\n') : null;
+}
+
+function extractWikiNames(line) {
+  var names = [], m, re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+  while ((m = re.exec(line)) !== null) {
+    var n = m[1].trim();
+    if (n && !/^(file|category|image):/i.test(n)) names.push(n);
+  }
+  return names;
+}
+
+// A credit sub-line (producer/engineer/songwriter/mixer wording) belongs
+// to whichever entry immediately precedes it, not a competing nominee —
+// Oscar acting categories don't have this sub-line at all, kept here only
+// so this copy stays identical to update-billboard.js's, which needs it.
+function isCreditLine(line) { return /\b(producers?|engineers?|mixers?|songwriters?|mastering engineer)\b/i.test(line); }
+
+// Winner = the first bulleted (* or **) line in the block that's bolded;
+// every OTHER bulleted line is a nominee candidate. Returns candidate
+// NAME LISTS, not one resolved name — deliberately: which wikilink on a
+// line is "the person" vs. "the film" differs by line (an Oscar
+// nominee's own line is `[[Person]] – ''[[Film]]''`), so every name on
+// the line is kept as a candidate and left to namesMatch() at the call
+// site, which only ever matches a real person's name — a film title
+// just won't match.
+function extractWinnerAndNominees(sectionText) {
+  if (!sectionText) return null;
+  var bulletLines = sectionText.split('\n').filter(function (l) { return /^\s*\*/.test(l); });
+  if (bulletLines.length === 0) return null;
+  var winnerIdx = bulletLines.findIndex(function (l) { return l.includes("'''"); });
+  if (winnerIdx === -1) return null;
+  var winnerCandidates = extractWikiNames(bulletLines[winnerIdx]);
+  // See update-billboard.js's copy of this function for why this checks
+  // CONTENT (credit-role wording), not boldness: a winner's own credit
+  // sub-line isn't bolded with 100% consistency across every category on
+  // these pages (Codex review on PR #55), and relying on bold alone
+  // silently lost a real win in that case.
+  var nextLine = bulletLines[winnerIdx + 1];
+  var nextIsOwnCredit = !!(nextLine && isCreditLine(nextLine));
+  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(nextLine));
+  if (winnerCandidates.length === 0) return null;
+
+  var nomineeSet = {};
+  for (var i = 0; i < bulletLines.length; i++) {
+    if (i === winnerIdx || (i === winnerIdx + 1 && nextIsOwnCredit)) continue;
+    for (var n of extractWikiNames(bulletLines[i])) nomineeSet[n] = true;
+  }
+  return { winnerCandidates: winnerCandidates, nomineeCandidates: Object.keys(nomineeSet) };
+}
+
+function namesMatch(pickName, candidateName) {
+  var a = (pickName || '').toLowerCase().trim();
+  var b = (candidateName || '').toLowerCase().trim();
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+// One category's parsed result, cached for reuse across every pick in
+// that category (parsing the wikitext per-pick would be redundant work).
+function computeOscarCategoryResults(wikitext, categories) {
+  var results = [];
+  for (var cat of categories) {
+    var parsed = extractWinnerAndNominees(extractCategoryBlock(wikitext, cat.keywords));
+    if (!parsed) { console.warn('  Oscar: could not resolve winner for "' + cat.label + '"'); continue; }
+    results.push({ cat: cat, winnerCandidates: parsed.winnerCandidates, nomineeCandidates: parsed.nomineeCandidates });
+  }
+  return results;
+}
+
+// The ceremony's own infobox date (e.g. "| date = March 2, 2025"), not
+// which year's ARTICLE happened to resolve — needed because "the most
+// recent ceremony with a winner" is wrong the moment a new season starts
+// (new picks drafted) before THAT season's own ceremony has aired: the
+// prior, already-decided ceremony would otherwise get silently credited
+// to the new season's unrelated picks (Codex review on PR #55).
+function extractCeremonyDate(wikitext) {
+  var m = wikitext.match(/\{\{Infobox[^\n]*/);
+  if (!m) return null;
+  var block = wikitext.slice(m.index, m.index + 3000); // date field lives near the top
+  var dm = block.match(/\|\s*date\s*=\s*([^\n|]+)/);
+  if (!dm) return null;
+  var parsed = new Date(dm[1].trim());
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Tries "{year} Academy Awards" (a title Wikipedia redirects to the real
+// ordinal article, e.g. "98th Academy Awards") for each calendar year
+// this season's Fantasy Year window spans (newest first) — not the
+// wall-clock year, which can resolve to a real but WRONG (already-scored,
+// prior-season) ceremony. A candidate is only accepted if its own
+// ceremony date actually falls inside [fyStart, fyEnd]; "has this
+// ceremony happened yet" beyond that is answered by whether a winner can
+// actually be parsed out of it — live content state, not a hardcoded
+// date — so this still self-corrects before a given year's ceremony has
+// aired.
+async function resolveOscarWikitext(fyStart, fyEnd) {
+  var allCategories = OSCAR_CATEGORIES.Actor.concat(OSCAR_CATEGORIES.Actress);
+  var fyStartDate = new Date(fyStart), fyEndDate = new Date(fyEnd);
+  var candidateYears = Array.from(new Set([fyEndDate.getFullYear(), fyStartDate.getFullYear()]));
+  for (var year of candidateYears) {
+    var title = year + ' Academy Awards';
+    var wikitext = await fetchWikipediaWikitext(title);
+    if (!wikitext) { console.log('  Oscar: no Wikipedia page resolved for "' + title + '"'); continue; }
+    var ceremonyDate = extractCeremonyDate(wikitext);
+    if (!ceremonyDate || ceremonyDate < fyStartDate || ceremonyDate > fyEndDate) {
+      console.log('  Oscar: "' + title + '" ceremony date (' + (ceremonyDate ? ceremonyDate.toISOString().slice(0, 10) : 'unknown') + ') is outside this season\'s Fantasy Year window (' + fyStart + ' to ' + fyEnd + ') — skipping');
+      continue;
+    }
+    var hasWinner = computeOscarCategoryResults(wikitext, allCategories).length > 0;
+    if (hasWinner) { console.log('  Oscar: using "' + title + '" (ceremony ' + ceremonyDate.toISOString().slice(0, 10) + ')'); return wikitext; }
+    console.log('  Oscar: "' + title + '" has no resolvable winners yet (ceremony likely not aired)');
+  }
+  return null;
+}
+
+// SUMS credit across every DISTINCT category this pick's name matches —
+// NOT a max (this file previously assumed max; corrected after Codex's
+// review on PR #55 traced the actual convention this league already
+// uses — see update-billboard.js's copy of this function for the
+// verified musician.js example proving it's additive). A Lead + a
+// Supporting nomination/win in the same year is rare but real Oscar
+// history, so this has to accumulate the same way. Within a single
+// category a win always replaces a nomination — never double-counted —
+// because extractWinnerAndNominees() already excludes the winner's own
+// line(s) from that category's nomineeCandidates.
+function resolveOscarBonusForPick(pickName, categoryResults) {
+  var total = 0, labels = [];
+  for (var r of categoryResults) {
+    if (r.winnerCandidates.some(function (c) { return namesMatch(pickName, c); })) {
+      total += r.cat.winTier;
+      labels.push('Won ' + r.cat.label);
+    } else if (r.nomineeCandidates.some(function (c) { return namesMatch(pickName, c); })) {
+      total += r.cat.nomTier;
+      labels.push('Nominated ' + r.cat.label);
+    }
+  }
+  return labels.length > 0 ? { tier: total, label: labels.join(' | ') } : null;
 }
  
 async function findPersonId(name) {
@@ -234,12 +458,18 @@ module.exports = async function handler(req, res) {
   // update-sports.js established first.
   var scoreEvents = [];
 
+  // Fetched once (same Wikipedia article serves both Actor and Actress
+  // categories), not per category — see resolveOscarWikitext() above.
+  var oscarWikitext = await resolveOscarWikitext(FY_START, FY_END);
+
   for (var category of ['Actor', 'Actress']) {
     console.log('  Processing ' + category + '...');
- 
+
     var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', seasonYear).eq('category', category);
     if (pickErr || !picks || picks.length === 0) { results[category] = { status: 'skipped', reason: 'no picks' }; continue; }
- 
+
+    var oscarCategoryResults = oscarWikitext ? computeOscarCategoryResults(oscarWikitext, OSCAR_CATEGORIES[category]) : [];
+
     var rankings = [];
  
     for (var pick of picks) {
@@ -356,19 +586,42 @@ module.exports = async function handler(req, res) {
       if (matchingPick) {
         var own = memberNameById[matchingPick.member_id] || matchingPick.member_id;
         var baseLocked = isFieldLocked(locks, category, own, 'base');
-        // newBaseVal / writeFailed feed the score_events diff below — a
-        // locked base is a legitimate no-op (newBaseVal = unchanged
-        // matchingPick.base), a failed write is NOT (nothing actually
-        // changed in the DB, so there's nothing to log a delta for).
-        var newBaseVal, writeFailed = false;
-        if (!baseLocked) {
-          var { error } = await supabase.from('picks').update({ base: r.base }).eq('id', matchingPick.id);
-          if (!error) { updated++; newBaseVal = Number(r.base) || 0; }
-          else { writeFailed = true; newBaseVal = Number(matchingPick.base) || 0; }
+
+        // Oscar bonus (see OSCAR_CATEGORIES/resolveOscarBonusForPick above) —
+        // matched by fuzzy name against each category's precomputed
+        // winner/nominee candidates, never overwriting a lock, never
+        // guessed if nothing was confidently resolved for this person.
+        var bonusEntry = resolveOscarBonusForPick(r.pick, oscarCategoryResults);
+        var bonusLocked = isFieldLocked(locks, category, own, 'bonus');
+        var bonusWritable = !!bonusEntry && !bonusLocked;
+        r.bonusDetected = bonusEntry ? bonusEntry.label : undefined;
+
+        var updateObj = {};
+        if (!baseLocked) updateObj.base = r.base;
+        else console.log('    ' + own + ': base is locked, skipping');
+        if (bonusWritable) { updateObj.bonus = bonusEntry.tier; updateObj.bonus_note = bonusEntry.label; }
+        else if (bonusEntry && bonusLocked) console.log('    ' + own + ': bonus is locked, skipping');
+
+        // newBaseVal/newBonusVal/writeFailed feed the score_events diff
+        // below — a locked field is a legitimate no-op (value unchanged),
+        // a failed write is NOT (nothing actually changed in the DB, so
+        // there's nothing to log a delta for).
+        var newBaseVal, newBonusVal, writeFailed = false;
+        if (Object.keys(updateObj).length > 0) {
+          var { error } = await supabase.from('picks').update(updateObj).eq('id', matchingPick.id);
+          if (!error) {
+            updated++;
+            newBaseVal = baseLocked ? (Number(matchingPick.base) || 0) : (Number(r.base) || 0);
+            newBonusVal = bonusWritable ? bonusEntry.tier : (Number(matchingPick.bonus) || 0);
+          } else {
+            writeFailed = true;
+            newBaseVal = Number(matchingPick.base) || 0;
+            newBonusVal = Number(matchingPick.bonus) || 0;
+          }
         } else {
-          console.log('    ' + own + ': base is locked, skipping');
           updated++;
           newBaseVal = Number(matchingPick.base) || 0;
+          newBonusVal = Number(matchingPick.bonus) || 0;
         }
 
         // Diff against the pre-update row (matchingPick.base/bonus) — same
@@ -376,30 +629,33 @@ module.exports = async function handler(req, res) {
         // pass since that's where base actually gets written for this
         // cron (base is ranked/assigned only after ALL picks' metrics
         // are known, unlike sports/college/events/billboard where it's
-        // inline in the same per-pick loop).
+        // inline in the same per-pick loop). Now accounts for a bonus
+        // change too, not just base.
         if (!writeFailed) {
           var oldTotal = (Number(matchingPick.base) || 0) + (Number(matchingPick.bonus) || 0);
-          var newTotal = newBaseVal + (Number(matchingPick.bonus) || 0);
+          var newTotal = newBaseVal + newBonusVal;
           var delta = Math.round((newTotal - oldTotal) * 10) / 10;
           if (delta !== 0) {
-            var cause = r.pick + ' — ' + (Math.round((r.totalScore || 0) * 100) / 100) + ' pts' +
+            var causeParts = [];
+            if (!baseLocked) causeParts.push((Math.round((r.totalScore || 0) * 100) / 100) + ' pts' +
               (r.filmCount ? ' (' + r.filmCount + ' film' + (r.filmCount === 1 ? '' : 's') + ')' : '') +
-              (r.status ? ' [' + r.status + ']' : '');
+              (r.status ? ' [' + r.status + ']' : ''));
+            if (bonusWritable) causeParts.push(bonusEntry.label);
             scoreEvents.push({
               season_year: seasonYear,
               member_id: matchingPick.member_id,
               category: category,
               delta: delta,
-              cause: cause,
+              cause: r.pick + ' — ' + (causeParts.join(' — ') || 'updated'),
               source: 'update-entertainment',
             });
           }
         }
       }
     }
- 
+
     console.log('  ' + category + ': Updated ' + updated + '/' + picks.length + ' picks\n');
-    results[category] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings.map(function(r) { return { rank: r.rank, member: r.member, pick: r.pick, totalScore: r.totalScore, filmCount: r.filmCount, base: r.base, films: r.films }; }) };
+    results[category] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings.map(function(r) { return { rank: r.rank, member: r.member, pick: r.pick, totalScore: r.totalScore, filmCount: r.filmCount, base: r.base, bonusDetected: r.bonusDetected, films: r.films }; }) };
   }
 
   await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
