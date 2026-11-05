@@ -97,6 +97,47 @@ for each of the above, specifically:
    keyword; it tells you exactly what to add to `PLAYOFF_ROUNDS`/
    `MAJOR_NAMES`'s keyword lists if a real result was missed.
 
+## Auto-lock (NFL/MLB/MLS/NBA/NHL)
+
+Added right after the above. Once a league's season is decided, the cron
+locks the relevant fields itself instead of waiting on the commissioner —
+same `locks` mechanism and shape `SeasonSettings.jsx`'s manual lock button
+already uses (`{at, by}`), just written by the cron with `by: 'auto'`.
+
+Per `AUTO_LOCK_RULES` in `update-sports.js`:
+
+| League | Locks `base` + `bonus` on | Locks `bonus` only on | Locks `base` only on |
+| --- | --- | --- | --- |
+| NFL / MLB / MLS | championship game complete | — | — |
+| NBA / NHL | — | championship game complete | regular season ending |
+
+NBA/NHL's `base` deliberately locks on a *different, earlier* trigger
+(regular season end, detected the same way the bonus gate detects it — a
+postseason bracket existing at all) than their `bonus` (the Finals/Cup),
+because their `base` scoring is already for the *following* season by
+design (see FIX 4 in that file) — it needs to stay unlocked and live right
+through that next season, not get locked at the same moment their bonus
+does.
+
+**Fires once per league+field per season, not every run.** A separate
+`seasons.auto_lock_fired` column (added in
+`supabase/phase20_auto_lock_tracking.sql`) tracks whether a given
+league+field has already auto-locked this season, independent of the
+`locks` column's own content. This exists specifically so a commissioner
+who manually unlocks something afterward to fix a mistake doesn't get
+immediately fought by the next cron run re-locking it — and it's a
+separate column rather than a marker key inside `locks` itself because
+`SeasonSettings.jsx`'s Locks tab counts and lists every raw key in that
+object (`"Locks (" + Object.keys(locks).length + ")"`), so a bookkeeping
+marker stuffed in there would show up to the commissioner as a phantom
+lock.
+
+Locking only ever happens **after** that same run's own base/bonus writes
+for the league — a just-decided championship's correct final value gets
+written first, then locked, never the other way around (locking first
+would make that same run skip writing the value the lock exists to
+protect).
+
 ## Safety: never overwrites a lock, never guesses
 
 Every bonus write in this change follows the exact pattern the pre-existing

@@ -242,6 +242,51 @@ function computePlayoffTier(games, rounds) {
   const label = last.won && isFinalRound ? `Won ${round.label}` : `Lost ${round.label}`;
   return { tier, label };
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// AUTO-LOCK — fields a league locks itself once a trigger condition is
+// true, instead of waiting on the commissioner to click the lock icon.
+// `onFinal`: fields to lock once the championship game is complete.
+// `onRegularSeasonEnd`: fields to lock once the regular season is over
+// (NBA/NHL `base` specifically — stays live into their own next season,
+// per FIX 4, so only the just-finished bonus-relevant postseason gets its
+// bonus locked at the Finals; base keeps updating).
+// ═══════════════════════════════════════════════════════════════════════
+const AUTO_LOCK_RULES = {
+  NFL: { onFinal: ['base', 'bonus'] },
+  MLB: { onFinal: ['base', 'bonus'] },
+  MLS: { onFinal: ['base', 'bonus'] },
+  NBA: { onFinal: ['bonus'], onRegularSeasonEnd: ['base'] },
+  NHL: { onFinal: ['bonus'], onRegularSeasonEnd: ['base'] },
+};
+
+// "Regular season over" reuses hasPostseason (a bracket existing at all
+// is definitionally the regular season having ended) — no extra fetch.
+// "Championship decided" is its own check: any seasontype=3 game whose
+// round-name text matches the FINAL round's keywords and is completed.
+// League-wide (not per-picked-team), so it doesn't depend on any of this
+// league's 12 teams having actually made the championship game.
+async function isChampionshipDecided(sport, league, rounds) {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/scoreboard?seasontype=3`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const events = data?.events || [];
+    const finalRound = rounds[rounds.length - 1];
+    return events.some((e) => {
+      const comp = e?.competitions?.[0];
+      const completed = !!(comp?.status || e?.status)?.type?.completed;
+      if (!completed) return false;
+      const text = [e?.name, e?.shortName, e?.week?.text, ...((comp?.notes || []).map((n) => n?.headline))]
+        .filter(Boolean).join(' | ').toLowerCase();
+      return finalRound.keywords.some((k) => text.includes(k));
+    });
+  } catch (err) {
+    console.error(`  Championship-decided check failed for ${league}:`, err.message);
+    return false;
+  }
+}
  
 const NAME_ALIASES = {
   // NBA
@@ -482,11 +527,26 @@ module.exports = async function handler(req, res) {
   console.log('Fantasy Life — Updating Sports Standings...\n');
  
   const { data: season } = await supabase
-    .from('seasons').select('year, locks').eq('status', 'active').single();
+    .from('seasons').select('id, year, locks, auto_lock_fired').eq('status', 'active').single();
   if (!season) return res.status(200).json({ message: 'No active season found, skipping' });
- 
+
   const seasonYear = season.year;
   const locks = season.locks || {};
+  // autoLockFired (separate seasons.auto_lock_fired column — see
+  // supabase/phase20_auto_lock_tracking.sql) tracks "has this league+field's
+  // auto-lock already fired this season" independent of locks.jsonb itself.
+  // Keeping it out of `locks` matters: SeasonSettings.jsx's Locks tab counts
+  // and lists every raw key in that object, so a bookkeeping marker stuffed
+  // in there would show up as a phantom lock to the commissioner.
+  // Both accumulate here across every league this run, then get written
+  // ONCE at the end — after every league's own base/bonus picks.update()
+  // calls, never before, so a just-decided championship's correct final
+  // bonus/base gets written this same run before its own lock takes effect
+  // (locking first would have this run skip writing the value the lock
+  // exists to protect).
+  const autoLockFired = season.auto_lock_fired || {};
+  const autoLockWrites = {};
+  const autoLockFiredWrites = {};
  
   const { data: members } = await supabase.from('members').select('id, name');
   const memberNameById = {};
@@ -551,8 +611,9 @@ module.exports = async function handler(req, res) {
 
     // ── Playoff bonus resolution (see PLAYOFF_ROUNDS + FIX 8 above) ──
     const bonusByPickId = {};
+    let hasPostseason = false;
     if (PLAYOFF_ROUNDS[league]) {
-      const hasPostseason = await fetchPostseasonExists(config.sport, config.league);
+      hasPostseason = await fetchPostseasonExists(config.sport, config.league);
       if (hasPostseason) {
         for (const m of ranked) {
           if (!m.espnTeamId) continue;
@@ -641,6 +702,50 @@ module.exports = async function handler(req, res) {
       ...(unmatched.length > 0 && { unmatched }),
       rankings,
     };
+
+    // ── Auto-lock (see AUTO_LOCK_RULES above) ──
+    // `autoLockFired[league|field]` records that this league+field has
+    // already auto-locked once THIS season, so a commissioner who
+    // manually unlocks an entry afterward to fix a mistake doesn't get
+    // immediately fought by the very next cron run re-locking it. Lives
+    // in the separate auto_lock_fired column, not `locks` itself — see
+    // the comment on that variable's declaration above. Once fired, it
+    // only fires again next season (a fresh seasons row).
+    const rule = AUTO_LOCK_RULES[league];
+    if (rule) {
+      const fieldsToLock = new Set();
+      if (hasPostseason) {
+        for (const f of (rule.onRegularSeasonEnd || [])) fieldsToLock.add(f);
+      }
+      if (hasPostseason && PLAYOFF_ROUNDS[league]) {
+        const champDecided = await isChampionshipDecided(config.sport, config.league, PLAYOFF_ROUNDS[league]);
+        if (champDecided) for (const f of (rule.onFinal || [])) fieldsToLock.add(f);
+      }
+      const newlyFired = [];
+      for (const field of fieldsToLock) {
+        const marker = `${league}|${field}`;
+        if (autoLockFired[marker] || autoLockFiredWrites[marker]) continue; // already fired this season
+        autoLockFiredWrites[marker] = true;
+        for (const m of ranked) {
+          const ownerName = memberNameById[m.member_id] || m.member_id;
+          autoLockWrites[`${league}|${ownerName}|${field}`] = { at: new Date().toISOString(), by: 'auto' };
+        }
+        newlyFired.push(field);
+      }
+      if (newlyFired.length > 0) console.log(` ${league}: Auto-locked ${newlyFired.join(', ')} for ${ranked.length} picks`);
+    }
+  }
+
+  if (Object.keys(autoLockWrites).length > 0 || Object.keys(autoLockFiredWrites).length > 0) {
+    const { error: lockErr } = await supabase
+      .from('seasons')
+      .update({
+        locks: { ...locks, ...autoLockWrites },
+        auto_lock_fired: { ...autoLockFired, ...autoLockFiredWrites },
+      })
+      .eq('id', season.id);
+    if (lockErr) console.error('Failed to write auto-locks:', lockErr.message);
+    else console.log(`Wrote ${Object.keys(autoLockWrites).length} auto-lock entries (${Object.keys(autoLockFiredWrites).length} newly fired)`);
   }
 
   if (scoreEvents.length > 0) {
