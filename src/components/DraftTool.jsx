@@ -101,6 +101,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState("");
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   // Mobile: toggle panels instead of always showing
   const [mobilePanel, setMobilePanel] = useState("draft"); // "draft" | "rosters" | "history"
@@ -302,7 +303,17 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     timeEvent(EVENTS.DRAFT_FINALIZED);
     if (isCommissioner) {
       const row = await startDraftSession({ seasonName, draftOrder, snakeOrder: so, timerDuration: TIMER_DURATION });
-      if (row) { setLiveSession(row); return; }
+      if (row) {
+        setLiveSession(row);
+        // The only turn assignment that doesn't flow through a
+        // submit_draft_pick success (see makePick's own notifyTurn()
+        // call) — the first pick of the draft needs the same push.
+        // The "existing" resume path just below is deliberately NOT
+        // included: resuming an already-live draft isn't a new turn
+        // transition, the on-clock member was already on the clock.
+        notifyTurn();
+        return;
+      }
       const existing = await fetchDraftSession();
       if (existing) { setLiveSession(existing); return; }
     }
@@ -471,6 +482,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             code === "not_your_turn" ? "It's not your turn anymore." :
             code === "claim_not_verified" ? "Your account isn't verified to pick for yourself yet — ask your commissioner to make this pick for you." :
             code === "selection_already_taken" ? "Someone already took that — pick again." :
+            code === "category_already_picked" ? "You've already picked that category — choose a different one." :
             code === "draft_already_complete" ? "The draft is already complete." :
             "Something went wrong submitting that pick — please try again."
           );
@@ -499,6 +511,11 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       // undo_last_draft_pick's own comment (phase19_draft_pick_rpcs.sql).
       const { row } = await undoLastDraftPick(liveSession.current_pick);
       setLiveSession(row || await fetchDraftSession());
+      // Undo reassigns current_pick back to whoever it was before —
+      // that member is newly on the clock again and deserves the same
+      // push a fresh pick's turn transition gets (Codex-caught: this
+      // path was the other turn transition notifyTurn() missed).
+      if (row) notifyTurn();
     } else {
       const last = pickHistory[pickHistory.length - 1];
       setPicks((p) => { const n = { ...p }; delete n[last.memberId + "-" + last.categoryId]; return n; });
@@ -549,9 +566,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   };
 
   const cancelDraft = async () => {
-    await deleteDraftSession();
-    setLiveSession(null);
-    setShowCancelModal(false);
+    setCancelling(true);
+    try {
+      await deleteDraftSession();
+      setLiveSession(null);
+      setShowCancelModal(false);
+    } finally {
+      setCancelling(false);
+    }
   };
 
   // ═══════════════════════════════════════════════════════════════
@@ -1186,10 +1208,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               You'll start over from setup.
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setShowCancelModal(false)}
-                style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>Keep drafting</button>
-              <button onClick={cancelDraft}
-                style={{ ...buttonStyle(theme.red), flex: 2 }}>Cancel draft</button>
+              <button onClick={() => setShowCancelModal(false)} disabled={cancelling}
+                style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}`,
+                  opacity: cancelling ? 0.5 : 1, cursor: cancelling ? "default" : "pointer" }}>Keep drafting</button>
+              <button onClick={cancelDraft} disabled={cancelling}
+                style={{ ...buttonStyle(theme.red), flex: 2,
+                  opacity: cancelling ? 0.7 : 1, cursor: cancelling ? "default" : "pointer" }}>
+                {cancelling ? "Cancelling..." : "Cancel draft"}
+              </button>
             </div>
           </div>
         </div>

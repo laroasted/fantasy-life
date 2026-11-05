@@ -289,6 +289,23 @@ agreed with, never changes which member_id is claimed. No blind bulk-SQL
 guess needed; every real league member signs in again naturally before
 a draft.
 
+**Follow-up, found testing against the real league's existing profiles**:
+the backfill above was unreachable in practice for anyone already
+claimed before this phase shipped. `App.jsx`'s auth-state listener only
+ever called `auto_claim_member_identity()` (the RPC the backfill logic
+lives in) when `profiles.member_id` was still null — an already-claimed
+profile took an early-return branch that skipped the call entirely, so
+the "self-heals on next sign-in" claim above was simply false for every
+real member (all already claimed). Confirmed live: querying `profiles`
+for this league's four members immediately after running phase18 showed
+`claim_method: null` across the board. Fixed by also firing the same
+RPC call (fire-and-forget — it's idempotent, already swallows its own
+errors, and nothing on this path needs its result) from the early-return
+branch, not just the "no identity yet" one. The four existing profiles
+were unblocked immediately with a direct one-time backfill UPDATE
+(same `email_member_map`-agreement condition the RPC's own backfill
+uses) rather than waiting on a redeploy.
+
 **Reconnect handling.** `postgres_changes` does not replay events missed
 while a socket was disconnected (a phone locking mid-draft, a wifi
 blip) — `subscribeDraftSession()` (`storage.js`) now takes a second
