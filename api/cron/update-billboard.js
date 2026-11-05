@@ -207,20 +207,24 @@ function extractWikiNames(line) {
   return names;
 }
 
+// A credit sub-line (producer/engineer/songwriter/mixer wording) belongs
+// to whichever entry immediately precedes it, not a competing nominee.
+function isCreditLine(line) { return /\b(producers?|engineers?|mixers?|songwriters?|mastering engineer)\b/i.test(line); }
+
 // Returns candidate NAME LISTS, not one resolved name — deliberately:
 // which wikilink on a line is "the artist" vs. "the song/album" differs
 // by line (`"[[Song]]" – [[Artist]]` or `''[[Album]]'' – [[Artist]]`), so
 // every name on the line is kept as a candidate and left to
 // artistMatches() at the call site, which only ever matches a real
-// artist's name — a song/album title just won't match. No credit-line
-// filtering: verified live that excluding "songwriter"/"producer" lines
-// actively loses real matches — Grammy's "General Field" categories
-// (Album/Record/Song of the Year) put the performer's name ONLY on that
-// sub-line for some nominees (Song of the Year's winner line is just the
-// song title in quotes; the songwriter/performer is named on the `**`
-// line beneath it), so that line has to stay in the candidate pool. A
-// producer or engineer's own name landing in there too is harmless noise
-// for the same reason a film/song title is.
+// artist's name — a song/album title just won't match. No blanket
+// credit-line filtering: verified live that excluding every
+// "songwriter"/"producer" line actively loses real matches — Grammy's
+// "General Field" categories (Album/Record/Song of the Year) put the
+// performer's name ONLY on that sub-line for some nominees (Song of the
+// Year's winner line is just the song title in quotes; the songwriter/
+// performer is named on the `**` line beneath it), so that line has to
+// stay in the candidate pool. A producer or engineer's own name landing
+// in there too is harmless noise for the same reason a film/song title is.
 function extractWinnerAndNominees(sectionText) {
   if (!sectionText) return null;
   var bulletLines = sectionText.split('\n').filter(function(l) { return /^\s*\*/.test(l); });
@@ -228,14 +232,20 @@ function extractWinnerAndNominees(sectionText) {
   var winnerIdx = bulletLines.findIndex(function(l) { return l.includes("'''"); });
   if (winnerIdx === -1) return null;
   var winnerCandidates = extractWikiNames(bulletLines[winnerIdx]);
-  // The winner's own very-next bullet line, when it's ALSO bold, is its
-  // own credit sub-line — merge it into winnerCandidates (not the general
-  // nominee pool) since it's the same winner's own credit, not a
-  // competing entry. A non-bold next line (the genre-category shape,
-  // where every OTHER nominee sits directly under the winner as a plain
-  // `**` line) is correctly left alone.
-  var nextIsOwnCredit = !!(bulletLines[winnerIdx + 1] && bulletLines[winnerIdx + 1].includes("'''"));
-  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(bulletLines[winnerIdx + 1]));
+  // The winner's own very-next bullet line is its own credit sub-line
+  // when it READS like one (producer/songwriter/engineer wording) —
+  // merge it into winnerCandidates (not the general nominee pool) since
+  // it's the same winner's own credit, not a competing entry. Checked by
+  // CONTENT, not by whether it's also bolded: verified live (Codex review
+  // on PR #55) that a winner's own credit sub-line isn't bolded with
+  // 100% consistency across every category on these pages, so relying
+  // on bold alone silently lost a real win in that case. A genuinely
+  // different nominee's plain `**` line right under the winner (the
+  // genre-category shape) correctly reads as not-a-credit-line and is
+  // left alone, going to the nominee pool instead.
+  var nextLine = bulletLines[winnerIdx + 1];
+  var nextIsOwnCredit = !!(nextLine && isCreditLine(nextLine));
+  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(nextLine));
   if (winnerCandidates.length === 0) return null;
 
   var nomineeSet = {};

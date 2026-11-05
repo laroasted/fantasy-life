@@ -179,16 +179,19 @@ function extractWikiNames(line) {
   return names;
 }
 
+// A credit sub-line (producer/engineer/songwriter/mixer wording) belongs
+// to whichever entry immediately precedes it, not a competing nominee —
+// Oscar acting categories don't have this sub-line at all, kept here only
+// so this copy stays identical to update-billboard.js's, which needs it.
+function isCreditLine(line) { return /\b(producers?|engineers?|mixers?|songwriters?|mastering engineer)\b/i.test(line); }
+
 // Winner = the first bulleted (* or **) line in the block that's bolded;
-// every OTHER bulleted line is a nominee candidate (Oscar acting
-// categories have no credit sub-lines to worry about — see the matching
-// comment in update-billboard.js's copy of this function, which does,
-// for why there's no credit-line filtering here either). Returns
-// candidate NAME LISTS, not one resolved name — deliberately: which
-// wikilink on a line is "the person" vs. "the film" differs by line (an
-// Oscar nominee's own line is `[[Person]] – ''[[Film]]''`), so every name
-// on the line is kept as a candidate and left to namesMatch() at the
-// call site, which only ever matches a real person's name — a film title
+// every OTHER bulleted line is a nominee candidate. Returns candidate
+// NAME LISTS, not one resolved name — deliberately: which wikilink on a
+// line is "the person" vs. "the film" differs by line (an Oscar
+// nominee's own line is `[[Person]] – ''[[Film]]''`), so every name on
+// the line is kept as a candidate and left to namesMatch() at the call
+// site, which only ever matches a real person's name — a film title
 // just won't match.
 function extractWinnerAndNominees(sectionText) {
   if (!sectionText) return null;
@@ -197,8 +200,14 @@ function extractWinnerAndNominees(sectionText) {
   var winnerIdx = bulletLines.findIndex(function (l) { return l.includes("'''"); });
   if (winnerIdx === -1) return null;
   var winnerCandidates = extractWikiNames(bulletLines[winnerIdx]);
-  var nextIsOwnCredit = !!(bulletLines[winnerIdx + 1] && bulletLines[winnerIdx + 1].includes("'''"));
-  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(bulletLines[winnerIdx + 1]));
+  // See update-billboard.js's copy of this function for why this checks
+  // CONTENT (credit-role wording), not boldness: a winner's own credit
+  // sub-line isn't bolded with 100% consistency across every category on
+  // these pages (Codex review on PR #55), and relying on bold alone
+  // silently lost a real win in that case.
+  var nextLine = bulletLines[winnerIdx + 1];
+  var nextIsOwnCredit = !!(nextLine && isCreditLine(nextLine));
+  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(nextLine));
   if (winnerCandidates.length === 0) return null;
 
   var nomineeSet = {};
