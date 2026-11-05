@@ -13,7 +13,10 @@ import {
   saveDraftSession,
   deleteDraftSession,
   fetchServerClockOffset,
+  submitDraftPick,
+  undoLastDraftPick,
 } from "../utils/storage";
+import { notifyTurn } from "../utils/push";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
 import { Avatar } from "./Badges";
 
@@ -52,7 +55,7 @@ async function reconcileAfterFailedSave(setLiveSession) {
   setLiveSession(real);
 }
 
-export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail, currentSeasonYear, currentSeasonMembers }) {
+export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail, memberId, currentSeasonYear, currentSeasonMembers }) {
   const [phase, setPhase] = useState("setup");
   const [draftOrder, setDraftOrder] = useState([]);
   const [searchPhrase, setSearchPhrase] = useState("");
@@ -146,14 +149,40 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   useEffect(() => {
     let cancelled = false;
     let unsubscribe = null;
-    fetchDraftSession().then((row) => {
+    const refresh = () => fetchDraftSession().then((row) => { if (!cancelled) setLiveSession(row); });
+    refresh().then(() => {
       if (cancelled) return;
-      setLiveSession(row);
-      unsubscribe = subscribeDraftSession((next) => {
-        if (!cancelled) setLiveSession(next);
-      });
+      // onReconnect: postgres_changes does NOT replay events missed while
+      // this socket was dropped (a phone locking mid-draft, a wifi blip)
+      // — force a fresh read the instant the channel comes back, instead
+      // of hoping some other event eventually arrives to self-correct.
+      unsubscribe = subscribeDraftSession(
+        (next) => { if (!cancelled) setLiveSession(next); },
+        refresh
+      );
     });
     return () => { cancelled = true; if (unsubscribe) unsubscribe(); };
+  }, []);
+
+  // Backstop behind Realtime, not instead of it — insurance against a
+  // silently-dead channel nobody would otherwise notice (Realtime having
+  // an outage while the REST API is fine isn't something the app can
+  // detect any other way). Also covers "this tab/phone was backgrounded
+  // and just came back" more reliably than waiting on the socket's own
+  // reconnect signal. Cheap at this scale (~12 people, one query each).
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => fetchDraftSession().then((row) => { if (!cancelled) setLiveSession(row); });
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", refresh);
+    const id = setInterval(refresh, 45000);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", refresh);
+      clearInterval(id);
+    };
   }, []);
 
   // Local-only tick for a live session's countdown display — only runs
@@ -190,17 +219,6 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         <b style={{ color: theme.yel }}>You're not signed in as commissioner.</b> You can run
         through this whole draft, but none of it will be saved — sign in with Google from the
         header to make it official.
-      </div>
-    </div>
-  );
-
-  const spectatorBanner = !isCommissioner && liveSession && (
-    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.acc,
-      display: "flex", alignItems: "flex-start", gap: 10 }}>
-      <Eye size={16} color={theme.acc} style={{ flexShrink: 0, marginTop: 1 }} />
-      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
-        <b style={{ color: theme.acc }}>You're watching the live draft.</b> Only the commissioner
-        can make picks or control the timer — picks will appear here the moment they're made.
       </div>
     </div>
   );
@@ -298,10 +316,12 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // Everything below (rosters, history, the draft board, the on-the-clock
   // card) reads from `effective` rather than caring whether it came from
   // the live session or the local mock — see this file's "LIVE DRAFT"
-  // comment above. `canAct` is deliberately NOT just `isCommissioner`:
-  // a non-commissioner still has full control of their own private mock
-  // draft (unchanged, existing behavior) — it's only once a REAL draft is
-  // live that control narrows to the commissioner alone.
+  // comment above. Neither canControlTimer nor canPick (below) is just
+  // `isCommissioner`: a non-commissioner still has full control of their
+  // own private mock draft (unchanged, existing behavior), and once a
+  // real draft is live, canPick further opens up to whoever's actually
+  // on the clock (self-service picking) while canControlTimer stays
+  // commissioner-only either way.
   const effective = liveSession
     ? {
         draftOrder: liveSession.draft_order,
@@ -311,7 +331,13 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         currentPick: liveSession.current_pick,
       }
     : { draftOrder, snakeOrder, picks, pickHistory, currentPick };
-  const canAct = !liveSession || isCommissioner;
+  // canControlTimer: unchanged — timer start/pause/reset and undo stay
+  // commissioner-only even with self-service picking live (see
+  // docs/live-draft-phase2.md's self-service section for why: those
+  // writes still only ever come from one role, so there's no concurrency
+  // to guard there, and giving every member clock control would just
+  // invite collisions over who's allowed to pause whose turn).
+  const canControlTimer = !liveSession || isCommissioner;
   const displayTimerActive = liveSession ? !!liveSession.timer_active : timerActive;
   const displayTimer = liveSession ? computeLiveRemaining(liveSession, liveNow + clockOffsetRef.current) : timer;
   const headerSeasonLabel = liveSession ? liveSession.season_name : seasonName;
@@ -319,6 +345,13 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const isComplete = effective.snakeOrder.length > 0 && effective.currentPick >= effective.snakeOrder.length;
   const slot = !isComplete && effective.snakeOrder[effective.currentPick];
   const member = slot ? effective.draftOrder.find((m) => m.id === slot.memberId) : null;
+  // isMyTurn is a UX convenience, NOT the security boundary — the real
+  // authorization (including the claim_method check a manually-claimed
+  // member fails) lives server-side in submit_draft_pick
+  // (phase19_draft_pick_rpcs.sql). This just decides whether to even show
+  // the pick UI to this browser.
+  const isMyTurn = !!liveSession && !!memberId && !!slot && slot.memberId === memberId;
+  const canPick = !liveSession || isCommissioner || isMyTurn;
 
   const getRoster = (mid) =>
     effective.pickHistory.filter((h) => h.memberId === mid).map((h) => ({
@@ -329,18 +362,65 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     !Object.keys(effective.picks).some((k) => k.endsWith("-" + cat.id) && effective.picks[k] && k.startsWith((member ? member.id : "") + "-"))
   );
 
+  // Surfaced errors from a failed live pick/undo attempt — see makePick's
+  // own comment on why most of submit_draft_pick's rejection codes should
+  // NOT alarm the user (stale_pick especially is the ordinary result of
+  // losing a race or lagging a Realtime tick, not a bug).
+  const [pickError, setPickError] = useState("");
+
+  // Shown whenever this viewer can watch but not act right now — true for
+  // every spectator, AND for a claimed member whose turn it currently
+  // isn't. canPick (not isCommissioner alone) is what's actually watching
+  // this here, now that self-service picking means a non-commissioner can
+  // act too, just not at every moment.
+  const spectatorBanner = !isCommissioner && liveSession && !canPick && (
+    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.acc,
+      display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <Eye size={16} color={theme.acc} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
+        <b style={{ color: theme.acc }}>You're watching the live draft.</b>{" "}
+        {member ? `${member.name} is on the clock` : "Waiting for the next pick"} — picks appear
+        here the moment they're made. Pick buttons will show up right on this screen once it's
+        your turn.
+      </div>
+    </div>
+  );
+
+  // Shown to a claimed, non-commissioner member exactly while it's their
+  // turn — the self-service counterpart to spectatorBanner above.
+  const yourTurnBanner = !isCommissioner && isMyTurn && (
+    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.grn,
+      display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <Target size={16} color={theme.grn} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
+        <b style={{ color: theme.grn }}>It's your turn!</b> Pick a category below.
+      </div>
+    </div>
+  );
+
+  const pickErrorBanner = pickError && (
+    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.red,
+      display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <AlertTriangle size={16} color={theme.red} style={{ flexShrink: 0, marginTop: 1 }} />
+      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>{pickError}</div>
+    </div>
+  );
+
   // Guards against a double-fire (fast double-click, or a second pick
   // option clicked before the first one's round-trip to Supabase has
-  // finished) submitting two picks off the same stale `liveSession`
-  // snapshot — both would compute the same "next" current_pick/history
-  // from whatever was last confirmed, and the second write would just
-  // clobber the first. Clearing the pick-selection UI synchronously
-  // (not after the await) closes the window where it could even happen.
+  // finished) submitting two picks for the same browser session before
+  // the first one's response lands. Clearing the pick-selection UI
+  // synchronously (not after the await) closes the window where it could
+  // even happen from this one client; submit_draft_pick's own row lock
+  // (phase19_draft_pick_rpcs.sql) is what guards against a DIFFERENT
+  // client racing this one, which this ref can't see at all.
   const makingPickRef = useRef(false);
   const makePick = async (catId, selection, isCustom) => {
     if (!member || makingPickRef.current) return;
+    if (liveSession && !canPick) return;
     makingPickRef.current = true;
     const key = member.id + "-" + catId;
+    const expectedPick = effective.currentPick;
     track(EVENTS.DRAFT_PICK_MADE, {
       pick_number: effective.currentPick + 1,
       round: effective.snakeOrder[effective.currentPick] ? effective.snakeOrder[effective.currentPick].round + 1 : null,
@@ -350,39 +430,51 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       seconds_remaining: displayTimer,
       is_timer_active: displayTimerActive,
     });
-    setSelectedCategory(null); setSearchFilter(""); setCustomInput("");
+    setSelectedCategory(null); setSearchFilter(""); setCustomInput(""); setPickError("");
     if (isMobile) setMobilePanel("draft");
 
     try {
       if (liveSession) {
-        const newPicks = { ...liveSession.picks, [key]: selection };
-        const newHistory = [...liveSession.pick_history, { pick: liveSession.current_pick, memberId: member.id, categoryId: catId, selection }];
-        const newCurrentPick = liveSession.current_pick + 1;
-        const patch = {
-          picks: newPicks,
-          pick_history: newHistory,
-          current_pick: newCurrentPick,
-          status: newCurrentPick >= liveSession.snake_order.length ? "complete" : "drafting",
-          // Keeps running for the next person instead of stopping —
-          // per live-draft feedback, the commissioner shouldn't have to
-          // click Start after every single pick. timer_started_at is
-          // deliberately null here, not a client guess: an earlier
-          // version set `new Date().toISOString()` optimistically, which
-          // visibly glitched — this browser's own clock would start
-          // ticking down from ITS guess immediately, then the
-          // server-confirmed value (always a little LATER, since the
-          // trigger stamps now() only once the write actually commits)
-          // would replace it moments later and the displayed time would
-          // visibly jump forward before resuming its countdown. With
-          // timer_started_at left null, computeLiveRemaining() (below)
-          // falls back to showing the flat, correct timer_remaining —
-          // not ticking at all — until the real server timestamp arrives
-          // moments later, so there's one clean transition into the
-          // countdown instead of a tick-then-correct glitch.
-          timer_active: true, timer_started_at: null, timer_remaining: TIMER_DURATION,
-        };
-        setLiveSession((s) => (s ? { ...s, ...patch } : s));
-        if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
+        // All of this — whose turn it really is, whether `selection` is
+        // still actually available, applying the pick, advancing
+        // current_pick, resetting the timer — happens in ONE locked,
+        // server-side transaction now (see phase19_draft_pick_rpcs.sql's
+        // own comment on why: once more than one browser can submit a
+        // pick, this client constructing the "next" state itself and
+        // pushing a patch — the old pattern, still used for the
+        // commissioner-only timer controls below — is a real corruption
+        // race). The RPC returns the full updated row directly, so this
+        // client's own screen updates from that without waiting for a
+        // second round-trip through Realtime.
+        const { row, code } = await submitDraftPick(expectedPick, catId, selection, isCustom);
+        if (row) {
+          setLiveSession(row);
+          notifyTurn();
+        } else if (code === "stale_pick") {
+          // The ordinary result of losing a race, or this client's view
+          // just lagging one Realtime tick behind — not an error.
+          setLiveSession(await fetchDraftSession());
+        } else if (code === "network_error") {
+          // The request itself never got a response — can't tell "lost
+          // a race" apart from "that was actually MY successful write"
+          // from the failure alone. Check ground truth: if pick_history
+          // at this pick's index matches what was just attempted, it was
+          // the latter — treat it as success, not an error.
+          const real = await fetchDraftSession();
+          setLiveSession(real);
+          const landed = real && real.pick_history && real.pick_history[expectedPick];
+          const isMine = landed && landed.categoryId === catId && landed.selection === selection;
+          if (!isMine) setPickError("Couldn't confirm your pick went through — please try again.");
+        } else {
+          setLiveSession(await fetchDraftSession());
+          setPickError(
+            code === "not_your_turn" ? "It's not your turn anymore." :
+            code === "claim_not_verified" ? "Your account isn't verified to pick for yourself yet — ask your commissioner to make this pick for you." :
+            code === "selection_already_taken" ? "Someone already took that — pick again." :
+            code === "draft_already_complete" ? "The draft is already complete." :
+            "Something went wrong submitting that pick — please try again."
+          );
+        }
       } else {
         setPicks((p) => ({ ...p, [key]: selection }));
         setPickHistory((h) => [...h, { pick: currentPick, memberId: member.id, categoryId: catId, selection }]);
@@ -397,19 +489,18 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const undoPick = async () => {
     if (effective.pickHistory.length === 0) return;
     track(EVENTS.DRAFT_PICK_UNDONE, { pick_number: effective.pickHistory.length });
-    const last = effective.pickHistory[effective.pickHistory.length - 1];
     if (liveSession) {
-      const newPicks = { ...liveSession.picks };
-      delete newPicks[last.memberId + "-" + last.categoryId];
-      const patch = {
-        picks: newPicks,
-        pick_history: liveSession.pick_history.slice(0, -1),
-        current_pick: liveSession.current_pick - 1,
-        status: "drafting",
-      };
-      setLiveSession((s) => (s ? { ...s, ...patch } : s));
-      if (!(await saveDraftSession(patch))) await reconcileAfterFailedSave(setLiveSession);
+      // Commissioner-only (gated by canControlTimer in the render below),
+      // but still routed through the same locked-row RPC pattern as
+      // makePick — not because concurrent undos are possible (only one
+      // role can call this), but because a plain client-constructed
+      // UPDATE could now race a MEMBER's pick landing between the
+      // commissioner's last render and their Undo click. See
+      // undo_last_draft_pick's own comment (phase19_draft_pick_rpcs.sql).
+      const { row } = await undoLastDraftPick(liveSession.current_pick);
+      setLiveSession(row || await fetchDraftSession());
     } else {
+      const last = pickHistory[pickHistory.length - 1];
       setPicks((p) => { const n = { ...p }; delete n[last.memberId + "-" + last.categoryId]; return n; });
       setPickHistory((h) => h.slice(0, -1));
       setCurrentPick((c) => c - 1);
@@ -881,8 +972,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", marginBottom: 16,
               flexDirection: isMobile ? "column" : "row" }}>
               <label style={{ fontSize: 14, color: theme.mut, fontWeight: 600 }}>Season:</label>
-              <input value={seasonName} onChange={(e) => setSeasonName(e.target.value)} disabled={!canAct}
-                style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700, opacity: canAct ? 1 : 0.6 }} />
+              <input value={seasonName} onChange={(e) => setSeasonName(e.target.value)} disabled={!canControlTimer}
+                style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700, opacity: canControlTimer ? 1 : 0.6 }} />
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
               <button onClick={() => { track(EVENTS.DRAFT_FINALIZE_MODAL_OPENED, { season_name: seasonName }); setShowFinalizeModal(true); }} disabled={!isCommissioner}
@@ -959,7 +1050,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               color: displayTimer <= 15 ? theme.red : displayTimer <= 30 ? theme.yel : theme.txt, marginBottom: 8 }}>
               {Math.floor(displayTimer / 60)}:{String(displayTimer % 60).padStart(2, "0")}
             </div>
-            {canAct && (
+            {canControlTimer && (
               <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                 {displayTimerActive
                   ? <button onClick={handleTimerPause} style={buttonStyle(theme.yel)}>⏸ Pause</button>
@@ -974,9 +1065,10 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             )}
           </div>
 
-          {/* Category selection — commissioner (or local mock) only; a
-              spectator watching a live draft has nothing to pick */}
-          {canAct ? (
+          {/* Category selection — commissioner, local mock, or (now)
+              whoever's actually on the clock; a spectator watching
+              someone else's turn has nothing to pick */}
+          {canPick ? (
             <>
               {!selectedCategory && (
                 <div style={cardStyle}>
@@ -1078,6 +1170,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
 
       {nonCommissionerBanner}
       {spectatorBanner}
+      {yourTurnBanner}
+      {pickErrorBanner}
 
       {/* Cancel-draft confirmation modal */}
       {showCancelModal && (

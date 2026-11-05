@@ -392,6 +392,21 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   wiring in college/stocks/entertainment/etc. is a
   deliberate future follow-up, same reasoning as `score_events` itself
   only covering sports so far (see phase7's own note).
+- **Second caller, added for self-service draft picking**
+  (`docs/live-draft-phase2.md`'s self-service section): `DraftTool.jsx`
+  calls `notifyTurn()` (`src/utils/push.js`) after any pick lands, which
+  hits a new `?action=notify-turn` case in `api/push.js` (no new
+  Serverless Function — same flat-file-plus-query-param pattern as
+  subscribe/unsubscribe/test, for the Vercel Hobby 12-function-cap
+  reason explained above). Unlike every other action here, it takes NO
+  `memberId` from the request body at all — the endpoint reads
+  `draft_sessions` itself and derives who's on the clock from the
+  server's own `current_pick`/`snake_order`, so a caller can trigger a
+  check but never choose who gets pushed (an open "push this memberId"
+  endpoint would let anyone who knows a member id — public, it's in the
+  UI — spam that person's phone on demand). A staleness guard (skip
+  unless `draft_sessions.updated_at` is within the last 15 seconds) caps
+  how often even a repeated call can do anything.
 
 ## Governance
 

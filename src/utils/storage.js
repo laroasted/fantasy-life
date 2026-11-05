@@ -733,8 +733,18 @@ try {
 * suspenders, since this way a correct render never depends on every
 * future write remembering to set that, or on nothing else about
 * Realtime's payload shape changing.
+*
+* `onReconnect`, if given, fires when the channel comes back to
+* SUBSCRIBED after having dropped (CLOSED/TIMED_OUT/CHANNEL_ERROR) —
+* e.g. a phone that locked mid-draft, or a wifi blip. postgres_changes
+* does NOT replay events missed while disconnected, so the caller should
+* treat this as "force a fresh fetchDraftSession() now" rather than
+* waiting for luck (the next unrelated event, if one ever comes, would
+* eventually self-correct too, since onChange always re-fetches the
+* full row — but that's not a guarantee worth relying on).
 */
-export function subscribeDraftSession(onChange) {
+export function subscribeDraftSession(onChange, onReconnect) {
+ let hasDropped = false;
  const channel = supabasePublic
  .channel('draft-session-live')
  .on('postgres_changes',
@@ -743,8 +753,73 @@ export function subscribeDraftSession(onChange) {
  if (payload.eventType === 'DELETE') { onChange(null); return; }
  fetchDraftSession().then(onChange);
  })
- .subscribe();
+ .subscribe((status) => {
+ if (status === 'SUBSCRIBED') {
+ if (hasDropped && onReconnect) onReconnect();
+ hasDropped = false;
+ } else if (status === 'CLOSED' || status === 'TIMED_OUT' || status === 'CHANNEL_ERROR') {
+ hasDropped = true;
+ }
+ });
  return () => { supabasePublic.removeChannel(channel); };
+}
+
+/**
+* Submits a pick in a live draft — self-service and commissioner-
+* override both go through this same path (see
+* supabase/phase19_draft_pick_rpcs.sql for why this is one
+* security-definer RPC rather than a client-constructed UPDATE: once
+* more than one browser can write a pick, the old "read state, decide
+* the new state, push a full patch" pattern is a real corruption race).
+*
+* Returns `{ row, code }`. On success, `row` is the full updated session
+* and `code` is null. On failure, `row` is null and `code` is one of the
+* RPC's specific reasons: `stale_pick` (this client's view of
+* current_pick is behind — the ordinary, non-alarming result of losing
+* a race or just lagging a Realtime tick; the caller should silently
+* refetch, not show an error), `not_your_turn`, `claim_not_verified`
+* (claimed via the open manual fallback, not the email-verified path —
+* see phase18), `selection_already_taken`, `draft_already_complete`,
+* `no_live_draft`, or `network_error` (the request itself never got a
+* response — see this function's own call sites for the idempotent-retry
+* handling that distinguishes "someone beat me" from "that was actually
+* my own write and I just didn't hear back").
+*/
+export async function submitDraftPick(expectedPick, categoryId, selection, isCustom) {
+ try {
+ const { data, error } = await supabase.rpc('submit_draft_pick', {
+ p_expected_pick: expectedPick,
+ p_category_id: categoryId,
+ p_selection: selection,
+ p_is_custom: !!isCustom,
+ });
+ if (error) return { row: null, code: error.message };
+ return { row: data, code: null };
+ } catch (err) {
+ console.warn('submitDraftPick error:', err);
+ return { row: null, code: 'network_error' };
+ }
+}
+
+/**
+* Commissioner-only undo, routed through the same locked-row pattern as
+* submitDraftPick — see phase19_draft_pick_rpcs.sql's own comment on
+* undo_last_draft_pick for why a plain client UPDATE stopped being safe
+* here too, even though only one role can call this: it can now race a
+* MEMBER's pick landing between the commissioner's last render and their
+* Undo click, not just another undo.
+*/
+export async function undoLastDraftPick(expectedPick) {
+ try {
+ const { data, error } = await supabase.rpc('undo_last_draft_pick', {
+ p_expected_pick: expectedPick,
+ });
+ if (error) return { row: null, code: error.message };
+ return { row: data, code: null };
+ } catch (err) {
+ console.warn('undoLastDraftPick error:', err);
+ return { row: null, code: 'network_error' };
+ }
 }
 
 /**
