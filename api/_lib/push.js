@@ -67,7 +67,16 @@ function ensureConfigured() {
 //        the broad digest's audience once claimed members get targeted
 //        pushes instead (see sendPushToMember / AGENTS.md's push section)
 async function sendPush(supabase, { title, body, url = '/' }, scope = {}) {
-  if (!ensureConfigured()) return { sent: 0, failed: 0 };
+  // `reason` is set ONLY on these early, zero-subscription-reached exits
+  // — Codex-caught, real: without it, a misconfigured VAPID setup or a
+  // failed subscription-lookup query return the exact same {sent: 0,
+  // failed: 0} shape as "this member genuinely has no subscription",
+  // which the commissioner-facing test tool (SeasonSettings.jsx) used to
+  // report as the latter unconditionally, pointing them at the wrong
+  // fix. The normal success path below returns {sent, failed} with no
+  // `reason` at all, so this is additive — nothing downstream that
+  // already just reads sent/failed needs to change.
+  if (!ensureConfigured()) return { sent: 0, failed: 0, reason: 'not_configured' };
 
   let query = supabase.from('push_subscriptions').select('id, endpoint, p256dh, auth');
   if (scope.memberId) query = query.eq('member_id', scope.memberId);
@@ -76,9 +85,9 @@ async function sendPush(supabase, { title, body, url = '/' }, scope = {}) {
   const { data: subs, error } = await query;
   if (error) {
     console.error('Push: failed to load subscriptions:', error.message);
-    return { sent: 0, failed: 0 };
+    return { sent: 0, failed: 0, reason: 'lookup_failed' };
   }
-  if (!subs || subs.length === 0) return { sent: 0, failed: 0 };
+  if (!subs || subs.length === 0) return { sent: 0, failed: 0, reason: 'no_subscriptions' };
 
   const payload = JSON.stringify({ title, body, data: { url } });
   let sent = 0;

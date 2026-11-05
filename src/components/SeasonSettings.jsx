@@ -297,6 +297,16 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    // conflating the two would send the commissioner chasing "tell them
    // to enable push" when the real problem is push delivery itself.
    label = "Delivery failed (" + result.failed + " device" + (result.failed === 1 ? "" : "s") + " subscribed, but push didn't go through)";
+  } else if (result.reason === "not_configured") {
+   // Codex-caught, real (round 2): sent:0/failed:0 ALSO happens when
+   // the server's own push setup is broken (missing VAPID keys) or the
+   // subscription lookup itself failed — sendPush() (api/_lib/push.js)
+   // now tells these apart from a genuine "no subscription" via this
+   // reason field, so surface them as their own distinct message
+   // instead of folding them into "no active subscription" too.
+   label = "Push isn't configured on the server (missing VAPID keys)";
+  } else if (result.reason === "lookup_failed") {
+   label = "Couldn't check subscriptions — try again";
   } else {
    label = "No active subscription for this member";
   }
