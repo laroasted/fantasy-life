@@ -23,6 +23,12 @@ const { sendPushToAllSubscribers, sendPushToMember, isAllowedPushEndpoint } = re
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+// Same publishable/anon key storage.js ships to every visitor's browser
+// bundle — safe to hold here too, since it's not a secret. Used only to
+// build a throwaway client scoped to the CALLER's own JWT (below), so
+// is_commissioner() evaluates against who's actually asking, the same
+// way it would from a direct browser call.
+const SUPABASE_ANON_KEY = 'sb_publishable_9lGdGZ1EEifhWZlPRQa-WA_QVbPD6O6';
 
 async function handleSubscribe(req, res, supabase) {
   const { endpoint, keys, memberId } = req.body || {};
@@ -141,6 +147,43 @@ async function handleNotifyTurn(req, res, supabase) {
   return res.status(200).json(result);
 }
 
+// Commissioner-only, browser-facing test push — the Settings UI's "send
+// a test notification to this member" button (SeasonSettings.jsx's push
+// tab). Distinct from ?action=test (above/below): that one is gated by
+// CRON_SECRET, a static server-only secret a browser could never hold;
+// this one is gated by asking Supabase itself whether the CALLER's own
+// session is a commissioner, the same is_commissioner() check every
+// other commissioner-only write in this app goes through — just asked
+// from a Vercel function instead of directly from the browser, since
+// sending a push has to happen server-side (VAPID_PRIVATE_KEY).
+async function handleTestMember(req, res, supabase) {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const callerClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: isCommish, error: commishErr } = await callerClient.rpc('is_commissioner');
+  if (commishErr || !isCommish) {
+    return res.status(403).json({ error: 'Commissioner only' });
+  }
+
+  const { memberId } = req.body || {};
+  if (!memberId || typeof memberId !== 'string') {
+    return res.status(400).json({ error: 'Missing memberId' });
+  }
+
+  const result = await sendPushToMember(supabase, memberId, {
+    title: 'Test notification',
+    body: `Sent from Settings at ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,
+    url: '/',
+  });
+  return res.status(200).json(result);
+}
+
 async function handleTest(req, res, supabase) {
   // title carries the real content, not the app name — Safari/iOS already
   // shows "from Fantasy Life" as its own platform-level second line on
@@ -189,6 +232,7 @@ module.exports = async function handler(req, res) {
     case 'subscribe': return handleSubscribe(req, res, supabase);
     case 'unsubscribe': return handleUnsubscribe(req, res, supabase);
     case 'notify-turn': return handleNotifyTurn(req, res, supabase);
+    case 'test-member': return handleTestMember(req, res, supabase);
     case 'test': return handleTest(req, res, supabase);
     default: return res.status(404).json({ error: 'Unknown push action' });
   }

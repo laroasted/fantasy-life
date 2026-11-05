@@ -10,6 +10,8 @@
 // for visitors on browsers/OSes without push support (notably iOS Safari
 // unless the site's been added to the home screen).
 
+import { supabase } from "./storage";
+
 const VAPID_PUBLIC_KEY = process.env.REACT_APP_VAPID_PUBLIC_KEY;
 
 export function isPushSupported() {
@@ -83,6 +85,40 @@ export async function notifyTurn() {
     await fetch("/api/push?action=notify-turn", { method: "POST" });
   } catch (e) {
     console.warn("Push: notify-turn failed.", e);
+  }
+}
+
+/**
+* Commissioner-only: sends a one-off test push to a specific member's
+* subscribed device(s), for the Settings "push" tab's per-member test
+* button (SeasonSettings.jsx) — lets the commissioner confirm a given
+* member will actually receive a draft "it's your turn" or score push
+* before relying on it live, without waiting for a real event.
+*
+* Unlike every other export here, this one DOES surface a specific
+* reason on failure rather than just swallowing it — the whole point of
+* this button is telling the commissioner whether it worked, not hiding
+* that from them the way a background push-infra failure elsewhere
+* should stay invisible to an ordinary visitor.
+*/
+export async function sendTestPush(memberId) {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return { ok: false, reason: "not_signed_in" };
+    const res = await fetch("/api/push?action=test-member", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ memberId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.error || "server_error" };
+    return { ok: true, sent: data.sent || 0, failed: data.failed || 0 };
+  } catch (e) {
+    console.warn("Push: test-member failed.", e);
+    return { ok: false, reason: "network_error" };
   }
 }
 

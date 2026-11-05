@@ -407,6 +407,24 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   UI — spam that person's phone on demand). A staleness guard (skip
   unless `draft_sessions.updated_at` is within the last 15 seconds) caps
   how often even a repeated call can do anything.
+- **Commissioner-facing test tool**: Settings → "🔔 Push Test"
+  (`SeasonSettings.jsx`) lists every current-season member with a "Send
+  test push" button, so the commissioner can confirm a given member will
+  actually receive a push (device subscribed, permission granted) before
+  relying on it live — same motivation as the Paywall tab it's modeled
+  on, one row per member. Hits a new `?action=test-member` case in
+  `api/push.js` (still no new Serverless Function). Unlike the existing
+  `?action=test` (gated by `CRON_SECRET`, a server-only secret no
+  browser could ever hold), this one is gated by asking Supabase whether
+  the CALLER's own session is a commissioner — `sendTestPush()`
+  (`src/utils/push.js`) sends the signed-in user's own access token as a
+  Bearer header, and the endpoint builds a throwaway anon-key client
+  scoped to that token and calls `is_commissioner()` with it, the same
+  check every other commissioner-only write in this app already goes
+  through, just asked from a Vercel function since sending a push has to
+  happen server-side (`VAPID_PRIVATE_KEY`). Reports back `sent`/`failed`
+  counts so "no active subscription for this member" is distinguishable
+  from a real send failure.
 
 ## Governance
 
