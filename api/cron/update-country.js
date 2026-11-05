@@ -566,22 +566,31 @@ module.exports = async function handler(req, res) {
               note: medalNote
             }, { onConflict: 'pick_id' });
 
+          var picksWriteOk = true;
           if (!olyErr && !bonusLocked) {
-            await supabase.from('picks').update({
+            var { error: picksErr } = await supabase.from('picks').update({
               bonus: bonusPts,
               bonus_note: bonusPts > 0 ? medalNote : '',
               updated_at: new Date().toISOString()
             }).eq('id', pick.id);
-            olympicsUpdated++;
+            if (picksErr) {
+              console.error('  DB error updating bonus for ' + pick.pick + ':', picksErr.message);
+              picksWriteOk = false;
+            } else {
+              olympicsUpdated++;
+            }
           } else if (bonusLocked) {
             console.log('  🔒 ' + ownerName2 + ': bonus locked');
             olympicsUpdated++;
           }
 
-          // Diff against the pre-fetched `picks` bonus — skipped entirely
-          // if the upsert/update above failed, same as every other cron's
-          // "don't diff a write that didn't happen" rule.
-          if (!olyErr) {
+          // Diff against the pre-fetched `picks` bonus — skipped if either
+          // write failed (the country_olympics upsert or the picks bonus
+          // update itself), same as every other cron's "don't diff a write
+          // that didn't happen" rule. A locked bonus leaves picksWriteOk at
+          // its default `true` with newBonusVal equal to the old value, so
+          // the diff below naturally computes to 0 — no special-casing needed.
+          if (!olyErr && picksWriteOk) {
             var newBonusVal = bonusLocked ? (Number(pick.bonus) || 0) : (Number(bonusPts) || 0);
             var olympicsDelta = Math.round((newBonusVal - (Number(pick.bonus) || 0)) * 10) / 10;
             if (olympicsDelta !== 0) {
