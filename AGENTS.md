@@ -262,18 +262,28 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   snapshot that powers Trends). Each row has a `cause` string and a
   `source` naming which cron wrote it.
 - `api/cron/update-sports.js` (NFL/NBA/NHL/MLB/MLS), `update-college.js`
-  (NCAAF/NCAAB), and `update-events.js` (Tennis/Golf/F1) write here —
-  each diffs its own pick's old vs. new total at write time, reusing the
-  matched ESPN team/athlete and record it already has in memory for the
-  `cause` text, then calls the shared `writeScoreEventsAndNotify()`
-  (`api/_lib/push.js`) to batch-insert the run's `scoreEvents` and send
-  the resulting pushes — extracted there (originally inline, only in
-  update-sports.js) specifically so this logic has one copy shared across
-  every cron, not one per file. `update-country.js`, `-entertainment.js`,
-  `-billboard.js`, and `-stocks.js` don't write to `score_events` yet;
-  see `docs/score-events-phase7.md` for why that was originally
-  deliberate, not missing — now it's purely "not gotten to this one yet,"
-  being extended one cron at a time.
+  (NCAAF/NCAAB), `update-events.js` (Tennis/Golf/F1), `update-billboard.js`
+  (Musician), `update-entertainment.js` (Actor/Actress), and
+  `update-stocks.js` (Stock) write here — each diffs its own pick's old
+  vs. new total at write time, reusing whatever stat it already has in
+  memory (matched ESPN team/athlete, chart weeks, box-office/RT score,
+  % price change) for the `cause` text, then calls the shared
+  `writeScoreEventsAndNotify()` (`api/_lib/push.js`) to batch-insert the
+  run's `scoreEvents` and send the resulting pushes — extracted there
+  (originally inline, only in update-sports.js) specifically so this
+  logic has one copy shared across every cron, not one per file.
+  `update-country.js` doesn't write to `score_events` yet — it has two
+  separate update loops (GDP → base, Olympics → bonus) with two
+  different lock-key schemes, deliberately skipped for now rather than
+  rushed; see `docs/score-events-phase7.md`. Two things worth noting
+  from the extension itself: `update-stocks.js` deliberately diffs
+  `base` only, never `bonus` — `bonus` is unconditionally reset to 0
+  every run regardless of any real change (there's no actual Stock bonus
+  mechanism), so diffing it would generate a misleading "bonus −X" event
+  on every single run. `update-billboard.js` had a pre-existing display
+  bug fixed in passing: its rankings output showed `bonus` in place of
+  `base` whenever base was locked, because `base` was never fetched from
+  `picks` at all before this pass added it (needed for the new diff).
 - Rendered by `src/components/ActivityFeed.jsx` in `Scoreboard.jsx`'s
   sidebar. A paywalled member's entries still show (name, category,
   cause) but the delta number is blurred with the same
@@ -396,13 +406,16 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   wherever it already was, which used to silently swallow the deep link
   whenever the app was already open — the common case for an engaged
   user. This cron runs once daily (`vercel.json`), so there's no spam
-  risk from either call site. `update-college.js` and `update-events.js`
-  now call the same `writeScoreEventsAndNotify()` and run on the same
-  once-daily cadence, so the same reasoning holds for them. The
-  remaining crons (country, stocks, entertainment, billboard) stay
-  silent for now — wiring each in is a deliberate future follow-up,
-  same `score_events`-coverage reasoning as phase7's own note, now being
-  worked through one cron at a time.
+  risk from either call site. `update-college.js`, `update-events.js`,
+  `update-billboard.js`, `update-entertainment.js`, and
+  `update-stocks.js` all now call the same `writeScoreEventsAndNotify()`
+  too — each on its own `vercel.json` schedule (college/events daily
+  like sports, stocks daily on weekdays, billboard weekly on Fridays,
+  entertainment weekly on Mondays), every one infrequent enough that the
+  same "no spam risk" reasoning holds regardless of the exact cadence.
+  Only `update-country.js` stays silent for now — deliberately skipped
+  (two separate update loops, two different lock schemes) rather than
+  rushed; see `docs/score-events-phase7.md`.
 - **Second caller, added for self-service draft picking**
   (`docs/live-draft-phase2.md`'s self-service section): `DraftTool.jsx`
   calls `notifyTurn()` (`src/utils/push.js`) after any pick lands, which
