@@ -8,6 +8,7 @@
 */
 
 const { createClient } = require('@supabase/supabase-js');
+const { writeScoreEventsAndNotify } = require('../_lib/push');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -107,6 +108,13 @@ module.exports = async function handler(req, res) {
  (members || []).forEach(function(m) { memberNameById[m.id] = m.name; });
 
  var results = {};
+ // Collected across both leagues, then batch-written once at the end via
+ // writeScoreEventsAndNotify (api/_lib/push.js) — same pattern
+ // update-sports.js established first. A failure writing these must
+ // never block or roll back the picks.update() calls above; the
+ // activity feed is a nice-to-have view on top of real scoring, not
+ // part of it.
+ var scoreEvents = [];
 
  for (var [league, config] of Object.entries(COLLEGE_LEAGUES)) {
   console.log('Processing ' + league + '...');
@@ -159,12 +167,34 @@ module.exports = async function handler(req, res) {
    if (updateErr) { console.error(' Failed to update ' + m.member_id + ':', updateErr.message); continue; }
 
    updated++;
+
+   // Diff against the pre-update row (m.base, m.bonus) to log what
+   // actually moved — same pattern as update-sports.js. A locked base
+   // means updateObj.base was never set, so newBaseVal === m.base and
+   // delta is naturally 0, no special case needed to skip locked no-ops.
+   var newBaseVal = baseLocked ? (Number(m.base) || 0) : (Number(m.newBase) || 0);
+   var oldTotal = (Number(m.base) || 0) + (Number(m.bonus) || 0);
+   var newTotal = newBaseVal + (Number(m.bonus) || 0);
+   var delta = Math.round((newTotal - oldTotal) * 10) / 10;
+   if (delta !== 0) {
+    scoreEvents.push({
+     season_year: seasonYear,
+     member_id: m.member_id,
+     category: league,
+     delta: delta,
+     cause: (m.espnTeam || 'Unranked') + (m.apPoints > 0 ? ' (#' + m.apRank + ' AP, ' + m.apPoints + ' pts)' : ''),
+     source: 'update-college',
+    });
+   }
+
    rankings.push({ rank: m.rank, member: m.member_id, pick: m.pick, espnMatch: m.espnTeam || 'Unranked', apRank: m.apRank, apPoints: m.apPoints, base: baseLocked ? m.base : m.newBase, bonus: Number(m.bonus) || 0, total: (baseLocked ? m.base : m.newBase) + (Number(m.bonus) || 0), lockedFields: skipped.length > 0 ? skipped : undefined });
   }
 
   console.log(' ' + league + ': Updated ' + updated + '/' + matched.length + ' picks');
   results[league] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings };
  }
+
+ await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
 
  console.log('\n Done!');
  return res.status(200).json({ message: 'College AP rankings update complete', season: seasonYear, timestamp: new Date().toISOString(), results: results });
