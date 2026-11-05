@@ -69,15 +69,30 @@ Oscars, and Album/Record/Song of the Year plus Pop/Rock/Rap/New Artist (all
 at CATEGORY_BONUS_RULES's tier 3) plus the nomination-without-win tier for
 Grammys.
 
-**Parsing approach:** `extractWikiSection()` isolates the wikitext between a
-category's heading (matched by keyword, e.g. `'actor in a leading role'`,
-`'album of the year'`) and the next heading. `extractWinnerAndNominees()`
-then takes the first **bold** (`'''...'''`) name in that section as the
-winner — the long-standing convention on these specific recurring
-articles — and every other `[[wikilinked]]` name as a nominee. A film or
-album title landing in that nominee list is harmless noise: `namesMatch()`/
-`artistMatches()` just won't match it to a person's or artist's name when
-resolving a pick against it.
+**Parsing approach (live-verified 2026-11 against the 97th Academy Awards
+and 2025 Grammy Awards articles' real wikitext — see the Confidence
+section below for what changed and why):** categories on these pages are
+NOT `==heading==` sections — a first version of this assumed they were,
+and Codex's review on PR #55 caught that it silently never matched
+anything. Each category is actually a
+`{{Award category|color|[[Real Name|Display Name]]}}` template marker
+inside a wikitable; `extractCategoryBlock()` finds that marker by keyword
+and reads until the next one (or a table-row break, or a real heading).
+Within that block, `extractWinnerAndNominees()` takes the first **bold**
+(`'''...'''`) bulleted line as the winner and every other bulleted line as
+a nominee candidate — bullet depth varies by category shape (Oscar acting
+categories: one winner `*` + four nominee `**` lines; Grammy's "General
+Field" categories: one `*` per nominee, each with its own producer/
+engineer-credit `**` sub-line; Grammy's genre categories: one winner `*`
+with every other nominee as a `**` beneath it), so nothing here assumes a
+fixed depth. A song/album/film title or a producer's name landing in a
+candidate list is harmless noise: `namesMatch()`/`artistMatches()` just
+won't match it to the real person/artist being checked. One wrinkle
+worth knowing: a winner's own credit sub-line (e.g. Grammy Song of the
+Year's winner line is just the song title in quotes — the actual
+songwriter/performer is named only on the `**` line beneath it) gets
+merged into that winner's own candidate list rather than treated as a
+separate nominee, specifically so that name isn't lost.
 A person/artist's result across the whole ceremony is the **max** tier
 found, not a sum — unlike F1's 4 independent GPs, a line in
 `CATEGORY_BONUS_RULES.Actor`/`Actress`/`Musician` reads as "whichever of
@@ -142,16 +157,21 @@ calls, not a verified live response for every endpoint added here.
   are classified from free-text match labels the same way the sports
   bracket is — and that label shape is the least-verified piece in this
   whole change.
-- **Moderate** — Oscar and Grammy bonus. The winner-is-bold-wikitext
-  convention and the article-title/redirect patterns (`"{year} Grammy
-  Awards"`, `"{year} Academy Awards"` → ordinal redirect) are long-standing
-  and stable on these two specific recurring articles in practice, but —
-  same caveat as everything else in this doc — weren't live-verified from
-  this build's network-restricted sandbox (`en.wikipedia.org` wasn't
-  reachable to test against). `extractWinnerAndNominees()` only ever
-  returns a winner when it finds one clean bold match; anything messier
-  (a tie, an inconsistent markup year, a template-based table instead of
-  bullet lists) falls through to "could not resolve," logged and skipped,
+- **High** — Oscar and Grammy bonus. Upgraded from "moderate" after Codex's
+  review on PR #55 caught that the first version's heading-based category
+  matching never matched anything on either real page (there are no
+  `==heading==` sections per category at all), which sent this through an
+  actual live-data fetch (via Firecrawl, since `en.wikipedia.org` is
+  blocked from this sandbox's own network) against the real 97th Academy
+  Awards and 2025 Grammy Awards articles to find the true
+  `{{Award category|...}}`-marker structure described above and confirm
+  the rewrite resolves every one of the 11 tracked categories to the
+  actual, correct real-world winner (Adrien Brody, Mikey Madison, Kieran
+  Culkin, Zoe Saldaña, Beyoncé, Kendrick Lamar ×2, Sabrina Carpenter, The
+  Rolling Stones, Doechii, Chappell Roan). `extractWinnerAndNominees()`
+  only ever returns a winner when it finds one clean bold match; anything
+  messier (a tie, a future markup change, a category this wasn't tested
+  against) falls through to "could not resolve," logged and skipped,
   never guessed.
 
 **On the first live run after this ships**, check the cron's logs/response

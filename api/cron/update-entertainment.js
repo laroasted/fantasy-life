@@ -136,45 +136,77 @@ async function fetchWikipediaWikitext(title) {
   } catch (err) { console.error('  Wikipedia fetch failed for "' + title + '":', err.message); return null; }
 }
 
-// Isolates the wikitext between a heading matching `headingKeywords` and
-// the next heading at the same or a shallower level.
-function extractWikiSection(wikitext, headingKeywords) {
+// FIX (2026-11, Codex review on PR #55): categories on these ceremony
+// pages are NOT ==heading== sections — verified live against the 97th
+// Academy Awards article's real wikitext. Each category is a
+// `{{Award category|color|[[Real Name|Display Name]]}}` template marker
+// inside a wikitable (two categories per row, `|-` separating rows), e.g.:
+//   | {{Award category|#F9EFAA|[[Academy Award for Best Actor|Best Actor in a Leading Role]]}}
+//   * '''[[Adrien Brody]] – ''[[The Brutalist]]'' as László Tóth ‡'''
+//   ** [[Timothée Chalamet]] – ''[[A Complete Unknown]]'' as [[Bob Dylan]]
+//   ** ...
+// Matches the keyword against the marker line itself (its target or
+// display text, either way) rather than a heading, and the block runs
+// until the next marker, the next table row, or the next real heading.
+function extractCategoryBlock(wikitext, categoryKeywords) {
   var lines = wikitext.split('\n');
-  var headingRegex = /^(={2,4})\s*(.+?)\s*\1\s*$/;
-  var collecting = false, collectedLevel = 0, buffer = [];
+  var markerRegex = /\{\{Award category\|/i;
+  var startIdx = -1;
   for (var i = 0; i < lines.length; i++) {
-    var m = lines[i].match(headingRegex);
-    if (m) {
-      var level = m[1].length, headingText = m[2].toLowerCase();
-      if (collecting && level <= collectedLevel) break;
-      if (!collecting && headingKeywords.some(function (k) { return headingText.includes(k); })) {
-        collecting = true; collectedLevel = level; continue;
-      }
+    if (markerRegex.test(lines[i])) {
+      var lower = lines[i].toLowerCase();
+      if (categoryKeywords.some(function (k) { return lower.includes(k); })) { startIdx = i; break; }
     }
-    if (collecting) buffer.push(lines[i]);
+  }
+  if (startIdx === -1) return null;
+  var buffer = [];
+  for (var j = startIdx + 1; j < lines.length; j++) {
+    var line = lines[j];
+    if (markerRegex.test(line)) break;   // next category's marker
+    if (/^\s*\|-/.test(line)) break;     // table row separator
+    if (/^={2,4}/.test(line)) break;     // next real heading
+    buffer.push(line);
   }
   return buffer.length > 0 ? buffer.join('\n') : null;
 }
 
-// Winner-is-bold-wikitext is the long-standing convention on this specific
-// recurring article (not live-verified from this build's sandbox — see
-// docs/bonus-automation.md). Nominees are every other [[wikilinked]] name
-// in the section; a film-title wikilink landing in that list is harmless
-// noise here since namesMatch() below just won't match it to a person.
+function extractWikiNames(line) {
+  var names = [], m, re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+  while ((m = re.exec(line)) !== null) {
+    var n = m[1].trim();
+    if (n && !/^(file|category|image):/i.test(n)) names.push(n);
+  }
+  return names;
+}
+
+// Winner = the first bulleted (* or **) line in the block that's bolded;
+// every OTHER bulleted line is a nominee candidate (Oscar acting
+// categories have no credit sub-lines to worry about — see the matching
+// comment in update-billboard.js's copy of this function, which does,
+// for why there's no credit-line filtering here either). Returns
+// candidate NAME LISTS, not one resolved name — deliberately: which
+// wikilink on a line is "the person" vs. "the film" differs by line (an
+// Oscar nominee's own line is `[[Person]] – ''[[Film]]''`), so every name
+// on the line is kept as a candidate and left to namesMatch() at the
+// call site, which only ever matches a real person's name — a film title
+// just won't match.
 function extractWinnerAndNominees(sectionText) {
   if (!sectionText) return null;
-  var boldMatch = sectionText.match(/'''(?:\[\[([^\]|]+)(?:\|[^\]]+)?\]\]|([^']+))'''/);
-  if (!boldMatch) return null;
-  var winner = (boldMatch[1] || boldMatch[2] || '').trim();
-  if (!winner) return null;
+  var bulletLines = sectionText.split('\n').filter(function (l) { return /^\s*\*/.test(l); });
+  if (bulletLines.length === 0) return null;
+  var winnerIdx = bulletLines.findIndex(function (l) { return l.includes("'''"); });
+  if (winnerIdx === -1) return null;
+  var winnerCandidates = extractWikiNames(bulletLines[winnerIdx]);
+  var nextIsOwnCredit = !!(bulletLines[winnerIdx + 1] && bulletLines[winnerIdx + 1].includes("'''"));
+  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(bulletLines[winnerIdx + 1]));
+  if (winnerCandidates.length === 0) return null;
 
   var nomineeSet = {};
-  var linkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, lm;
-  while ((lm = linkRegex.exec(sectionText)) !== null) {
-    var n = lm[1].trim();
-    if (n && !/^(file|category|image):/i.test(n)) nomineeSet[n] = true;
+  for (var i = 0; i < bulletLines.length; i++) {
+    if (i === winnerIdx || (i === winnerIdx + 1 && nextIsOwnCredit)) continue;
+    for (var n of extractWikiNames(bulletLines[i])) nomineeSet[n] = true;
   }
-  return { winner: winner, nominees: Object.keys(nomineeSet) };
+  return { winnerCandidates: winnerCandidates, nomineeCandidates: Object.keys(nomineeSet) };
 }
 
 function namesMatch(pickName, candidateName) {
@@ -182,6 +214,18 @@ function namesMatch(pickName, candidateName) {
   var b = (candidateName || '').toLowerCase().trim();
   if (!a || !b) return false;
   return a === b || a.includes(b) || b.includes(a);
+}
+
+// One category's parsed result, cached for reuse across every pick in
+// that category (parsing the wikitext per-pick would be redundant work).
+function computeOscarCategoryResults(wikitext, categories) {
+  var results = [];
+  for (var cat of categories) {
+    var parsed = extractWinnerAndNominees(extractCategoryBlock(wikitext, cat.keywords));
+    if (!parsed) { console.warn('  Oscar: could not resolve winner for "' + cat.label + '"'); continue; }
+    results.push({ cat: cat, winnerCandidates: parsed.winnerCandidates, nomineeCandidates: parsed.nomineeCandidates });
+  }
+  return results;
 }
 
 // Tries "{year} Academy Awards" (a title Wikipedia redirects to the real
@@ -197,35 +241,27 @@ async function resolveOscarWikitext() {
     var title = year + ' Academy Awards';
     var wikitext = await fetchWikipediaWikitext(title);
     if (!wikitext) { console.log('  Oscar: no Wikipedia page resolved for "' + title + '"'); continue; }
-    var hasWinner = allCategories.some(function (cat) {
-      var parsed = extractWinnerAndNominees(extractWikiSection(wikitext, cat.keywords));
-      return !!(parsed && parsed.winner);
-    });
+    var hasWinner = computeOscarCategoryResults(wikitext, allCategories).length > 0;
     if (hasWinner) { console.log('  Oscar: using "' + title + '"'); return wikitext; }
     console.log('  Oscar: "' + title + '" has no resolvable winners yet (ceremony likely not aired)');
   }
   return null;
 }
 
-// Best (highest-tier) Oscar result per person this ceremony — a person
+// Best (highest-tier) Oscar result for this pick's name this ceremony —
+// checked against every category's precomputed candidate lists. A person
 // only has one line in CATEGORY_BONUS_RULES.Actor/Actress, not a per-GP
 // stacking rule like F1, so this is a max, not a sum.
-function computeOscarBonus(wikitext, categories) {
-  var bestByPerson = {};
-  for (var cat of categories) {
-    var parsed = extractWinnerAndNominees(extractWikiSection(wikitext, cat.keywords));
-    if (!parsed || !parsed.winner) { console.warn('  Oscar: could not resolve winner for "' + cat.label + '"'); continue; }
-    if (!bestByPerson[parsed.winner] || bestByPerson[parsed.winner].tier < cat.winTier) {
-      bestByPerson[parsed.winner] = { tier: cat.winTier, label: 'Won ' + cat.label };
-    }
-    for (var nominee of parsed.nominees) {
-      if (nominee === parsed.winner) continue;
-      if (!bestByPerson[nominee] || bestByPerson[nominee].tier < cat.nomTier) {
-        bestByPerson[nominee] = { tier: cat.nomTier, label: 'Nominated ' + cat.label };
-      }
+function resolveOscarBonusForPick(pickName, categoryResults) {
+  var best = null;
+  for (var r of categoryResults) {
+    if (r.winnerCandidates.some(function (c) { return namesMatch(pickName, c); })) {
+      if (!best || best.tier < r.cat.winTier) best = { tier: r.cat.winTier, label: 'Won ' + r.cat.label };
+    } else if (r.nomineeCandidates.some(function (c) { return namesMatch(pickName, c); })) {
+      if (!best || best.tier < r.cat.nomTier) best = { tier: r.cat.nomTier, label: 'Nominated ' + r.cat.label };
     }
   }
-  return bestByPerson;
+  return best;
 }
  
 async function findPersonId(name) {
@@ -389,7 +425,7 @@ module.exports = async function handler(req, res) {
     var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', seasonYear).eq('category', category);
     if (pickErr || !picks || picks.length === 0) { results[category] = { status: 'skipped', reason: 'no picks' }; continue; }
 
-    var oscarBonusByPerson = oscarWikitext ? computeOscarBonus(oscarWikitext, OSCAR_CATEGORIES[category]) : {};
+    var oscarCategoryResults = oscarWikitext ? computeOscarCategoryResults(oscarWikitext, OSCAR_CATEGORIES[category]) : [];
 
     var rankings = [];
  
@@ -508,12 +544,11 @@ module.exports = async function handler(req, res) {
         var own = memberNameById[matchingPick.member_id] || matchingPick.member_id;
         var baseLocked = isFieldLocked(locks, category, own, 'base');
 
-        // Oscar bonus (see OSCAR_CATEGORIES/computeOscarBonus above) —
-        // matched by fuzzy name against whichever person this bonus run
-        // resolved for this category, never overwriting a lock, never
+        // Oscar bonus (see OSCAR_CATEGORIES/resolveOscarBonusForPick above) —
+        // matched by fuzzy name against each category's precomputed
+        // winner/nominee candidates, never overwriting a lock, never
         // guessed if nothing was confidently resolved for this person.
-        var bonusMatchName = Object.keys(oscarBonusByPerson).find(function(name) { return namesMatch(r.pick, name); });
-        var bonusEntry = bonusMatchName ? oscarBonusByPerson[bonusMatchName] : null;
+        var bonusEntry = resolveOscarBonusForPick(r.pick, oscarCategoryResults);
         var bonusLocked = isFieldLocked(locks, category, own, 'bonus');
         var bonusWritable = !!bonusEntry && !bonusLocked;
         r.bonusDetected = bonusEntry ? bonusEntry.label : undefined;

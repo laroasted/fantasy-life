@@ -164,45 +164,98 @@ async function fetchWikipediaWikitext(title) {
   } catch (err) { console.error('  Wikipedia fetch failed for "' + title + '":', err.message); return null; }
 }
 
-// Isolates the wikitext between a heading matching `headingKeywords` and
-// the next heading at the same or a shallower level.
-function extractWikiSection(wikitext, headingKeywords) {
+// FIX (2026-11, Codex review on PR #55): categories on these ceremony
+// pages are NOT ==heading== sections — verified live against the 2025
+// Grammy Awards article's real wikitext. Each category is a
+// `{{Award category|color|[[Real Name|Display Name]]}}` template marker
+// inside a wikitable (one or two categories per row). Two different
+// nominee shapes exist on the SAME page: "General Field" categories
+// (Album/Record/Song of the Year) list one `*` bullet PER NOMINEE with a
+// `**` producer/engineer credits sub-line each; genre categories (Best
+// Rock Album, etc.) list only the WINNER as a `*` bullet with every other
+// nominee as a `**` sub-line. extractWinnerAndNominees() below handles
+// both: winner = first bolded bullet at any depth, nominees = every
+// other bullet line that isn't a credits line.
+function extractCategoryBlock(wikitext, categoryKeywords) {
   var lines = wikitext.split('\n');
-  var headingRegex = /^(={2,4})\s*(.+?)\s*\1\s*$/;
-  var collecting = false, collectedLevel = 0, buffer = [];
+  var markerRegex = /\{\{Award category\|/i;
+  var startIdx = -1;
   for (var i = 0; i < lines.length; i++) {
-    var m = lines[i].match(headingRegex);
-    if (m) {
-      var level = m[1].length, headingText = m[2].toLowerCase();
-      if (collecting && level <= collectedLevel) break;
-      if (!collecting && headingKeywords.some(function(k) { return headingText.includes(k); })) {
-        collecting = true; collectedLevel = level; continue;
-      }
+    if (markerRegex.test(lines[i])) {
+      var lower = lines[i].toLowerCase();
+      if (categoryKeywords.some(function(k) { return lower.includes(k); })) { startIdx = i; break; }
     }
-    if (collecting) buffer.push(lines[i]);
+  }
+  if (startIdx === -1) return null;
+  var buffer = [];
+  for (var j = startIdx + 1; j < lines.length; j++) {
+    var line = lines[j];
+    if (markerRegex.test(line)) break;   // next category's marker
+    if (/^\s*\|-/.test(line)) break;     // table row separator
+    if (/^={2,4}/.test(line)) break;     // next real heading
+    buffer.push(line);
   }
   return buffer.length > 0 ? buffer.join('\n') : null;
 }
 
-// Winner-is-bold-wikitext is the long-standing convention on this specific
-// recurring article (not live-verified from this build's sandbox — see
-// docs/bonus-automation.md). Nominees are every other [[wikilinked]] name
-// in the section; an album/song-title wikilink landing in that list is
-// harmless noise here since artistMatches() below just won't match it.
+function extractWikiNames(line) {
+  var names = [], m, re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+  while ((m = re.exec(line)) !== null) {
+    var n = m[1].trim();
+    if (n && !/^(file|category|image):/i.test(n)) names.push(n);
+  }
+  return names;
+}
+
+// Returns candidate NAME LISTS, not one resolved name — deliberately:
+// which wikilink on a line is "the artist" vs. "the song/album" differs
+// by line (`"[[Song]]" – [[Artist]]` or `''[[Album]]'' – [[Artist]]`), so
+// every name on the line is kept as a candidate and left to
+// artistMatches() at the call site, which only ever matches a real
+// artist's name — a song/album title just won't match. No credit-line
+// filtering: verified live that excluding "songwriter"/"producer" lines
+// actively loses real matches — Grammy's "General Field" categories
+// (Album/Record/Song of the Year) put the performer's name ONLY on that
+// sub-line for some nominees (Song of the Year's winner line is just the
+// song title in quotes; the songwriter/performer is named on the `**`
+// line beneath it), so that line has to stay in the candidate pool. A
+// producer or engineer's own name landing in there too is harmless noise
+// for the same reason a film/song title is.
 function extractWinnerAndNominees(sectionText) {
   if (!sectionText) return null;
-  var boldMatch = sectionText.match(/'''(?:\[\[([^\]|]+)(?:\|[^\]]+)?\]\]|([^']+))'''/);
-  if (!boldMatch) return null;
-  var winner = (boldMatch[1] || boldMatch[2] || '').trim();
-  if (!winner) return null;
+  var bulletLines = sectionText.split('\n').filter(function(l) { return /^\s*\*/.test(l); });
+  if (bulletLines.length === 0) return null;
+  var winnerIdx = bulletLines.findIndex(function(l) { return l.includes("'''"); });
+  if (winnerIdx === -1) return null;
+  var winnerCandidates = extractWikiNames(bulletLines[winnerIdx]);
+  // The winner's own very-next bullet line, when it's ALSO bold, is its
+  // own credit sub-line — merge it into winnerCandidates (not the general
+  // nominee pool) since it's the same winner's own credit, not a
+  // competing entry. A non-bold next line (the genre-category shape,
+  // where every OTHER nominee sits directly under the winner as a plain
+  // `**` line) is correctly left alone.
+  var nextIsOwnCredit = !!(bulletLines[winnerIdx + 1] && bulletLines[winnerIdx + 1].includes("'''"));
+  if (nextIsOwnCredit) winnerCandidates = winnerCandidates.concat(extractWikiNames(bulletLines[winnerIdx + 1]));
+  if (winnerCandidates.length === 0) return null;
 
   var nomineeSet = {};
-  var linkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, lm;
-  while ((lm = linkRegex.exec(sectionText)) !== null) {
-    var n = lm[1].trim();
-    if (n && !/^(file|category|image):/i.test(n)) nomineeSet[n] = true;
+  for (var i = 0; i < bulletLines.length; i++) {
+    if (i === winnerIdx || (i === winnerIdx + 1 && nextIsOwnCredit)) continue;
+    for (var n of extractWikiNames(bulletLines[i])) nomineeSet[n] = true;
   }
-  return { winner: winner, nominees: Object.keys(nomineeSet) };
+  return { winnerCandidates: winnerCandidates, nomineeCandidates: Object.keys(nomineeSet) };
+}
+
+// Each category's parsed result, cached for reuse across every pick
+// (parsing the wikitext per-pick would be redundant work).
+function computeGrammyCategoryResults(wikitext) {
+  var results = [];
+  for (var cat of GRAMMY_CATEGORIES) {
+    var parsed = extractWinnerAndNominees(extractCategoryBlock(wikitext, cat.keywords));
+    if (!parsed) { console.warn('  Grammy: could not resolve winner for "' + cat.label + '"'); continue; }
+    results.push({ cat: cat, winnerCandidates: parsed.winnerCandidates, nomineeCandidates: parsed.nomineeCandidates });
+  }
+  return results;
 }
 
 // Tries "{year} Grammy Awards" (this show's articles are titled by
@@ -217,35 +270,27 @@ async function resolveGrammyWikitext() {
     var title = year + ' Grammy Awards';
     var wikitext = await fetchWikipediaWikitext(title);
     if (!wikitext) { console.log('  Grammy: no Wikipedia page resolved for "' + title + '"'); continue; }
-    var hasWinner = GRAMMY_CATEGORIES.some(function(cat) {
-      var parsed = extractWinnerAndNominees(extractWikiSection(wikitext, cat.keywords));
-      return !!(parsed && parsed.winner);
-    });
+    var hasWinner = computeGrammyCategoryResults(wikitext).length > 0;
     if (hasWinner) { console.log('  Grammy: using "' + title + '"'); return wikitext; }
     console.log('  Grammy: "' + title + '" has no resolvable winners yet (ceremony likely not aired)');
   }
   return null;
 }
 
-// Best (highest-tier) Grammy result per artist this ceremony — a person
+// Best (highest-tier) Grammy result for this pick's name this ceremony —
+// checked against every category's precomputed candidate lists. A person
 // only has one line in CATEGORY_BONUS_RULES.Musician, not a per-event
 // stacking rule like F1, so this is a max, not a sum.
-function computeGrammyBonus(wikitext) {
-  var bestByArtist = {};
-  for (var cat of GRAMMY_CATEGORIES) {
-    var parsed = extractWinnerAndNominees(extractWikiSection(wikitext, cat.keywords));
-    if (!parsed || !parsed.winner) { console.warn('  Grammy: could not resolve winner for "' + cat.label + '"'); continue; }
-    if (!bestByArtist[parsed.winner] || bestByArtist[parsed.winner].tier < cat.winTier) {
-      bestByArtist[parsed.winner] = { tier: cat.winTier, label: 'Won ' + cat.label };
-    }
-    for (var nominee of parsed.nominees) {
-      if (nominee === parsed.winner) continue;
-      if (!bestByArtist[nominee] || bestByArtist[nominee].tier < cat.nomTier) {
-        bestByArtist[nominee] = { tier: cat.nomTier, label: 'Nominated ' + cat.label };
-      }
+function resolveGrammyBonusForPick(pickName, categoryResults) {
+  var best = null;
+  for (var r of categoryResults) {
+    if (r.winnerCandidates.some(function(c) { return artistMatches(pickName, c); })) {
+      if (!best || best.tier < r.cat.winTier) best = { tier: r.cat.winTier, label: 'Won ' + r.cat.label };
+    } else if (r.nomineeCandidates.some(function(c) { return artistMatches(pickName, c); })) {
+      if (!best || best.tier < r.cat.nomTier) best = { tier: r.cat.nomTier, label: 'Nominated ' + r.cat.label };
     }
   }
-  return bestByArtist;
+  return best;
 }
 
 /**
@@ -692,10 +737,11 @@ module.exports = async function handler(req, res) {
   var { data: picks } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', season.year).eq('category', 'Musician');
   if (!picks || picks.length === 0) return res.status(200).json({ message: 'No Musician picks found' });
 
-  // Grammy bonus (see GRAMMY_CATEGORIES/computeGrammyBonus above) —
-  // fetched once per run, independent of the chart-data pagination below.
+  // Grammy bonus (see GRAMMY_CATEGORIES/computeGrammyCategoryResults
+  // above) — fetched once per run, independent of the chart-data
+  // pagination below.
   var grammyWikitext = await resolveGrammyWikitext();
-  var grammyBonusByArtist = grammyWikitext ? computeGrammyBonus(grammyWikitext) : {};
+  var grammyCategoryResults = grammyWikitext ? computeGrammyCategoryResults(grammyWikitext) : [];
 
   // Paginate all chart entries in FY window
   // rank <= 100 is belt-and-suspenders: never score rank > 100 rows
@@ -775,8 +821,7 @@ module.exports = async function handler(req, res) {
     var metricLocked = isFieldLocked(locks, 'Musician', ownerName, 'metric');
     var bonusLocked = isFieldLocked(locks, 'Musician', ownerName, 'bonus');
 
-    var bonusMatchName = Object.keys(grammyBonusByArtist).find(function(name) { return artistMatches(r.pick, name); });
-    var bonusEntry = bonusMatchName ? grammyBonusByArtist[bonusMatchName] : null;
+    var bonusEntry = resolveGrammyBonusForPick(r.pick, grammyCategoryResults);
     var bonusWritable = !!bonusEntry && !bonusLocked;
     var newBonusVal = bonusWritable ? bonusEntry.tier : (Number(r.bonus) || 0);
 
