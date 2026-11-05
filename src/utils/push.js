@@ -115,7 +115,11 @@ export async function sendTestPush(memberId) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, reason: data.error || "server_error" };
-    return { ok: true, sent: data.sent || 0, failed: data.failed || 0 };
+    // data.reason (not_configured / lookup_failed / no_subscriptions) is
+    // only ever set when sent === 0 && failed === 0 — see sendPush()'s
+    // own comment (api/_lib/push.js) for why that one shape otherwise
+    // can't be told apart from a genuine "no subscription".
+    return { ok: true, sent: data.sent || 0, failed: data.failed || 0, reason: data.reason };
   } catch (e) {
     console.warn("Push: test-member failed.", e);
     return { ok: false, reason: "network_error" };

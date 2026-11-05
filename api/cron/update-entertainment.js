@@ -21,7 +21,8 @@
  */
  
 const { createClient } = require('@supabase/supabase-js');
- 
+const { writeScoreEventsAndNotify } = require('../_lib/push');
+
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
@@ -228,7 +229,11 @@ module.exports = async function handler(req, res) {
   (membersArr || []).forEach(function(m) { memberNameById[m.id] = m.name; });
  
   var results = {};
- 
+  // Collected across both categories, then batch-written once at the end
+  // via writeScoreEventsAndNotify (api/_lib/push.js) — same pattern
+  // update-sports.js established first.
+  var scoreEvents = [];
+
   for (var category of ['Actor', 'Actress']) {
     console.log('  Processing ' + category + '...');
  
@@ -350,17 +355,55 @@ module.exports = async function handler(req, res) {
       var matchingPick = picks.find(function(p) { return p.member_id === r.member; });
       if (matchingPick) {
         var own = memberNameById[matchingPick.member_id] || matchingPick.member_id;
-        if (!isFieldLocked(locks, category, own, 'base')) {
+        var baseLocked = isFieldLocked(locks, category, own, 'base');
+        // newBaseVal / writeFailed feed the score_events diff below — a
+        // locked base is a legitimate no-op (newBaseVal = unchanged
+        // matchingPick.base), a failed write is NOT (nothing actually
+        // changed in the DB, so there's nothing to log a delta for).
+        var newBaseVal, writeFailed = false;
+        if (!baseLocked) {
           var { error } = await supabase.from('picks').update({ base: r.base }).eq('id', matchingPick.id);
-          if (!error) updated++;
-        } else { console.log('    ' + own + ': base is locked, skipping'); updated++; }
+          if (!error) { updated++; newBaseVal = Number(r.base) || 0; }
+          else { writeFailed = true; newBaseVal = Number(matchingPick.base) || 0; }
+        } else {
+          console.log('    ' + own + ': base is locked, skipping');
+          updated++;
+          newBaseVal = Number(matchingPick.base) || 0;
+        }
+
+        // Diff against the pre-update row (matchingPick.base/bonus) — same
+        // pattern as update-sports.js, just computed here in the second
+        // pass since that's where base actually gets written for this
+        // cron (base is ranked/assigned only after ALL picks' metrics
+        // are known, unlike sports/college/events/billboard where it's
+        // inline in the same per-pick loop).
+        if (!writeFailed) {
+          var oldTotal = (Number(matchingPick.base) || 0) + (Number(matchingPick.bonus) || 0);
+          var newTotal = newBaseVal + (Number(matchingPick.bonus) || 0);
+          var delta = Math.round((newTotal - oldTotal) * 10) / 10;
+          if (delta !== 0) {
+            var cause = r.pick + ' — ' + (Math.round((r.totalScore || 0) * 100) / 100) + ' pts' +
+              (r.filmCount ? ' (' + r.filmCount + ' film' + (r.filmCount === 1 ? '' : 's') + ')' : '') +
+              (r.status ? ' [' + r.status + ']' : '');
+            scoreEvents.push({
+              season_year: seasonYear,
+              member_id: matchingPick.member_id,
+              category: category,
+              delta: delta,
+              cause: cause,
+              source: 'update-entertainment',
+            });
+          }
+        }
       }
     }
  
     console.log('  ' + category + ': Updated ' + updated + '/' + picks.length + ' picks\n');
     results[category] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings.map(function(r) { return { rank: r.rank, member: r.member, pick: r.pick, totalScore: r.totalScore, filmCount: r.filmCount, base: r.base, films: r.films }; }) };
   }
- 
+
+  await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
+
   console.log('  Done!');
   return res.status(200).json({ message: 'Actor/Actress box office update complete', season: seasonYear, fantasyYear: { start: FY_START, end: FY_END }, timestamp: new Date().toISOString(), results: results });
 };

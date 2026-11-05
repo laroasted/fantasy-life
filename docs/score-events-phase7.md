@@ -34,14 +34,12 @@ already run against Supabase needs to be redone.
 ## Scope: being extended one cron at a time
 
 `update-sports.js` (NFL/NBA/NHL/MLB/MLS), `update-college.js`
-(NCAAF/NCAAB), and `update-events.js` (Tennis/Golf/F1) write to
-`score_events` as of this pass. The remaining `update-*.js` crons
-(country, entertainment, billboard, stocks) do not yet — each has a
-different shape of "cause" data (stock price vs. chart position vs.
-odds) and, for a few of them, doesn't even fetch the pre-update
-base/bonus value yet (needed to compute a diff at all) — so wiring each
-one up is still future work, one cron at a time, not a blocker for
-shipping any of this.
+(NCAAF/NCAAB), `update-events.js` (Tennis/Golf/F1), `update-billboard.js`
+(Musician), `update-entertainment.js` (Actor/Actress), and
+`update-stocks.js` (Stock) write to `score_events` as of this pass. Only
+`update-country.js` doesn't yet — it has two separate update loops (GDP
+→ base, Olympics → bonus) with two different lock-key schemes, and was
+deliberately skipped in this pass rather than rushed, not forgotten.
 
 ### Extension: college + events (same session, follow-up pass)
 
@@ -61,6 +59,41 @@ score_events-writing cron now calls instead of reimplementing that
 block. `update-sports.js` was refactored to call it too, so there's
 exactly one copy of this logic, not one that happens to be first and two
 copies that happen to match it today.
+
+### Extension: billboard + entertainment + stocks (follow-up pass, country skipped)
+
+All three needed real thought, not a direct copy of the diff block:
+
+- **`update-billboard.js`** (Musician) didn't fetch `base` from `picks`
+  at all before this pass — only `bonus` — since base was never needed
+  for anything else in the file. Added it to the `select()`. While doing
+  that, found and fixed a pre-existing display bug: the rankings output
+  showed `bonus` in place of `base` whenever base was locked, because
+  there was nothing else (`r.base` didn't exist) to show there.
+- **`update-entertainment.js`** (Actor/Actress) writes `base` in a
+  *second pass*, after every pick's metric is computed and all picks are
+  ranked — not inline in the per-pick loop the way sports/college/events/
+  billboard do it. The diff had to move to that second loop, comparing
+  the pre-fetched `matchingPick.base`/`bonus` against the final ranked
+  value, and explicitly skip diffing when the actual DB write failed
+  (distinct from a locked base, which is a legitimate no-op).
+- **`update-stocks.js`** (Stock) deliberately diffs `base` only, never
+  `bonus`. `bonus` is unconditionally reset to `0` every run whenever
+  base isn't locked — there's no real Stock bonus mechanism behind it —
+  so diffing it would generate a misleading "bonus −X" `score_events` row
+  (and a push) on every single run that just resets a leftover value,
+  not a real change. Confirmed with the user before building this rather
+  than guessing at the intent.
+
+**`update-country.js` was deliberately left out of this pass.** It has
+two separate update loops in one run — GDP (writes `base`/`metric`,
+gated by one combined `'gdp'` lock key) and Olympics (writes
+`bonus`/`bonus_note`, gated by a different `'olympics.rank'` key, and
+only runs during Olympic windows) — needing the diff added in both
+places, each diffing its own field, plus its own "cause" text design
+(there's no ESPN-style team/athlete match here — GDP growth % + rank for
+the base event, a medal count for the bonus event). Real work, not a
+blocker for shipping the other three.
 
 ## How to configure
 

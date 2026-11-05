@@ -8,7 +8,8 @@
  */
  
 const { createClient } = require('@supabase/supabase-js');
- 
+const { writeScoreEventsAndNotify } = require('../_lib/push');
+
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
  
@@ -72,7 +73,7 @@ module.exports = async function handler(req, res) {
   var memberNameById = {};
   (membersArr || []).forEach(function(m) { memberNameById[m.id] = m.name; });
  
-  var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick').eq('season_year', seasonYear).eq('category', 'Stock');
+  var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base').eq('season_year', seasonYear).eq('category', 'Stock');
   if (pickErr || !picks || picks.length === 0) return res.status(200).json({ message: 'No Stock picks found, skipping' });
  
   var pickIds = picks.map(function(p) { return p.id; });
@@ -100,7 +101,16 @@ module.exports = async function handler(req, res) {
   priceResults = assignBasePointsWithTiebreaker(priceResults, picks.length);
  
   var updated = 0, rankings = [];
- 
+  // Collected across every stock pick, then batch-written once at the end
+  // via writeScoreEventsAndNotify (api/_lib/push.js) — same pattern
+  // update-sports.js established first. Deliberately diffs `base` ONLY,
+  // never bonus: pickUpdate.bonus is unconditionally forced to 0 below
+  // whenever base isn't locked (there's no real Stock bonus mechanism
+  // behind it), so diffing it would generate a "bonus -X" score_events
+  // row — and a push — on every run that just resets a leftover value,
+  // not a real change. Confirmed with the user before building this.
+  var scoreEvents = [];
+
   for (var r of priceResults) {
     var ownerName = memberNameById[r.member_id] || r.member_id;
     var baseLocked = isFieldLocked(locks, 'Stock', ownerName, 'base');
@@ -122,9 +132,30 @@ module.exports = async function handler(req, res) {
     if (stockUpdateErr) { console.error('  Failed to update stock_prices ' + r.member_id + ':', stockUpdateErr.message); continue; }
  
     updated++;
+
+    // base-only diff against the pre-update row (r.base) — see the
+    // scoreEvents comment above for why bonus is deliberately excluded.
+    // A locked base means pickUpdate.base was never set, so newBaseVal
+    // === r.base and delta is naturally 0, no special case needed to
+    // skip locked no-ops.
+    var newBaseVal = baseLocked ? (Number(r.base) || 0) : (Number(r.newBase) || 0);
+    var delta = Math.round((newBaseVal - (Number(r.base) || 0)) * 10) / 10;
+    if (delta !== 0) {
+      scoreEvents.push({
+        season_year: seasonYear,
+        member_id: r.member_id,
+        category: 'Stock',
+        delta: delta,
+        cause: r.pick + ' ' + (r.pctChange >= 0 ? '+' : '') + r.pctChange.toFixed(2) + '% ($' + r.openPrice.toFixed(2) + ' → $' + r.closePrice.toFixed(2) + ')',
+        source: 'update-stocks',
+      });
+    }
+
     rankings.push({ rank: r.rank, member: r.member_id, ticker: r.pick, openPrice: r.openPrice.toFixed(2), closePrice: r.closePrice.toFixed(2), pctChange: r.pctChange.toFixed(2) + '%', basePoints: baseLocked ? 'locked' : r.newBase, lockedFields: skipped.length > 0 ? skipped : undefined });
   }
- 
+
+  await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
+
   console.log('\n✅ Updated ' + updated + '/' + priceResults.length + ' stock scores');
   return res.status(200).json({ message: 'Updated ' + updated + '/' + priceResults.length + ' stock scores', season: seasonYear, timestamp: new Date().toISOString(), rankings: rankings });
 };

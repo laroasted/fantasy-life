@@ -48,7 +48,8 @@
  */
  
 const { createClient } = require('@supabase/supabase-js');
- 
+const { writeScoreEventsAndNotify } = require('../_lib/push');
+
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
  
@@ -557,7 +558,7 @@ module.exports = async function handler(req, res) {
  
   // ━━━ Recalculate scores ━━━
  
-  var { data: picks } = await supabase.from('picks').select('id, member_id, pick, bonus').eq('season_year', season.year).eq('category', 'Musician');
+  var { data: picks } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', season.year).eq('category', 'Musician');
   if (!picks || picks.length === 0) return res.status(200).json({ message: 'No Musician picks found' });
  
   // Paginate all chart entries in FY window
@@ -615,6 +616,7 @@ module.exports = async function handler(req, res) {
       id: pick.id,
       member_id: pick.member_id,
       pick: pick.pick,
+      base: pick.base,
       bonus: pick.bonus,
       totalWeeks: totalWeeks,
       songs: Object.values(songs).sort(function(a, b) { return b.weeks - a.weeks; }),
@@ -626,22 +628,30 @@ module.exports = async function handler(req, res) {
  
   var updated = 0;
   var rankings = [];
- 
+  // Collected across every artist, then batch-written once at the end via
+  // writeScoreEventsAndNotify (api/_lib/push.js) — same pattern
+  // update-sports.js established first.
+  var scoreEvents = [];
+
   for (var r of ranked) {
     var ownerName = memberNameById[r.member_id] || r.member_id;
     var baseLocked = isFieldLocked(locks, 'Musician', ownerName, 'base');
     var metricLocked = isFieldLocked(locks, 'Musician', ownerName, 'metric');
  
     var totalNumOne = r.songs.reduce(function(sum, s) { return sum + s.numOneWeeks; }, 0);
- 
+    // e.g. "144 chart wks (17 at #1)" — computed unconditionally (not just
+    // when !metricLocked) since the score_events cause text below wants
+    // the artist's current standing regardless of whether the stored
+    // `record` field itself is being updated this run.
+    var recordText = totalNumOne > 0
+      ? r.totalWeeks + ' chart wks (' + totalNumOne + ' at #1)'
+      : r.totalWeeks + ' chart wks';
+
     var updateObj = { updated_at: new Date().toISOString() };
     if (!baseLocked) updateObj.base = r.newBase;
     if (!metricLocked) {
       updateObj.metric = r.totalWeeks;
-      // e.g. "144 chart wks (17 at #1)"
-      updateObj.record = totalNumOne > 0
-        ? r.totalWeeks + ' chart wks (' + totalNumOne + ' at #1)'
-        : r.totalWeeks + ' chart wks';
+      updateObj.record = recordText;
     }
  
     var skipped = [];
@@ -668,6 +678,26 @@ module.exports = async function handler(req, res) {
     }
  
     updated++;
+
+    // Diff against the pre-update row (r.base, r.bonus) to log what
+    // actually moved — same pattern as update-sports.js. A locked base
+    // means updateObj.base was never set, so newBaseVal === r.base and
+    // delta is naturally 0, no special case needed to skip locked no-ops.
+    var newBaseVal = baseLocked ? (Number(r.base) || 0) : (Number(r.newBase) || 0);
+    var oldTotal = (Number(r.base) || 0) + (Number(r.bonus) || 0);
+    var newTotal = newBaseVal + (Number(r.bonus) || 0);
+    var delta = Math.round((newTotal - oldTotal) * 10) / 10;
+    if (delta !== 0) {
+      scoreEvents.push({
+        season_year: season.year,
+        member_id: r.member_id,
+        category: 'Musician',
+        delta: delta,
+        cause: r.pick + ' (' + recordText + ')',
+        source: 'update-billboard',
+      });
+    }
+
     rankings.push({
       rank: r.rank,
       member: r.member_id,
@@ -675,13 +705,19 @@ module.exports = async function handler(req, res) {
       totalWeeks: r.totalWeeks,
       numOneWeeks: totalNumOne,
       songCount: r.songs.length,
-      base: baseLocked ? Number(r.bonus) || 0 : r.newBase,
+      // Pre-existing display bug, fixed in passing: this used to read
+      // r.bonus here instead of r.base when locked — r.base didn't exist
+      // at all before this pass added it to the select, so there was
+      // nothing else to show. Now shows the actual (unchanged) base.
+      base: baseLocked ? (Number(r.base) || 0) : r.newBase,
       bonus: Number(r.bonus) || 0,
-      total: (baseLocked ? Number(r.bonus) || 0 : r.newBase) + (Number(r.bonus) || 0),
+      total: (baseLocked ? (Number(r.base) || 0) : r.newBase) + (Number(r.bonus) || 0),
       lockedFields: skipped.length > 0 ? skipped : undefined,
     });
   }
- 
+
+  await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
+
   var summary = {
     message: 'Billboard update complete — ' + updated + '/' + ranked.length + ' musicians updated',
     season: season.year,
