@@ -1,12 +1,33 @@
 /**
  * Fantasy Life — Country GDP + Olympics Updater
  *
- * GDP DATA SOURCE: seasons.gdp_forecasts JSONB column in Supabase
- *   - Commissioner updates this twice a year when IMF publishes new WEO
- *     (April and October)
- *   - Format: { "source": "IMF WEO April 2025", "year": 2026,
- *               "data": { "GIN": 10.5, "USA": 1.8, ... } }
- *   - No external API calls = no 403s, no rate limits, no downtime
+ * GDP DATA SOURCE: IMF's official SDMX 2.1 API (api.imf.org), NGDP_RPCH —
+ *   Real GDP growth, annual percent change — fetched live on every run:
+ *   https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/.NGDP_RPCH.A
+ *     ?startPeriod={year}&endPeriod={year}
+ *   (the empty first key segment wildcards the COUNTRY dimension, so one
+ *   request returns every economy for just the one indicator/year needed)
+ *   - Free, no key, no auth. NOT the same host as the public DataMapper
+ *     website (www.imf.org/external/datamapper) — that one sits behind
+ *     bot-detection that 403s a plain server-side fetch regardless of
+ *     headers (confirmed live on Vercel); api.imf.org is IMF's actual API
+ *     product and has no such protection (also confirmed live on Vercel).
+ *   - Response is SDMX-ML XML, not JSON (the server ignores an
+ *     Accept: application/vnd.sdmx.data+json request and always returns
+ *     XML) — parsed below with a regex over the flat
+ *     <Series COUNTRY="X"><Obs TIME_PERIOD="Y" OBS_VALUE="Z"/></Series>
+ *     shape, the same crude-but-adequate approach this file already uses
+ *     for ESPN's HTML in fetchOlympicMedals, rather than a new XML
+ *     dependency for one simple, stable shape.
+ *   - IMF only republishes WEO forecasts twice a year (April/October), so
+ *     this won't change more often than that — but it removes the old
+ *     dependency on a commissioner remembering to hand-run SQL each time.
+ *   - On fetch failure, falls back to the last successfully-fetched values
+ *     cached in seasons.gdp_forecasts (same column, now a cache rather than
+ *     the primary source):
+ *     { "source": "IMF World Economic Outlook (published 2026-10-13)",
+ *       "year": 2026, "data": { "GIN": 7.19, "USA": 2.33, ... },
+ *       "fetched_at": "..." }
  *
  * OLYMPIC DATA: Still fetched live from ESPN during Olympic windows
  *
@@ -190,6 +211,45 @@ function matchOlympicMedals(pickName, medalData) {
   return noc ? (medalData.find(function(m) { return m.noc === noc; }) || null) : null;
 }
  
+async function fetchIMFGdpData(year) {
+  try {
+    // Empty COUNTRY segment (before the first dot) wildcards every economy —
+    // one request returns all of them for just this indicator/year.
+    var url = 'https://api.imf.org/external/sdmx/2.1/data/IMF.RES,WEO/.NGDP_RPCH.A' +
+      '?startPeriod=' + year + '&endPeriod=' + year;
+    var res = await fetch(url);
+    if (!res.ok) {
+      console.error('  IMF SDMX fetch failed: HTTP ' + res.status);
+      return null;
+    }
+    var xml = await res.text();
+
+    // Structure-specific SDMX-ML: <Series COUNTRY="X" ...><Obs TIME_PERIOD="Y"
+    // OBS_VALUE="Z"/></Series> — flat attributes, no nested value elements.
+    var data = {};
+    var seriesRe = /<Series\s+COUNTRY="([A-Z]{3})"[^>]*>([\s\S]*?)<\/Series>/g;
+    var obsRe = /<Obs\s+TIME_PERIOD="(\d{4})"\s+OBS_VALUE="(-?[\d.]+)"/;
+    var sm;
+    while ((sm = seriesRe.exec(xml)) !== null) {
+      var om = obsRe.exec(sm[2]);
+      if (om && om[1] === String(year)) data[sm[1]] = parseFloat(om[2]);
+    }
+    if (Object.keys(data).length === 0) {
+      console.error('  IMF SDMX response had no parseable ' + year + ' observations');
+      return null;
+    }
+
+    var pubMatch = /PUBLICATION_DATE="([^"]+)"/.exec(xml);
+    var source = 'IMF World Economic Outlook' +
+      (pubMatch ? ' (published ' + pubMatch[1].slice(0, 10) + ')' : '');
+
+    return { source: source, year: year, data: data };
+  } catch (err) {
+    console.error('  IMF SDMX fetch error:', err.message);
+    return null;
+  }
+}
+
 async function fetchOlympicMedals() {
   try {
     var res = await fetch('https://www.espn.com/olympics/winter/2026/medals', {
@@ -224,7 +284,7 @@ async function fetchOlympicMedals() {
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════
- 
+
 module.exports = async function handler(req, res) {
   var authHeader = req.headers['authorization'];
   var cronSecret = process.env.CRON_SECRET;
@@ -237,32 +297,60 @@ module.exports = async function handler(req, res) {
  
   var supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   console.log('═══ Fantasy Life — Country GDP + Olympics Update ═══');
-  console.log('GDP source: seasons.gdp_forecasts (Supabase)\n');
- 
-  // ── Load active season (including gdp_forecasts) ──
+
+  // ── Load active season (including cached gdp_forecasts as fallback) ──
   var { data: season } = await supabase
     .from('seasons')
     .select('year, locks, gdp_forecasts')
     .eq('status', 'active')
     .single();
   if (!season) return res.status(200).json({ message: 'No active season found' });
- 
+
   var fantasyYear = season.year;
   var locks = season.locks || {};
-  var gdpForecasts = season.gdp_forecasts;
   console.log('Season: ' + fantasyYear);
- 
-  if (!gdpForecasts || !gdpForecasts.data) {
+
+  // ── GDP data: fetch live from IMF, fall back to last cached pull ──
+  console.log('\n── Fetching live IMF WEO GDP growth data ──');
+  var liveGdp = await fetchIMFGdpData(fantasyYear);
+  var cachedGdp = season.gdp_forecasts;
+
+  var gdpData, gdpSource, gdpYear, gdpIsLive;
+
+  if (liveGdp) {
+    console.log('Live IMF fetch OK — ' + Object.keys(liveGdp.data).length +
+      ' countries, source: ' + liveGdp.source);
+    gdpData = liveGdp.data;
+    gdpSource = liveGdp.source;
+    gdpYear = liveGdp.year;
+    gdpIsLive = true;
+
+    var { error: cacheErr } = await supabase
+      .from('seasons')
+      .update({
+        gdp_forecasts: {
+          source: gdpSource,
+          year: gdpYear,
+          data: gdpData,
+          fetched_at: new Date().toISOString()
+        }
+      })
+      .eq('year', fantasyYear);
+    if (cacheErr) {
+      console.error('  Failed to cache fresh IMF data to gdp_forecasts:', cacheErr.message);
+    }
+  } else if (cachedGdp && cachedGdp.data) {
+    console.log('Live IMF fetch unavailable — falling back to cached gdp_forecasts');
+    gdpData = cachedGdp.data;
+    gdpSource = (cachedGdp.source || 'unknown') + ' (cached — live fetch failed this run)';
+    gdpYear = cachedGdp.year || fantasyYear;
+    gdpIsLive = false;
+  } else {
     return res.status(200).json({
-      message: 'No gdp_forecasts found on season ' + fantasyYear +
-        '. Run: UPDATE seasons SET gdp_forecasts = \'{"source":"IMF WEO","year":' +
-        fantasyYear + ',"data":{"ISO":value,...}}\' WHERE year = ' + fantasyYear
+      message: 'IMF live fetch failed and no cached gdp_forecasts found on season ' + fantasyYear
     });
   }
- 
-  var gdpData = gdpForecasts.data;
-  var gdpSource = gdpForecasts.source || 'unknown';
-  var gdpYear = gdpForecasts.year || fantasyYear;
+
   console.log('GDP data source: ' + gdpSource);
   console.log('GDP data year: ' + gdpYear);
   console.log('GDP entries: ' + Object.keys(gdpData).length + ' countries');
@@ -329,27 +417,39 @@ module.exports = async function handler(req, res) {
  
     for (var r of gdpResults) {
       var ownerName = memberNameById[r.member_id] || r.member_id;
- 
+      var skipped = [];
+      var baseWritten = null;
+      var metricWritten = null;
+
       if (r.gdpGrowth !== null) {
-        var baseLocked = isFieldLocked(locks, 'Country', ownerName, 'base');
-        var metricLocked = isFieldLocked(locks, 'Country', ownerName, 'metric');
- 
+        // Settings' Country panel has one lock button on the single "GDP %"
+        // input (SeasonSettings.jsx's `gdpKey` = "Country|<owner>|gdp") —
+        // not separate base/metric locks like other categories get. Both
+        // base and metric are derived from that one number, so one lock
+        // key guards both writes.
+        var gdpLocked = isFieldLocked(locks, 'Country', ownerName, 'gdp');
+        var baseLocked = gdpLocked;
+        var metricLocked = gdpLocked;
+
         var recordLabel = r.gdpGrowth + '% GDP';
- 
+
         var updateObj = { updated_at: new Date().toISOString() };
-        if (!baseLocked) updateObj.base = r.newBase;
+        if (!baseLocked) {
+          updateObj.base = r.newBase;
+          baseWritten = r.newBase;
+        }
         if (!metricLocked) {
           updateObj.metric = r.gdpGrowth;
           updateObj.record = recordLabel;
+          metricWritten = r.gdpGrowth;
         }
- 
-        var skipped = [];
+
         if (baseLocked) skipped.push('base');
         if (metricLocked) skipped.push('metric');
         if (skipped.length > 0) {
           console.log('  🔒 ' + ownerName + ': skipped locked: ' + skipped.join(', '));
         }
- 
+
         var { error } = await supabase.from('picks').update(updateObj).eq('id', r.id);
         if (error) {
           console.error('  DB error updating ' + r.pick + ':', error.message);
@@ -357,7 +457,10 @@ module.exports = async function handler(req, res) {
           updated++;
         }
       }
- 
+
+      // Diagnostic fields so a QA pass can tell "nothing changed because the
+      // number is genuinely the same" apart from "nothing changed because a
+      // lock blocked the write" without needing to read Vercel's own logs.
       rankings.push({
         rank: r.rank || null,
         member: r.member_id,
@@ -365,7 +468,12 @@ module.exports = async function handler(req, res) {
         country: r.pick,
         iso: r.iso,
         gdpGrowth: r.gdpGrowth !== null ? r.gdpGrowth + '%' : 'No data',
-        base: r.newBase || null
+        base: r.newBase || null,
+        previousBase: r.base != null ? r.base : null,
+        previousMetric: r.metric != null ? r.metric : null,
+        locked: skipped.length > 0 ? skipped : null,
+        baseActuallyChanged: baseWritten !== null && baseWritten !== r.base,
+        metricActuallyChanged: metricWritten !== null && metricWritten !== r.metric
       });
     }
  
@@ -373,6 +481,7 @@ module.exports = async function handler(req, res) {
     results.gdp = {
       status: 'updated',
       source: gdpSource,
+      dataIsLive: gdpIsLive,
       dataYear: gdpYear,
       updated: updated,
       total: totalMembers,
@@ -412,7 +521,11 @@ module.exports = async function handler(req, res) {
           var rankIdx = medalData.findIndex(function(m) { return m.noc === noc; });
           var medalRank = rankIdx >= 0 ? rankIdx + 1 : null;
           var bonusPts = OLYMPIC_BONUS[medalRank] || 0;
-          var bonusLocked = isFieldLocked(locks, 'Country', ownerName2, 'bonus');
+          // Same pattern as the GDP lock above: Settings locks individual
+          // olympics.{gold,silver,bronze,rank} fields, not a "bonus" key.
+          // bonusPts is derived from rank specifically, so that's the lock
+          // that should guard it.
+          var bonusLocked = isFieldLocked(locks, 'Country', ownerName2, 'olympics.rank');
  
           var { error: olyErr } = await supabase
             .from('country_olympics')
@@ -474,6 +587,7 @@ module.exports = async function handler(req, res) {
     message: 'Country update complete',
     season: fantasyYear,
     gdpSource: gdpSource,
+    gdpIsLive: gdpIsLive,
     timestamp: new Date().toISOString(),
     results: results
   });
