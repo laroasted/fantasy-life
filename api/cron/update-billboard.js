@@ -287,20 +287,29 @@ async function resolveGrammyWikitext() {
   return null;
 }
 
-// Best (highest-tier) Grammy result for this pick's name this ceremony —
-// checked against every category's precomputed candidate lists. A person
-// only has one line in CATEGORY_BONUS_RULES.Musician, not a per-event
-// stacking rule like F1, so this is a max, not a sum.
+// SUMS credit across every DISTINCT category this pick's name matches —
+// NOT a max. Confirmed against this league's own historical record
+// (src/data/musician.js): e.g. Bad Bunny's bonus=9 breaks down as
+// bonusNote "AOTY win, ROTY nom, SOTY nom" = 7 (AOTY win) + 1 (ROTY nom)
+// + 1 (SOTY nom); Kendrick Lamar's bonus=15 = 7 + 3 + 3 + 1 + 1 across 5
+// categories. An artist nominated in several Grammy categories the same
+// year is common (the "General Field" categories are explicitly
+// cross-nominated with genre categories), so this has to accumulate.
+// Within a single category a win always replaces a nomination — never
+// double-counted — because extractWinnerAndNominees() already excludes
+// the winner's own line(s) from that category's nomineeCandidates.
 function resolveGrammyBonusForPick(pickName, categoryResults) {
-  var best = null;
+  var total = 0, labels = [];
   for (var r of categoryResults) {
     if (r.winnerCandidates.some(function(c) { return artistMatches(pickName, c); })) {
-      if (!best || best.tier < r.cat.winTier) best = { tier: r.cat.winTier, label: 'Won ' + r.cat.label };
+      total += r.cat.winTier;
+      labels.push('Won ' + r.cat.label);
     } else if (r.nomineeCandidates.some(function(c) { return artistMatches(pickName, c); })) {
-      if (!best || best.tier < r.cat.nomTier) best = { tier: r.cat.nomTier, label: 'Nominated ' + r.cat.label };
+      total += r.cat.nomTier;
+      labels.push('Nominated ' + r.cat.label);
     }
   }
-  return best;
+  return labels.length > 0 ? { tier: total, label: labels.join(' | ') } : null;
 }
 
 /**

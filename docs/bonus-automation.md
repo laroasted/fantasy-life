@@ -93,10 +93,21 @@ Year's winner line is just the song title in quotes — the actual
 songwriter/performer is named only on the `**` line beneath it) gets
 merged into that winner's own candidate list rather than treated as a
 separate nominee, specifically so that name isn't lost.
-A person/artist's result across the whole ceremony is the **max** tier
-found, not a sum — unlike F1's 4 independent GPs, a line in
-`CATEGORY_BONUS_RULES.Actor`/`Actress`/`Musician` reads as "whichever of
-these applies," not "add these up."
+A person/artist's result is **summed across every distinct category**
+they match — not a max, despite `CATEGORY_BONUS_RULES.Actor`/`Actress`/
+`Musician`'s single-line phrasing initially reading like "whichever of
+these applies." Caught by Codex's review on PR #55, which traced it to
+this league's own historical record (`src/data/musician.js`): Bad
+Bunny's real `bonus: 9` breaks down as `bonusNote: "AOTY win, ROTY nom,
+SOTY nom"` = 7 (Album of the Year win) + 1 (Record of the Year nom) + 1
+(Song of the Year nom); Kendrick Lamar's `bonus: 15` = 7 + 3 + 3 + 1 + 1
+across 5 categories. Multi-category nominations are the norm, not the
+exception, for the Grammys' "General Field" (every General Field nominee
+is also cross-nominated in a genre category) and plausible, if rarer,
+for Oscar dual Lead/Supporting nominations too — same rule applied to
+both for consistency. Within a single category a win always replaces a
+nomination, never double-counted, since a category's own winner is
+excluded from its own nominee-candidate list.
 
 ## Evergreen by design — no hardcoded dates
 

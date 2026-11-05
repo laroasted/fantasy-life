@@ -257,20 +257,28 @@ async function resolveOscarWikitext() {
   return null;
 }
 
-// Best (highest-tier) Oscar result for this pick's name this ceremony —
-// checked against every category's precomputed candidate lists. A person
-// only has one line in CATEGORY_BONUS_RULES.Actor/Actress, not a per-GP
-// stacking rule like F1, so this is a max, not a sum.
+// SUMS credit across every DISTINCT category this pick's name matches —
+// NOT a max (this file previously assumed max; corrected after Codex's
+// review on PR #55 traced the actual convention this league already
+// uses — see update-billboard.js's copy of this function for the
+// verified musician.js example proving it's additive). A Lead + a
+// Supporting nomination/win in the same year is rare but real Oscar
+// history, so this has to accumulate the same way. Within a single
+// category a win always replaces a nomination — never double-counted —
+// because extractWinnerAndNominees() already excludes the winner's own
+// line(s) from that category's nomineeCandidates.
 function resolveOscarBonusForPick(pickName, categoryResults) {
-  var best = null;
+  var total = 0, labels = [];
   for (var r of categoryResults) {
     if (r.winnerCandidates.some(function (c) { return namesMatch(pickName, c); })) {
-      if (!best || best.tier < r.cat.winTier) best = { tier: r.cat.winTier, label: 'Won ' + r.cat.label };
+      total += r.cat.winTier;
+      labels.push('Won ' + r.cat.label);
     } else if (r.nomineeCandidates.some(function (c) { return namesMatch(pickName, c); })) {
-      if (!best || best.tier < r.cat.nomTier) best = { tier: r.cat.nomTier, label: 'Nominated ' + r.cat.label };
+      total += r.cat.nomTier;
+      labels.push('Nominated ' + r.cat.label);
     }
   }
-  return best;
+  return labels.length > 0 ? { tier: total, label: labels.join(' | ') } : null;
 }
  
 async function findPersonId(name) {
