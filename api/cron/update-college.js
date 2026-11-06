@@ -203,22 +203,30 @@ function computeNCAABTier(games) {
 // NCAAF: the same bracket resolution as NCAAB, plus a fallback for a team
 // that missed the CFP bracket entirely — won → 1 point (the "Other Bowl"
 // tier), lost → 0 — both confidently resolved, not left as "no signal".
-// This only fires on a POSITIVE identification of a real bowl game: its
-// note headline contains "Bowl" (every verified non-playoff bowl note
-// does — "Pop-Tarts Bowl", "Valero Alamo Bowl", "Bucked Up LA Bowl", etc.,
-// per the file header). Absence of a CFP prefix alone isn't enough — a
-// picked team can resolve to an FCS program via the full team-list match
-// (fetchESPNTeams isn't division-filtered), and an FCS playoff game's
-// note ("FCS Championship - Quarterfinals") has neither a CFP prefix NOR
-// the word "Bowl", so it correctly falls through to null instead of being
-// miscounted as a bowl result — a real bug Codex's review on this PR
-// caught in an earlier version that used "not CFP" alone as the signal.
+// This fires only when BOTH hold: the note headline has no "College
+// Football Playoff" prefix (rules out a real CFP game whose round wording
+// these keywords don't recognize — every CFP quarterfinal/semifinal is
+// itself hosted AT a bowl venue, e.g. "College Football Playoff
+// Quarterfinal at the Rose Bowl Presented by Prudential", so checking for
+// "Bowl" alone would wrongly let an unrecognized CFP round through just
+// because its venue name contains the word) AND the headline contains
+// "Bowl" (rules out an FCS playoff game via a custom/manual pick resolving
+// to an FCS program — fetchESPNTeams isn't division-filtered — whose note,
+// e.g. "FCS Championship - Quarterfinals", has neither signal). Getting
+// both of these right took three rounds of Codex review on this PR: first
+// using "not matched to any round" alone (too broad — guessed Other Bowl
+// for any unrecognized CFP round), then "no CFP prefix" alone (missed the
+// FCS case), then "contains Bowl" alone (missed the CFP-venue-name case
+// this fixes). Only the combination of both is a positive, non-guessing
+// identification of an actual non-playoff bowl game.
 function computeNCAAFTier(games) {
  var bracketResult = computeBracketTier(games, NCAAF_ROUNDS);
  if (bracketResult) return bracketResult;
  if (!games || games.length === 0) return null;
  var last = games[games.length - 1];
- if ((last.noteHeadline || '').toLowerCase().indexOf('bowl') === -1) return null;
+ var headline = (last.noteHeadline || '').toLowerCase();
+ if (headline.indexOf('college football playoff') !== -1) return null;
+ if (headline.indexOf('bowl') === -1) return null;
  var bowlName = last.noteHeadline;
  return last.won ? { tier: 1, label: 'Won ' + bowlName } : { tier: 0, label: 'Lost ' + bowlName };
 }

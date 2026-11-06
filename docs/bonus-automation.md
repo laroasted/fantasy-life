@@ -157,20 +157,30 @@ whose last completed postseason game doesn't classify as a CFP round at all
 missed the playoff bracket and played a plain non-playoff bowl game instead
 — win → the "1:Win Other Bowl" tier, using the bowl's own name (ESPN's note
 headline, e.g. "Pop-Tarts Bowl") as the label; loss → an explicit 0, not
-left untouched. Getting this fallback's trigger condition right took two
-Codex-caught rounds: an early version fired it whenever the text "didn't
-match any known CFP keyword," which wrongly guessed Other Bowl for a real
-CFP game whose round-name wording just wasn't recognized. The next version
-fixed that by requiring the text have no "College Football Playoff" prefix
-at all — better, but still not a *positive* identification of an actual
-bowl game: `fetchESPNTeams` isn't division-filtered, so a custom/manual
-pick can resolve to an FCS program, and an FCS playoff game's note
-("FCS Championship - Quarterfinals") has no CFP prefix either, so it would
-still have been miscounted as a bowl result. The fallback now requires the
-note headline to actually contain the word "Bowl" — true of every verified
-real bowl note, never true of an FCS game — before resolving anything;
-otherwise it returns null, same as any other case this file can't
-confidently classify.
+left untouched. This fallback now requires BOTH of two conditions — getting
+there took three rounds of Codex review on this PR, each catching a case
+the one before it let through:
+1. An early version fired it whenever the text "didn't match any known CFP
+   keyword," which wrongly guessed Other Bowl for a real CFP game whose
+   round-name wording just wasn't recognized.
+2. The next version required the headline have no "College Football
+   Playoff" prefix at all — fixed (1), but still not a *positive*
+   identification of an actual bowl game: `fetchESPNTeams` isn't
+   division-filtered, so a custom/manual pick can resolve to an FCS
+   program, and an FCS playoff game's note ("FCS Championship -
+   Quarterfinals") has no CFP prefix either, so it would still have been
+   miscounted as a bowl result.
+3. The version after that required the headline contain the word "Bowl" —
+   fixed (2), but dropped the no-CFP-prefix check entirely rather than
+   combining it, so an unrecognized CFP round could fall back through
+   again: every CFP quarterfinal/semifinal is itself hosted AT a bowl
+   venue (e.g. "College Football Playoff Quarterfinal at the Rose Bowl
+   Presented by Prudential"), so "contains Bowl" alone doesn't rule out
+   case (1) either.
+
+The fallback now requires both: no "College Football Playoff" prefix AND
+the headline contains "Bowl". Anything else returns null, same as any
+other case this file can't confidently classify.
 
 **NCAAB's First Four** (the four play-in games before the Round of 64,
 each region's 16- or 11/12-seed pair) needed its own explicit entry in
