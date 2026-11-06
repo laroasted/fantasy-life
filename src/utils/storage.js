@@ -100,6 +100,38 @@ try {
 }
 }
 
+// Opportunistic, synchronous season cache — same reasoning as App.jsx's
+// "Optimistic auth hydration": read directly, no Promise indirection, so
+// App.jsx can seed its very first render (useState lazy initializers)
+// from this instead of a full-screen spinner on every single visit, even
+// when nothing actually changed since last time. Wrapped with its own
+// capture time so a cached paint is labeled with its real age (see the
+// dataSource "local" status dot in App.jsx) rather than claimed as fresh.
+// Written after every successful Supabase season read in App.jsx's
+// loadSeason(), not just the explicit commissioner writes elsewhere in
+// this file that also call it.
+export function cacheActiveSeason(season) {
+try {
+ localStorage.setItem(STORAGE_PREFIX + "active-season", JSON.stringify({ season, cachedAt: new Date().toISOString() }));
+} catch (e) {}
+}
+
+export function readCachedActiveSeason() {
+try {
+ const raw = localStorage.getItem(STORAGE_PREFIX + "active-season");
+ if (!raw) return null;
+ const parsed = JSON.parse(raw);
+ if (parsed && parsed.season && parsed.cachedAt) return parsed;
+ // Tolerate the plain-season shape this key held before this cache
+ // existed (written by the commissioner-only paths below) — treat its
+ // age as unknown rather than discarding a usable cached season.
+ if (parsed && parsed.year) return { season: parsed, cachedAt: null };
+ return null;
+} catch (e) {
+ return null;
+}
+}
+
 export const STORAGE_KEYS = {
 ACTIVE_SEASON: "active-season",
 ARCHIVED_SEASONS: "archived-seasons",
@@ -348,15 +380,23 @@ try {
  // 1 & 2. Fetch season info and members in parallel — members has no
  // dependency on the season row (it's the static roster), so there's no
  // reason to wait for the season query to round-trip before starting
- // it. (picks genuinely does need season.year, so it can't join this
- // batch — it has to wait for this Promise.all to settle.) This cuts
- // one full sequential round-trip off every season load.
+ // it. This cuts one full sequential round-trip off every season load.
  let query = supabasePublic.from('seasons').select('*');
  if (year) {
  query = query.eq('year', year);
  } else {
  query = query.eq('status', 'active');
  }
+
+ // Picks only needs the season's year to filter on — when the caller
+ // already passed one in (every archived-season fetch does), that's
+ // known before the season row even comes back, so start picks in the
+ // same batch too. Only the active-season lookup (year === null)
+ // genuinely has to wait for the season query to resolve first, since
+ // that's the only way to learn which year is active.
+ const picksPromise = year
+ ? supabasePublic.from('picks').select('*').eq('season_year', year)
+ : null;
 
  const [
  { data: season, error: sErr },
@@ -376,11 +416,13 @@ try {
  return null;
  }
 
- // 3. Fetch ALL picks for this season
- const { data: picks, error: pErr } = await supabasePublic
+ // 3. Fetch ALL picks for this season — already in flight above when a
+ // concrete year was passed in; only started now for the active-season
+ // lookup, which has no choice but to wait on season.year regardless.
+ const { data: picks, error: pErr } = await (picksPromise || supabasePublic
  .from('picks')
  .select('*')
- .eq('season_year', season.year);
+ .eq('season_year', season.year));
 
  if (pErr) {
  console.error('Failed to fetch picks:', pErr.message);
@@ -615,12 +657,17 @@ try {
 */
 export async function fetchProjectionsFromSupabase(year, members) {
 try {
- const { data: picks, error: pErr } = await supabasePublic
- .from('picks').select('id, member_id, category').eq('season_year', year);
+ // picks and projections don't depend on each other — both only need
+ // `year` — so there's no reason to make this overlay wait on two
+ // sequential round-trips instead of one.
+ const [
+ { data: picks, error: pErr },
+ { data: projections, error: projErr },
+ ] = await Promise.all([
+ supabasePublic.from('picks').select('id, member_id, category').eq('season_year', year),
+ supabasePublic.from('projections').select('*').eq('season_year', year),
+ ]);
  if (pErr || !picks) return {};
-
- const { data: projections, error: projErr } = await supabasePublic
- .from('projections').select('*').eq('season_year', year);
  if (projErr || !projections || projections.length === 0) return {};
 
  const memberNameById = {};
