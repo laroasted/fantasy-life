@@ -235,6 +235,15 @@ export default function App() {
     return cached ? cached.season : null;
   });
   const [archivedSeasons, setArchivedSeasons] = useState([]);
+  // Separate from `loaded` on purpose: `loaded` now flips as soon as the
+  // active season alone is in hand (it no longer waits on archived
+  // seasons — see the mount effect below), including instantly from
+  // cache before any fetch has even started. The year-validation effect
+  // further down still needs a signal that specifically means "archived
+  // seasons has actually resolved," or it misjudges a legitimate
+  // archived-year deep link as invalid before archivedSeasons has had a
+  // chance to arrive and resets it to the active season.
+  const [archivedLoaded, setArchivedLoaded] = useState(false);
   const [loaded, setLoaded] = useState(() => !!readCachedActiveSeason());
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(() => {
@@ -664,6 +673,7 @@ export default function App() {
         }
       } catch (e) { console.error("Failed to load archived seasons:", e); }
       setArchivedSeasons(archived);
+      setArchivedLoaded(true);
       return archived;
     })();
 
@@ -830,15 +840,18 @@ export default function App() {
   // in the same effect that reads the URL, or gate on availableSeasons
   // merely being non-empty: it gets an entry for the active season the
   // instant activeSeason loads, while archivedSeasons is fetched in a
-  // separate, later step of the mount effect. Gating on `loaded` instead —
-  // which only flips true once both fetches have settled — is what
+  // separate step of the mount effect. Gating on archivedLoaded — which
+  // only flips true once that fetch has actually settled — is what
   // actually waits long enough for a legitimate archived-year deep link
   // not to be misjudged as invalid and reset before archivedSeasons has
-  // had a chance to arrive.
+  // had a chance to arrive. (`loaded` doesn't mean that anymore: it flips
+  // as soon as the active season alone is in hand, including instantly
+  // from cache, specifically so this screen doesn't wait on archived
+  // seasons to render — see the mount effect.)
   useEffect(() => {
-    if (!loaded || selectedYear === null || !activeSeason) return;
+    if (!archivedLoaded || selectedYear === null || !activeSeason) return;
     if (!availableSeasons.some((s) => s.year === selectedYear)) setSelectedYear(activeSeason.year);
-  }, [loaded, availableSeasons, selectedYear, activeSeason]);
+  }, [archivedLoaded, availableSeasons, selectedYear, activeSeason]);
 
   const isViewingActive = !activeSeason || selectedYear === null || selectedYear === activeSeason.year;
 
