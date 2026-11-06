@@ -764,6 +764,33 @@ try {
 }
 
 /**
+* "This Week" orientation strip data — the biggest score_history mover
+* over the last ~7 days. One round-trip via the biggest_score_movers RPC
+* (supabase/phase21_orientation_strip_rpc.sql) instead of the three
+* sequential queries (find latest date, find baseline date, fetch both
+* dates' rows) this used to take — see that migration's own comment for
+* why. Returns raw per-member deltas; finding which one is the biggest
+* riser/faller stays a caller-side reduce, same as before.
+*
+* @returns {Array<{member_id: string, delta: number}>} empty if there
+*  isn't yet a second distinct snapshot date to compare against, or on
+*  any failure.
+*/
+export async function fetchBiggestScoreMovers(seasonYear) {
+try {
+ const { data, error } = await supabasePublic.rpc('biggest_score_movers', { p_season_year: seasonYear });
+ if (error || !data) {
+ console.warn('fetchBiggestScoreMovers failed:', error && error.message);
+ return [];
+ }
+ return data;
+} catch (err) {
+ console.warn('fetchBiggestScoreMovers error:', err);
+ return [];
+}
+}
+
+/**
 * Subscribe to live changes on the draft session. onChange is called with
 * the new row (or null on DELETE) every time it changes — including the
 * commissioner's own writes, so their browser is driven by the same

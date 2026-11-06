@@ -24,6 +24,7 @@ import {
   fetchProjectionsFromSupabase,
   cacheActiveSeason,
   readCachedActiveSeason,
+  fetchBiggestScoreMovers,
   saveLocksToSupabase,
   savePaywallsToSupabase,
   unlockPaywallRpc,
@@ -899,64 +900,20 @@ export default function App() {
 
     (async () => {
       try {
-        // Find the latest snapshot date, and the snapshot date closest to
-        // (but not after) ~7 days before it, as two separate date-only
-        // lookups — then fetch each date's rows with an exact .in() match.
-        // A single "most recent 1000 rows" fetch can cut off mid-date for
-        // a league with enough members/categories, silently truncating the
-        // older date's rows and understating that date's total.
-        const { data: latestRows } = await supabase
-          .from("score_history")
-          .select("snapshot_date")
-          .eq("season_year", yr)
-          .order("snapshot_date", { ascending: false })
-          .limit(1);
-        const latestDate = latestRows && latestRows[0] && latestRows[0].snapshot_date;
-        if (cancelled || !latestDate) return;
+        // One round-trip via the biggest_score_movers RPC (see
+        // supabase/phase21_orientation_strip_rpc.sql) instead of the
+        // three sequential queries (find latest date, find baseline
+        // date, fetch both dates' rows) this used to take — each
+        // depended on the last, so that was three full round-trips of
+        // real latency before a best-effort banner could even appear.
+        const movers = await fetchBiggestScoreMovers(yr);
+        if (cancelled || movers.length === 0) return;
 
-        const targetDate = new Date(latestDate + "T00:00:00");
-        targetDate.setDate(targetDate.getDate() - 7);
-        const targetStr = targetDate.toISOString().slice(0, 10);
-
-        const { data: baselineRows } = await supabase
-          .from("score_history")
-          .select("snapshot_date")
-          .eq("season_year", yr)
-          .lte("snapshot_date", targetStr)
-          .order("snapshot_date", { ascending: false })
-          .limit(1);
-        let baselineDate = baselineRows && baselineRows[0] && baselineRows[0].snapshot_date;
-        if (!baselineDate) {
-          const { data: earliestRows } = await supabase
-            .from("score_history")
-            .select("snapshot_date")
-            .eq("season_year", yr)
-            .order("snapshot_date", { ascending: true })
-            .limit(1);
-          baselineDate = earliestRows && earliestRows[0] && earliestRows[0].snapshot_date;
-        }
-        if (cancelled || !baselineDate || baselineDate === latestDate) return;
-
-        const { data, error } = await supabase
-          .from("score_history")
-          .select("snapshot_date, member_id, total")
-          .eq("season_year", yr)
-          .in("snapshot_date", [latestDate, baselineDate]);
-        if (cancelled || error || !data || data.length === 0) return;
-
-        const byDate = new Map();
-        data.forEach((r) => {
-          if (!byDate.has(r.snapshot_date)) byDate.set(r.snapshot_date, {});
-          const d = byDate.get(r.snapshot_date);
-          d[r.member_id] = (d[r.member_id] || 0) + (Number(r.total) || 0);
-        });
-        const latest = byDate.get(latestDate) || {};
-        const baseline = byDate.get(baselineDate) || {};
         let riser = null, faller = null;
-        Object.keys(latest).forEach((mid) => {
-          const delta = Math.round(((latest[mid] || 0) - (baseline[mid] || 0)) * 100) / 100;
-          if (delta > 0 && (!riser || delta > riser.delta)) riser = { memberId: mid, delta: delta };
-          if (delta < 0 && (!faller || delta < faller.delta)) faller = { memberId: mid, delta: delta };
+        movers.forEach((m) => {
+          const delta = Number(m.delta) || 0;
+          if (delta > 0 && (!riser || delta > riser.delta)) riser = { memberId: m.member_id, delta: delta };
+          if (delta < 0 && (!faller || delta < faller.delta)) faller = { memberId: m.member_id, delta: delta };
         });
         if (cancelled) return;
         // Explicitly null out a side with no mover this cycle (not just
@@ -973,7 +930,10 @@ export default function App() {
     (async () => {
       try {
         const todayStr = new Date().toISOString().slice(0, 10);
-        const { data, error } = await supabase
+        // supabasePublic, not supabase — a plain public read with no
+        // reason to wait on the session-aware client's internal auth
+        // lock (see that client's own comment in storage.js).
+        const { data, error } = await supabasePublic
           .from("calendar_events")
           .select("title, event_date")
           .eq("season_year", yr)
