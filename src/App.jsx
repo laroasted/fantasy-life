@@ -18,11 +18,12 @@ import { useViewport } from "./utils/useViewport";
 import {
   supabase,
   supabasePublic,
-  storageGet,
   storageSet,
   STORAGE_KEYS,
   fetchSeasonFromSupabase,
   fetchProjectionsFromSupabase,
+  cacheActiveSeason,
+  readCachedActiveSeason,
   saveLocksToSupabase,
   savePaywallsToSupabase,
   unlockPaywallRpc,
@@ -221,12 +222,26 @@ function clearCachedIdentity() {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(tabFromUrl);
-  const [activeSeason, setActiveSeason] = useState(null);
+  // Instant paint from whatever this device last saw, same reasoning as
+  // "Optimistic auth hydration" below: the real loadSeason() fetch in the
+  // mount effect further down still always runs and overwrites every one
+  // of these the moment it resolves (dataSource flips "local" →
+  // "supabase", lastUpdated to "just now") — this is purely a perceived-
+  // speed head start on a repeat visit, never a substitute for the real
+  // fetch. A first-ever visit on this device has nothing to seed from
+  // and falls straight through to the loading spinner exactly as before.
+  const [activeSeason, setActiveSeason] = useState(() => {
+    const cached = readCachedActiveSeason();
+    return cached ? cached.season : null;
+  });
   const [archivedSeasons, setArchivedSeasons] = useState([]);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(() => !!readCachedActiveSeason());
   const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [dataSource, setDataSource] = useState("loading");
+  const [lastUpdated, setLastUpdated] = useState(() => {
+    const cached = readCachedActiveSeason();
+    return cached && cached.cachedAt ? new Date(cached.cachedAt) : null;
+  });
+  const [dataSource, setDataSource] = useState(() => (readCachedActiveSeason() ? "local" : "loading"));
   // Shared with Scoreboard.jsx via useViewport() so the header widens in
   // lockstep with Scoreboard's sidebar instead of the two hand-copying the
   // same breakpoint numbers (see useViewport.js).
@@ -575,12 +590,20 @@ export default function App() {
     // back exactly like an outright failure rather than spinning forever.
     let active = await withTimeout(fetchSeasonFromSupabase(), 10000, null);
     let source = "supabase";
+    // Whenever this resolved, not necessarily "now" — see below.
+    let resolvedAt = new Date();
     if (!active) {
       console.warn("Supabase fetch failed, trying localStorage...");
-      try {
-        const r = await storageGet(STORAGE_KEYS.ACTIVE_SEASON);
-        if (r && r.value) { active = JSON.parse(r.value); source = "local"; }
-      } catch (e) { console.error("Failed to load from localStorage:", e); }
+      const cached = readCachedActiveSeason();
+      if (cached) {
+        active = cached.season;
+        source = "local";
+        // The data is from whenever that earlier fetch actually
+        // succeeded, not from this failed retry — showing "now" here
+        // would claim freshness it doesn't have (see the dataSource
+        // "local" status dot further down).
+        resolvedAt = cached.cachedAt ? new Date(cached.cachedAt) : new Date();
+      }
       track(EVENTS.DATA_FALLBACK_USED, {
         surface: "season",
         fallback_level: source === "local" ? "local" : "hardcoded",
@@ -588,28 +611,42 @@ export default function App() {
       });
     }
     if (!active) { console.warn("No stored data, using hardcoded build2025()..."); active = build2025(); source = "hardcoded"; }
-    // Projections are a nice-to-have overlay, never a load-blocker: only
-    // attempted against a real Supabase season, with its own timeout, and
-    // silently empty on any failure (fetchProjectionsFromSupabase already
-    // degrades to {} internally — see docs/projections-feature-plan.md).
-    if (active && source === "supabase") {
-      active.projections = await withTimeout(fetchProjectionsFromSupabase(active.year, active.members), 8000, {});
-    } else if (active) {
-      active.projections = {};
-    }
+    if (source === "supabase") cacheActiveSeason(active);
+
+    // Set the real numbers immediately — projections are a nice-to-have
+    // overlay (below), never worth delaying the actual scoreboard for.
+    active.projections = active.projections || {};
     setActiveSeason(active);
     setDataSource(source);
-    setLastUpdated(new Date());
+    setLastUpdated(resolvedAt);
     setSeasonSuperProperties({ year: active?.year, dataSource: source });
     track(EVENTS.SEASON_LOADED, { data_source: source, year: active?.year, is_refresh: showRefreshing, trigger: resolvedTrigger });
     lastSourceRef.current = source;
     if (showRefreshing) setRefreshing(false);
+
+    // Only attempted against a real Supabase season, with its own
+    // timeout, and patched in separately once it resolves instead of
+    // making the real scoreboard above wait on it — degrades to {} on
+    // any failure already (see docs/projections-feature-plan.md). Guard
+    // against patching in a stale response onto a season the page has
+    // since moved past (another loadSeason() call, or a year switch).
+    if (source === "supabase") {
+      const year = active.year;
+      withTimeout(fetchProjectionsFromSupabase(active.year, active.members), 8000, {}).then((projections) => {
+        setActiveSeason((prev) => (prev && prev.year === year ? { ...prev, projections } : prev));
+      });
+    }
     return active;
   }, []);
  
   useEffect(() => {
-    (async () => {
-      await loadSeason();
+    // Active season and archived seasons don't depend on each other at
+    // all — archived seasons are only ever used when explicitly viewing
+    // one from the season picker, never for the default Scoreboard tab —
+    // so there's no reason the second was ever sequenced after the
+    // first instead of running alongside it.
+    const seasonPromise = loadSeason();
+    const archivedPromise = (async () => {
       let archived = [];
       try {
         // Same hang risk as loadSeason() above — same 10s safety net.
@@ -627,7 +664,18 @@ export default function App() {
         }
       } catch (e) { console.error("Failed to load archived seasons:", e); }
       setArchivedSeasons(archived);
-      setLoaded(true);
+      return archived;
+    })();
+
+    // The active season is the only thing the default view needs —
+    // archived seasons (and projections, handled inside loadSeason
+    // itself) are both background enrichment that used to block this
+    // same flip for no reason tied to what's actually on screen first.
+    seasonPromise.then(() => setLoaded(true));
+
+    (async () => {
+      const archived = await archivedPromise;
+      await seasonPromise;
       track(EVENTS.APP_LOADED, {
         data_source: lastSourceRef.current,
         is_mobile: window.innerWidth < 640,
@@ -675,7 +723,7 @@ export default function App() {
     // would land back on the season they just finalized out of, not the
     // new one.
     setSelectedYear(newSeason.year);
-    try { await storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(newSeason)); } catch (e) {}
+    cacheActiveSeason(newSeason);
     try { await storageSet(STORAGE_KEYS.ARCHIVED_SEASONS, JSON.stringify(newArchived)); } catch (e) {}
     setActiveTab("scoreboard");
   }, [activeSeason, archivedSeasons]);
@@ -685,7 +733,7 @@ export default function App() {
       throw new Error("Commissioner access required to save season settings.");
     }
     setActiveSeason(updatedSeason);
-    try { await storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(updatedSeason)); } catch (e) {}
+    cacheActiveSeason(updatedSeason);
     if (updatedSeason.locks && updatedSeason.year) {
       await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
     }
@@ -715,7 +763,7 @@ export default function App() {
       const updated = JSON.parse(JSON.stringify(prev));
       if (!updated.paywalls) updated.paywalls = {};
       updated.paywalls[memberId] = Object.assign({}, updated.paywalls[memberId], { enabled: false });
-      storageSet(STORAGE_KEYS.ACTIVE_SEASON, JSON.stringify(updated)).catch(() => {});
+      cacheActiveSeason(updated);
       return updated;
     });
     return true;
