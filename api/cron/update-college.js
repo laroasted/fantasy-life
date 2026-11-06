@@ -41,9 +41,18 @@
 *   Round-name keywords verified live via Firecrawl against the actual
 *   completed 2025-26 CFP (Jan 2026) and 2025-26 NCAA tournament (Mar/Apr
 *   2026) note-headline text — see docs/bonus-automation.md. Evergreen by
-*   design: matched by what ESPN calls the round this year, gated on
-*   "does ESPN return any seasontype=3 games right now" (fetchPostseason
-*   Exists), not a hardcoded date.
+*   design: matched by what ESPN calls the round this year. Bonus
+*   resolution is gated per PICK, by that team's own postseason schedule
+*   (fetchTeamPostseasonGames) actually having a completed game — not by a
+*   day-scoped scoreboard query. An earlier version gated on "does today's
+*   seasontype=3 scoreboard slate return anything," which Codex's review on
+*   this PR caught as a real bug: both sports' scoreboard endpoint rejects a
+*   date-range query (confirmed live — both return 400), and NCAAB's
+*   endpoint is day-granular (confirmed live, unlike NCAAF's), so a single
+*   gap day between rounds — routine in both brackets — could make that
+*   check report "no bracket" and skip an already-decided result for a run
+*   or more. A per-team schedule lookup has no such gap: it just returns
+*   whatever that team has actually played, any day it's called.
 *
 *   Team IDs (needed for the per-team schedule lookup) come from a
 *   SEPARATE full-roster endpoint (fetchESPNTeams), not the AP rankings
@@ -70,12 +79,12 @@ const COLLEGE_LEAGUES = {
  NCAAF: {
   url: 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings',
   activeStart: { month: 8, day: 15 }, freezeDate: { month: 12, day: 9 },
-  sport: 'football', league: 'college-football', groupsParam: '80', // FBS only — excludes FCS playoff games
+  sport: 'football', league: 'college-football',
  },
  NCAAB: {
   url: 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/rankings',
   activeStart: { month: 11, day: 1 }, freezeDate: { month: 3, day: 5 },
-  sport: 'basketball', league: 'mens-college-basketball', groupsParam: '100', // NCAA Tournament only — excludes NIT/CBI
+  sport: 'basketball', league: 'mens-college-basketball',
  },
 };
 
@@ -100,6 +109,7 @@ const NCAAF_ROUNDS = [
 ];
 
 const NCAAB_ROUNDS = [
+ { label: 'Round of 64', keywords: ['1st round'], loseTier: 0 },
  { label: 'Round of 32', keywords: ['2nd round'], loseTier: 1 },
  { label: 'Sweet 16', keywords: ['sweet 16'], loseTier: 2 },
  { label: 'Elite 8', keywords: ['elite 8'], loseTier: 3 },
@@ -115,21 +125,6 @@ function classifyRound(text, rounds) {
   if (rounds[i].keywords.some(function(k) { return lower.indexOf(k) !== -1; })) return { index: i, round: rounds[i] };
  }
  return null;
-}
-
-// Gate for the expensive per-team schedule calls below. `groupsParam`
-// scopes the check to the real bracket (FBS CFP/bowls, or the NCAA
-// Tournament specifically) so a concurrent FCS playoff or NIT/CBI run
-// doesn't trip this early — verified live that groups=80/100 do filter
-// the scoreboard endpoint this way (see file header).
-async function fetchPostseasonExists(sport, league, groupsParam) {
- try {
-  var url = 'https://site.api.espn.com/apis/site/v2/sports/' + sport + '/' + league + '/scoreboard?seasontype=3&groups=' + groupsParam;
-  var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
-  if (!res.ok) return false;
-  var data = await res.json();
-  return Array.isArray(data?.events) && data.events.length > 0;
- } catch (err) { console.error('  Postseason existence check failed for ' + league + ':', err.message); return false; }
 }
 
 // Every team in the league (not just AP-ranked ones) — needed to resolve
@@ -219,6 +214,13 @@ function computeNCAAFTier(games) {
   }
   return { tier: round.loseTier, label: (last.won ? 'Advanced past ' : 'Lost ') + round.label };
  }
+ // Unclassified text: only treat this as a non-playoff "Other Bowl"
+ // appearance when it's positively NOT a CFP game (no "College Football
+ // Playoff" prefix at all, per the verified note-headline format — see
+ // file header) — a CFP round ESPN worded in a way our keywords missed is
+ // a real "can't confidently classify" case, not evidence of Other Bowl,
+ // so that returns null (no guess) rather than a wrong 0 or 1.
+ if ((last.text || '').toLowerCase().indexOf('college football playoff') !== -1) return null;
  var bowlName = last.noteHeadline || 'Bowl Game';
  return last.won ? { tier: 1, label: 'Won ' + bowlName } : { tier: 0, label: 'Lost ' + bowlName };
 }
@@ -351,23 +353,25 @@ module.exports = async function handler(req, res) {
   }
 
   // ── Bowl/tournament bonus resolution (see NCAAF_ROUNDS/NCAAB_ROUNDS above) ──
+  // Gated per pick by that team's own postseason schedule actually having a
+  // completed game — not by a day-scoped scoreboard slate (see file header
+  // for why; Codex review finding on this PR). The extra per-team calls run
+  // every day, not just in-season — each resolves to an empty game list in
+  // well under a second during the offseason, same cost class as the base
+  // AP-rankings fetch already does unconditionally above.
   var bonusByPickId = {};
-  var hasPostseason = await fetchPostseasonExists(config.sport, config.league, config.groupsParam);
-  if (hasPostseason) {
-   var fullTeams = await fetchESPNTeams(config.sport, config.league);
-   if (fullTeams) {
-    for (var m of matched) {
-     var teamMatch = matchTeam(m.pick, fullTeams);
-     if (!teamMatch || !teamMatch.id) continue;
-     var games = await fetchTeamPostseasonGames(config.sport, config.league, teamMatch.id);
-     var result = league === 'NCAAF' ? computeNCAAFTier(games) : computeNCAABTier(games);
-     if (result) bonusByPickId[m.id] = result;
-    }
-   } else {
-    console.log(' ' + league + ': Could not fetch team list — bonus unchanged');
+  var fullTeams = await fetchESPNTeams(config.sport, config.league);
+  if (fullTeams) {
+   for (var m of matched) {
+    var teamMatch = matchTeam(m.pick, fullTeams);
+    if (!teamMatch || !teamMatch.id) continue;
+    var games = await fetchTeamPostseasonGames(config.sport, config.league, teamMatch.id);
+    var result = league === 'NCAAF' ? computeNCAAFTier(games) : computeNCAABTier(games);
+    if (result) bonusByPickId[m.id] = result;
    }
+   if (Object.keys(bonusByPickId).length === 0) console.log(' ' + league + ': No bonus changes resolved this run');
   } else {
-   console.log(' ' + league + ': No bracket live yet — bonus unchanged');
+   console.log(' ' + league + ': Could not fetch team list — bonus unchanged');
   }
 
   var updated = 0, rankings = [];
