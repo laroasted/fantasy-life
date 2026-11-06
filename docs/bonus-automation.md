@@ -157,13 +157,31 @@ whose last completed postseason game doesn't classify as a CFP round at all
 missed the playoff bracket and played a plain non-playoff bowl game instead
 — win → the "1:Win Other Bowl" tier, using the bowl's own name (ESPN's note
 headline, e.g. "Pop-Tarts Bowl") as the label; loss → an explicit 0, not
-left untouched. This fallback only fires when the game's text positively
-does NOT contain "College Football Playoff" at all — a CFP game whose
-round-name wording these keywords simply don't recognize returns null
-(can't confidently classify) instead of guessing Other Bowl, a real bug
-Codex's review on this PR caught in an earlier version that used
-"didn't match any known CFP keyword" as the signal, which included both
-cases.
+left untouched. Getting this fallback's trigger condition right took two
+Codex-caught rounds: an early version fired it whenever the text "didn't
+match any known CFP keyword," which wrongly guessed Other Bowl for a real
+CFP game whose round-name wording just wasn't recognized. The next version
+fixed that by requiring the text have no "College Football Playoff" prefix
+at all — better, but still not a *positive* identification of an actual
+bowl game: `fetchESPNTeams` isn't division-filtered, so a custom/manual
+pick can resolve to an FCS program, and an FCS playoff game's note
+("FCS Championship - Quarterfinals") has no CFP prefix either, so it would
+still have been miscounted as a bowl result. The fallback now requires the
+note headline to actually contain the word "Bowl" — true of every verified
+real bowl note, never true of an FCS game — before resolving anything;
+otherwise it returns null, same as any other case this file can't
+confidently classify.
+
+**NCAAB's First Four** (the four play-in games before the Round of 64,
+each region's 16- or 11/12-seed pair) needed its own explicit entry in
+`NCAAB_ROUNDS` (`loseTier: 0`, keyword `'first four'`) for the same reason
+the CFP First Round does — without it, a First Four exit didn't classify
+against any round and left a stale manual bonus untouched instead of the
+confident 0 the rule gives it (the lowest scored NCAAB tier is "1:Lose
+R32" — neither a First Four nor a Round-of-64 loss is worth anything).
+Caught by Codex's review alongside the fallback fix above; verified live
+against the real 2025-26 First Four (`"NCAA Men's Basketball Championship
+- <Region> - First Four"`).
 
 **Round-name text, live-verified via Firecrawl** against the real,
 completed 2025-26 CFP (Jan 2026) and 2025-26 NCAA Tournament (Mar–Apr
@@ -202,11 +220,16 @@ in both brackets, could make that gate report "no bracket" and skip an
 already-decided result for a run or more. The gate was removed; bonus
 resolution now runs every day for every pick, via `fetchTeamPostseasonGames`
 directly, which only ever returns that team's own completed games and has
-no day-granularity to miss. (The FCS-playoff-games/NIT-CBI concurrent-
-bracket concern this gate used to filter with `groups=80`/`groups=100` is
-moot now — a picked team is always an FBS or Division-I team, so matching
-it to its own ESPN team ID and reading its own schedule never pulls in an
-FCS or NIT game in the first place.)
+no day-granularity to miss. (An initial write-up of this fix claimed the
+FCS-playoff-games/NIT-CBI concurrent-bracket concern the removed gate's
+`groups=80`/`groups=100` filter used to handle was now moot, on the theory
+that a picked team is always FBS/Division-I — Codex's next review pass
+caught that this was wrong: `fetchESPNTeams` isn't division-filtered, so a
+custom/manual pick can still resolve to an FCS program, and that team's own
+schedule can legitimately include a real FCS playoff game. See "A team
+whose postseason game isn't recognizably a CFP round" below for how that's
+actually handled — not by filtering it out of the fetch, but by refusing to
+guess a bowl result from it.)
 
 Like `update-sports.js`'s playoff bonus, the old date-based freeze
 (`isActive()`/`freezeDate` — Dec 9 for NCAAF, Mar 5 for NCAAB) only gates

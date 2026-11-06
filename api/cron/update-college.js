@@ -110,6 +110,7 @@ const NCAAF_ROUNDS = [
 ];
 
 const NCAAB_ROUNDS = [
+ { label: 'First Four', keywords: ['first four'], loseTier: 0 },
  { label: 'Round of 64', keywords: ['1st round'], loseTier: 0 },
  { label: 'Round of 32', keywords: ['2nd round'], loseTier: 1 },
  { label: 'Sweet 16', keywords: ['sweet 16'], loseTier: 2 },
@@ -200,21 +201,25 @@ function computeNCAABTier(games) {
 }
 
 // NCAAF: the same bracket resolution as NCAAB, plus a fallback for a team
-// that missed the CFP bracket entirely — "last postseason game's text
-// isn't a CFP round at all" (no "College Football Playoff" prefix, per
-// the verified note-headline format in the file header): won → 1 point
-// (the "Other Bowl" tier), lost → 0 — both confidently resolved, not left
-// as "no signal". A game whose text IS CFP-prefixed but doesn't match any
-// round keyword returns null instead of guessing Other Bowl — a
-// round-name wording these keywords don't recognize is a real "can't
-// confidently classify" case, not evidence of a non-playoff bowl.
+// that missed the CFP bracket entirely — won → 1 point (the "Other Bowl"
+// tier), lost → 0 — both confidently resolved, not left as "no signal".
+// This only fires on a POSITIVE identification of a real bowl game: its
+// note headline contains "Bowl" (every verified non-playoff bowl note
+// does — "Pop-Tarts Bowl", "Valero Alamo Bowl", "Bucked Up LA Bowl", etc.,
+// per the file header). Absence of a CFP prefix alone isn't enough — a
+// picked team can resolve to an FCS program via the full team-list match
+// (fetchESPNTeams isn't division-filtered), and an FCS playoff game's
+// note ("FCS Championship - Quarterfinals") has neither a CFP prefix NOR
+// the word "Bowl", so it correctly falls through to null instead of being
+// miscounted as a bowl result — a real bug Codex's review on this PR
+// caught in an earlier version that used "not CFP" alone as the signal.
 function computeNCAAFTier(games) {
  var bracketResult = computeBracketTier(games, NCAAF_ROUNDS);
  if (bracketResult) return bracketResult;
  if (!games || games.length === 0) return null;
  var last = games[games.length - 1];
- if ((last.text || '').toLowerCase().indexOf('college football playoff') !== -1) return null;
- var bowlName = last.noteHeadline || 'Bowl Game';
+ if ((last.noteHeadline || '').toLowerCase().indexOf('bowl') === -1) return null;
+ var bowlName = last.noteHeadline;
  return last.won ? { tier: 1, label: 'Won ' + bowlName } : { tier: 0, label: 'Lost ' + bowlName };
 }
 
