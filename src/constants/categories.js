@@ -79,7 +79,7 @@ export const CATEGORY_BONUS_RULES = {
   MLB: "10:Win WS | 7:Lose WS | 5:Lose LCS | 3:Lose LDS | 2:Lose WC | 1:Most AS Noms",
   NBA: "10:Win Finals | 7:Lose Finals | 5:Lose Conf Champ | 3:Lose 2nd Rd | 2:Lose 1st Rd | 1:Most AS",
   NHL: "10:Win Cup | 7:Lose Cup Final | 5:Lose Semi | 3:Lose 2nd Rd | 2:Lose 1st Rd",
-  NCAAF: "10:Win Natl Champ | 7:Lose Natl Champ | 5:Lose Semi | 3:Win BCS Bowl | 2:Lose BCS Bowl | 1:Win Other Bowl",
+  NCAAF: "10:Win Natl Champ | 7:Lose Natl Champ | 5:Lose Semi | 3:Lose QF | 2:Lose 1st Rd | 1:Win Other Bowl",
   NCAAB: "10:Win Natl Champ | 7:Lose Champ | 5:Lose F4 | 3:Lose E8 | 2:Lose S16 | 1:Lose R32",
   MLS: "10:Win MLS Cup | 7:Lose Finals | 5:Lose Conf Final | 3:Lose Semi | 2:Lose 1st Rd",
   // ── CORRECTED per Constitution Section 3.2 ──

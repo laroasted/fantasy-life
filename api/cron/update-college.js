@@ -22,21 +22,22 @@
 *      but the championship.
 *
 *   2. NCAAF's bonus rule — "10:Win Natl Champ | 7:Lose Natl Champ |
-*      5:Lose Semi | 3:Win BCS Bowl | 2:Lose BCS Bowl | 1:Win Other Bowl"
-*      — is the 12-team CFP era version, not the old pre-2024 two-bowl
-*      system. "BCS Bowl" here means a CFP Quarterfinal specifically (the
-*      quarterfinals are always hosted at a fixed rotating pool of New
-*      Year's Six bowls), which is why — unlike every other round in this
-*      app's bonus automation — the Quarterfinal round itself assigns a
-*      DIFFERENT point value for winning (3) vs. losing (2) it, not just
-*      the championship. The "1:Win Other Bowl" tier is a team that missed
-*      the CFP bracket entirely but won its assigned non-playoff bowl —
-*      detected as "last postseason game's round text didn't match any
-*      CFP keyword", using the bowl's own name (ESPN's note headline) as
-*      the label. A non-playoff bowl LOSS, and a CFP First Round result
-*      (win or lose — the rule doesn't score that round at all), are both
-*      confidently resolved to 0, not left untouched: these are known,
-*      classified outcomes, not an unclassifiable guess.
+*      5:Lose Semi | 3:Lose QF | 2:Lose 1st Rd | 1:Win Other Bowl" — is the
+*      CFP era version (12 teams as of 2026, evergreen to a future
+*      expansion since this classifies by round NAME, not bracket size).
+*      Unlike an earlier draft of this file, every CFP round now follows
+*      the exact same "furthest-round-reached, same tier whether won or
+*      lost" semantics as NCAAB and the five sports in update-sports.js —
+*      there's no special-cased win/lose split on any one round anymore.
+*      The "1:Win Other Bowl" tier is a team that missed the CFP bracket
+*      entirely but won its assigned non-playoff bowl — detected as "last
+*      postseason game's text isn't a CFP round at all" (no "College
+*      Football Playoff" prefix), using the bowl's own name (ESPN's note
+*      headline) as the label; a non-playoff bowl LOSS resolves to an
+*      explicit 0, not left untouched — a known, classified outcome, not
+*      an unclassifiable guess. An unclassified game that IS CFP-prefixed
+*      (a round-name wording this file's keywords don't recognize) returns
+*      null instead of guessing Other Bowl — see computeNCAAFTier.
 *
 *   Round-name keywords verified live via Firecrawl against the actual
 *   completed 2025-26 CFP (Jan 2026) and 2025-26 NCAA tournament (Mar/Apr
@@ -102,8 +103,8 @@ const COLLEGE_LEAGUES = {
 //          "... - Final Four" / "... - National Championship"
 // ═══════════════════════════════════════════════════════════════════════
 const NCAAF_ROUNDS = [
- { label: 'CFP First Round', keywords: ['playoff first round'], loseTier: 0 },
- { label: 'CFP Quarterfinal', keywords: ['playoff quarterfinal'], winTier: 3, loseTier: 2 },
+ { label: 'CFP First Round', keywords: ['playoff first round'], loseTier: 2 },
+ { label: 'CFP Quarterfinal', keywords: ['playoff quarterfinal'], loseTier: 3 },
  { label: 'CFP Semifinal', keywords: ['playoff semifinal'], loseTier: 5 },
  { label: 'National Championship', keywords: ['national championship'], winTier: 10, loseTier: 7 },
 ];
@@ -176,50 +177,42 @@ async function fetchTeamPostseasonGames(sport, league, teamId) {
  } catch (err) { console.error('  Team schedule fetch failed for team ' + teamId + ':', err.message); return []; }
 }
 
-// NCAAB: standard furthest-round-reached semantics, identical in shape to
-// update-sports.js's computePlayoffTier — every round but the
-// championship uses the same tier whether the team won or lost that game
-// (the number represents "survived to this depth"). Returns null (no
-// change) if the last game's round can't be confidently classified.
-function computeNCAABTier(games) {
+// Shared furthest-round-reached resolution for both brackets — every round
+// but the championship uses the same tier whether the team won or lost
+// that specific game (the number represents "survived to this depth");
+// only the final round distinguishes a win from a loss. Returns null (no
+// change) if the last completed game's round can't be confidently
+// classified against the given `rounds` table.
+function computeBracketTier(games, rounds) {
  if (!games || games.length === 0) return null;
  var last = games[games.length - 1];
- var classified = classifyRound(last.text, NCAAB_ROUNDS);
+ var classified = classifyRound(last.text, rounds);
  if (!classified) return null;
  var index = classified.index, round = classified.round;
- var isFinalRound = index === NCAAB_ROUNDS.length - 1;
+ var isFinalRound = index === rounds.length - 1;
  var tier = (last.won && isFinalRound) ? round.winTier : round.loseTier;
  var label = isFinalRound ? ((last.won ? 'Won ' : 'Lost ') + round.label) : ((last.won ? 'Advanced past ' : 'Lost ') + round.label);
  return { tier: tier, label: label };
 }
 
-// NCAAF: mostly the same furthest-round-reached semantics as NCAAB, with
-// one deviation — the Quarterfinal round ("BCS Bowl") assigns a different
-// tier for winning (3) vs. losing (2) it, since the real bonus rule does
-// (see file header). A game that doesn't classify as a CFP round at all
-// is a non-playoff bowl appearance: won → 1 point (the "Other Bowl" tier),
-// lost → 0 — both confidently resolved, not left as "no signal".
+function computeNCAABTier(games) {
+ return computeBracketTier(games, NCAAB_ROUNDS);
+}
+
+// NCAAF: the same bracket resolution as NCAAB, plus a fallback for a team
+// that missed the CFP bracket entirely — "last postseason game's text
+// isn't a CFP round at all" (no "College Football Playoff" prefix, per
+// the verified note-headline format in the file header): won → 1 point
+// (the "Other Bowl" tier), lost → 0 — both confidently resolved, not left
+// as "no signal". A game whose text IS CFP-prefixed but doesn't match any
+// round keyword returns null instead of guessing Other Bowl — a
+// round-name wording these keywords don't recognize is a real "can't
+// confidently classify" case, not evidence of a non-playoff bowl.
 function computeNCAAFTier(games) {
+ var bracketResult = computeBracketTier(games, NCAAF_ROUNDS);
+ if (bracketResult) return bracketResult;
  if (!games || games.length === 0) return null;
  var last = games[games.length - 1];
- var classified = classifyRound(last.text, NCAAF_ROUNDS);
- if (classified) {
-  var index = classified.index, round = classified.round;
-  var isFinalRound = index === NCAAF_ROUNDS.length - 1;
-  var isQuarterfinal = round.label === 'CFP Quarterfinal';
-  if (isFinalRound || isQuarterfinal) {
-   var tier = last.won ? round.winTier : round.loseTier;
-   var label = (last.won ? 'Won ' : 'Lost ') + round.label;
-   return { tier: tier, label: label };
-  }
-  return { tier: round.loseTier, label: (last.won ? 'Advanced past ' : 'Lost ') + round.label };
- }
- // Unclassified text: only treat this as a non-playoff "Other Bowl"
- // appearance when it's positively NOT a CFP game (no "College Football
- // Playoff" prefix at all, per the verified note-headline format — see
- // file header) — a CFP round ESPN worded in a way our keywords missed is
- // a real "can't confidently classify" case, not evidence of Other Bowl,
- // so that returns null (no guess) rather than a wrong 0 or 1.
  if ((last.text || '').toLowerCase().indexOf('college football playoff') !== -1) return null;
  var bowlName = last.noteHeadline || 'Bowl Game';
  return last.won ? { tier: 1, label: 'Won ' + bowlName } : { tier: 0, label: 'Lost ' + bowlName };

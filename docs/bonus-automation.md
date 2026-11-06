@@ -32,16 +32,18 @@ NCAAF/NCAAB bowl and tournament bonus were flagged as not worth automating
 in an earlier pass (`docs/projections-feature-plan.md`, written against the
 old pre-2024 two-bowl NCAAF system, where "BCS Bowl" really did mean an
 arbitrary named list) — that reasoning doesn't hold in the 12-team CFP era.
-"BCS Bowl" in the current `CATEGORY_BONUS_RULES.NCAAF` ("10:Win Natl Champ |
-7:Lose Natl Champ | 5:Lose Semi | 3:Win BCS Bowl | 2:Lose BCS Bowl | 1:Win
-Other Bowl") means a CFP Quarterfinal specifically — the quarterfinals are
-always hosted at a fixed rotating pool of New Year's Six bowls — which is
-structurally bracket-shaped and classifiable the same way the five sports in
-`update-sports.js` already are. Only the "1:Win Other Bowl" tier (a team
-that missed the CFP bracket entirely) is a flat game result rather than
-bracket depth, and that's still gettable from the same per-team postseason
-schedule call. See "NCAAF/NCAAB bowl & tournament bonus" below for the full
-design.
+The current `CATEGORY_BONUS_RULES.NCAAF` is now
+`"10:Win Natl Champ | 7:Lose Natl Champ | 5:Lose Semi | 3:Lose QF | 2:Lose
+1st Rd | 1:Win Other Bowl"` — every CFP round follows the exact same
+furthest-round-reached pattern as NCAAB and the five sports in
+`update-sports.js` (one tier per round regardless of whether that specific
+game was won or lost; only the championship distinguishes a win from a
+loss), with "Lose 1st Rd" explicitly scored this time (evergreen to a
+future 16-team CFP expansion too, since this classifies by round NAME, not
+bracket size). Only the "1:Win Other Bowl" tier (a team that missed the CFP
+bracket entirely) is a flat game result rather than bracket depth, and
+that's still gettable from the same per-team postseason schedule call. See
+"NCAAF/NCAAB bowl & tournament bonus" below for the full design.
 
 ## Oscar/Grammy: Wikipedia, not Wikidata — and not `update-projections.js`
 
@@ -132,29 +134,36 @@ copy of the playoff-bracket pattern per cron file, same as Oscar/Grammy's
 file-local wikitext parser duplicated between `update-entertainment.js` and
 `update-billboard.js`.
 
-**NCAAB** is a clean copy of `update-sports.js`'s furthest-round-reached
-semantics: Round of 32 → Sweet 16 → Elite 8 → Final Four → National
-Championship, each round's tier the same whether the team won or lost that
-specific game (except the Championship, which is the only round where
-win/lose differ) — single-elimination bracket, no special cases.
+**NCAAB and NCAAF now share one resolver** (`computeBracketTier`, called
+by both `computeNCAABTier` and `computeNCAAFTier`) — both brackets follow
+the exact same furthest-round-reached semantics as the five sports in
+`update-sports.js`: every round's tier is the same whether the team won or
+lost that specific game, except the Championship, the only round where a
+win and a loss differ (10 vs. 7). This wasn't true of an earlier version
+of this change: the NCAAF bonus rule was initially read as giving the CFP
+Quarterfinal its own win-vs-loss split (3 vs. 2), which turned out to be
+based on the *old* pre-2024 two-bowl NCAAF rule text. The commissioner
+corrected it once the 12-team CFP changed the real rule to
+`"10:Win Natl Champ | 7:Lose Natl Champ | 5:Lose Semi | 3:Lose QF | 2:Lose
+1st Rd | 1:Win Other Bowl"` — uniform depth-based tiers like NCAAB, with
+the CFP's First Round now explicitly worth 2 (not 0, as a prior draft of
+this rule and this code both had it) and no Quarterfinal win/loss split at
+all. `CATEGORY_BONUS_RULES.NCAAF` in `categories.js` was updated to match,
+and this should hold evergreen through a future 16-team CFP expansion too,
+since classification is by round NAME, not by bracket size.
 
-**NCAAF** differs in one way the others don't: the Quarterfinal round
-("BCS Bowl" in the bonus-rule text) itself assigns a *different* point
-value for winning it (3) vs. losing it (2), not just the Championship —
-because advancing out of the CFP's 8-team quarterfinal stage is its own
-notable result, per the actual rule text. Every other round (First Round,
-Semifinal) follows the normal "same tier either way, represents depth
-reached" pattern. The CFP's First Round isn't worth any points at all
-(win or lose) — the rule's lowest explicit tier is the Quarterfinal loss —
-so that round resolves to an explicit, confident 0, not "no signal."
-
-A team whose last completed postseason game doesn't classify as a CFP round
-at all (i.e. its note text isn't one of the four CFP phrases below) means
-it missed the playoff bracket and played a plain non-playoff bowl game
-instead: win → the "1:Win Other Bowl" tier, using the bowl's own name
-(ESPN's note headline, e.g. "Pop-Tarts Bowl") as the label; loss → an
-explicit 0, same "confidently resolved, not left untouched" reasoning as
-the First Round case above.
+**NCAAF alone adds one fallback** `computeBracketTier` doesn't have: a team
+whose last completed postseason game doesn't classify as a CFP round at all
+missed the playoff bracket and played a plain non-playoff bowl game instead
+— win → the "1:Win Other Bowl" tier, using the bowl's own name (ESPN's note
+headline, e.g. "Pop-Tarts Bowl") as the label; loss → an explicit 0, not
+left untouched. This fallback only fires when the game's text positively
+does NOT contain "College Football Playoff" at all — a CFP game whose
+round-name wording these keywords simply don't recognize returns null
+(can't confidently classify) instead of guessing Other Bowl, a real bug
+Codex's review on this PR caught in an earlier version that used
+"didn't match any known CFP keyword" as the signal, which included both
+cases.
 
 **Round-name text, live-verified via Firecrawl** against the real,
 completed 2025-26 CFP (Jan 2026) and 2025-26 NCAA Tournament (Mar–Apr
@@ -180,14 +189,24 @@ resolution are deliberately decoupled: if the AP poll has no data yet
 (preseason), base is skipped but bonus resolution still runs against the
 full team list.
 
-**Concurrent brackets, filtered out:** NCAAF's `seasontype=3` scoreboard
-also returns FCS playoff games (`"FCS Championship - Quarterfinals"`, a
-different division entirely) in the same response when no `groups` filter
-is applied; NCAAB's `seasontype=3` scoreboard can likewise mix in the NIT/
-CBI. Both `fetchPostseasonExists` calls pass an explicit `groups` param
-(`80` for FBS, `100` for the NCAA Tournament) — live-verified to actually
-filter the scoreboard endpoint (confirmed zero FCS entries with `groups=80`
-on a date that had both FBS and FCS games live).
+**Bonus resolution is gated per pick, not per day.** An earlier version
+gated the whole per-team lookup on a single `fetchPostseasonExists` call to
+ESPN's day-scoped `seasontype=3` scoreboard ("does today's slate have any
+games") before spending the per-pick API calls. Codex's review on this PR
+caught that this was fragile: both sports' scoreboard endpoint rejects a
+`dates=YYYYMMDD-YYYYMMDD` range query (confirmed live — both return 400),
+and NCAAB's scoreboard is day-granular (confirmed live; NCAAF's single-date
+test happened to return a wide multi-week window, but that can't be relied
+on when `dates` is omitted) — so a single gap day between rounds, routine
+in both brackets, could make that gate report "no bracket" and skip an
+already-decided result for a run or more. The gate was removed; bonus
+resolution now runs every day for every pick, via `fetchTeamPostseasonGames`
+directly, which only ever returns that team's own completed games and has
+no day-granularity to miss. (The FCS-playoff-games/NIT-CBI concurrent-
+bracket concern this gate used to filter with `groups=80`/`groups=100` is
+moot now — a picked team is always an FBS or Division-I team, so matching
+it to its own ESPN team ID and reading its own schedule never pulls in an
+FCS or NIT game in the first place.)
 
 Like `update-sports.js`'s playoff bonus, the old date-based freeze
 (`isActive()`/`freezeDate` — Dec 9 for NCAAF, Mar 5 for NCAAB) only gates
@@ -227,10 +246,9 @@ same week/month every year:
   "current" itself sidesteps that whole class of bug.
 
 - **NCAAF/NCAAB bowl & tournament bonus** (`update-college.js`): same
-  round-NAME classification as the pro-sports bracket, gated on "does
-  ESPN's `seasontype=3` scoreboard return anything right now" for that
-  league's own `groups` filter — not a hardcoded bowl-season/tournament
-  date window.
+  round-NAME classification as the pro-sports bracket, resolved per pick
+  from that team's own postseason schedule (never empty outside a real
+  bracket) rather than any day-scoped or calendar-window check.
 
 None of these needs a yearly code edit when a race, a major, a playoff
 start date, or a bowl/CFP sponsor name shifts.
@@ -285,17 +303,17 @@ calls, not a verified live response for every endpoint added here.
   documentation), every NCAAF and NCAAB round-name string this classifies
   against was pulled live via Firecrawl from ESPN's actual completed
   2025-26 CFP and 2025-26 NCAA Tournament scoreboard responses and tested
-  directly against `computeNCAAFTier`/`computeNCAABTier` with real
-  win/loss cases (including the Quarterfinal win-vs-loss split, the
-  unscored First Round, and a non-playoff bowl appearance) — every case
-  produced the exact point value `CATEGORY_BONUS_RULES` specifies.
+  directly against the shared `computeBracketTier` resolver (via
+  `computeNCAAFTier`/`computeNCAABTier`) with real win/loss cases for every
+  round (including the now-uniform First Round, and a non-playoff bowl
+  appearance both won and lost) — every case produced the exact point
+  value the corrected `CATEGORY_BONUS_RULES.NCAAF` specifies.
   `fetchESPNTeams`'s team-list endpoint shape (`{id, name, displayName,
   abbreviation, location}` per team) was also confirmed live for both
-  sports, including that `groups=80`/`groups=100` reliably filter the
-  scoreboard endpoint to FBS-only / NCAA-Tournament-only. Not exercised
-  live: `matchTeam()` run end-to-end against this specific 700+/300+-team
-  list for one of this league's real 12 picks — the matching logic itself
-  is unchanged from the AP-rankings path already proven in production.
+  sports. Not exercised live: `matchTeam()` run end-to-end against this
+  specific 700+/300+-team list for one of this league's real 12 picks —
+  the matching logic itself is unchanged from the AP-rankings path already
+  proven in production.
 
 **On the first live run after this ships**, check the cron's logs/response
 for each of the above, specifically:
@@ -306,10 +324,12 @@ for each of the above, specifically:
    warning — that's the raw text ESPN returned that didn't match a known
    keyword; it tells you exactly what to add to `PLAYOFF_ROUNDS`/
    `NCAAF_ROUNDS`/`NCAAB_ROUNDS`/`MAJOR_NAMES`'s keyword lists if a real
-   result was missed. For NCAAF specifically, double check a real
-   Quarterfinal/Semifinal win didn't silently fall through to the
-   "Other Bowl" branch — that only happens if the round text stopped
-   containing "playoff quarterfinal"/"playoff semifinal".
+   result was missed. For NCAAF specifically, a real CFP result (First
+   Round through Championship) should never fall through to the
+   "Other Bowl" branch — `computeNCAAFTier` only does that when the text
+   has no "College Football Playoff" prefix at all, so that branch firing
+   for a team you know made the CFP means ESPN's wording changed in some
+   way that broke even that prefix check, not just a round-keyword miss.
 3. Any `Oscar: could not resolve winner for "..."` / `Grammy: could not
    resolve winner for "..."` warning, or a `"{year} ... has no resolvable
    winners yet"` log line right after a ceremony you know already aired —
