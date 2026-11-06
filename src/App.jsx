@@ -715,11 +715,18 @@ export default function App() {
     seasonPromise.then(() => {
       setLoaded(true);
       setInitialSyncPending(false);
-      // Only worth a "just now" confirmation flash if the escalated
-      // chip was actually visible for this to be resolving — a fast
-      // sync (the common case) never showed anything louder than the
-      // quiet line to begin with, so there's nothing to confirm.
-      if (syncDelayPassedRef.current) {
+      // Only worth a "just now" confirmation flash if the escalated chip
+      // was actually visible AND this resolved with a genuinely fresh
+      // Supabase result — lastSourceRef.current is set synchronously
+      // inside loadSeason() right before it returns, so it already
+      // reflects whichever of "supabase"/"local"/"hardcoded" this call
+      // actually landed on. Without that second check, a request that
+      // times out after the chip was already showing would still flash
+      // "Updated just now" over data lastUpdated has correctly stamped
+      // with its real (older) cache time — claiming freshness that
+      // isn't there, the exact mistake this whole feature exists to
+      // avoid.
+      if (syncDelayPassedRef.current && lastSourceRef.current === "supabase") {
         setJustSynced(true);
         setTimeout(() => setJustSynced(false), 2500);
       }
