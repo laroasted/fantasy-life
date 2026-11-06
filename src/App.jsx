@@ -246,6 +246,36 @@ export default function App() {
   // chance to arrive and resets it to the active season.
   const [archivedLoaded, setArchivedLoaded] = useState(false);
   const [loaded, setLoaded] = useState(() => !!readCachedActiveSeason());
+  // Whether the very first loadSeason() call for this page load (the one
+  // in the mount effect below) has resolved yet — true from mount,
+  // flipped false once, success or failure, and never touched again by a
+  // later manual refresh or realtime-triggered reload (those already have
+  // their own `refreshing` spinner on the Refresh button). This is the
+  // one genuine window where "more data is coming" is actually true: a
+  // cache-seeded first render already has something to show, but the
+  // real fetch behind it hasn't landed yet. See the status line render
+  // below and its own comment for how this gets used.
+  const [initialSyncPending, setInitialSyncPending] = useState(true);
+  // Time-gated on purpose: most visits resolve this within a fraction of
+  // a second, faster than a human reacts to anything — escalating the
+  // status line's styling immediately would just be noise for the common
+  // case. Only past this threshold does "still syncing" actually mean
+  // something worth a louder signal.
+  const [syncDelayPassed, setSyncDelayPassed] = useState(false);
+  // Mirrors syncDelayPassed for the mount effect below to read — that
+  // effect's own callback closes over this render's values once, at
+  // mount, so the state variable itself would always read as its
+  // initial `false` there regardless of how much real time has actually
+  // passed by the time the fetch resolves. A ref sidesteps that; the
+  // state above is still what drives the actual re-render.
+  const syncDelayPassedRef = useRef(false);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      syncDelayPassedRef.current = true;
+      setSyncDelayPassed(true);
+    }, 1300);
+    return () => clearTimeout(id);
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(() => {
     const cached = readCachedActiveSeason();
@@ -682,7 +712,25 @@ export default function App() {
     // archived seasons (and projections, handled inside loadSeason
     // itself) are both background enrichment that used to block this
     // same flip for no reason tied to what's actually on screen first.
-    seasonPromise.then(() => setLoaded(true));
+    seasonPromise.then(() => {
+      setLoaded(true);
+      setInitialSyncPending(false);
+      // Only worth a "just now" confirmation flash if the escalated chip
+      // was actually visible AND this resolved with a genuinely fresh
+      // Supabase result — lastSourceRef.current is set synchronously
+      // inside loadSeason() right before it returns, so it already
+      // reflects whichever of "supabase"/"local"/"hardcoded" this call
+      // actually landed on. Without that second check, a request that
+      // times out after the chip was already showing would still flash
+      // "Updated just now" over data lastUpdated has correctly stamped
+      // with its real (older) cache time — claiming freshness that
+      // isn't there, the exact mistake this whole feature exists to
+      // avoid.
+      if (syncDelayPassedRef.current && lastSourceRef.current === "supabase") {
+        setJustSynced(true);
+        setTimeout(() => setJustSynced(false), 2500);
+      }
+    });
 
     (async () => {
       const archived = await archivedPromise;
@@ -1299,17 +1347,45 @@ export default function App() {
               <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: 0 }}>
                 {draftDateStr} through {viewingYear + 1} Academy Awards
               </p>
+              {/* While a cache-seeded first paint is still waiting on the
+                  real fetch behind it (see initialSyncPending above), and
+                  only once that's taken long enough to actually notice,
+                  swap the quiet status line for a louder chip — same
+                  spinner + pill treatment validated in the design mockup
+                  for this (https://claude.ai/artifact/EFoSniEDWCpcBBGUz1t7kg):
+                  a breathing dot alone read as ambiguous/decorative, the
+                  spinner is what actually registered as "something is
+                  happening," and the compact inline footprint won over a
+                  full banner row once both had the same spinner. */}
               {lastUpdated && isViewingActive && (
-                <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                  <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
-                    background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red,
-                    animation: justSynced ? "livePulse 0.6s ease" : "none" }} />
-                  {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live") : dataSource === "local" ? "Cached" : "Offline"}
-                  {" "}· {justSynced ? "Updated just now" : "Updated " + lastUpdated.toLocaleTimeString()}
-                </p>
+                initialSyncPending && syncDelayPassed ? (
+                  <p style={{ margin: "6px 0 0", display: "flex", justifyContent: "center" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px",
+                      borderRadius: 999, border: "1px solid " + theme.bdr, background: theme.srf,
+                      fontSize: 12, fontWeight: 700, color: theme.txt }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                        style={{ flexShrink: 0, animation: "spin 1s linear infinite" }} aria-hidden="true">
+                        <circle cx="12" cy="12" r="9" stroke={theme.bdr} strokeWidth="3" />
+                        <path d="M21 12a9 9 0 0 0-9-9" stroke={theme.acc} strokeWidth="3" strokeLinecap="round" />
+                      </svg>
+                      Showing last-known scores from {lastUpdated.toLocaleTimeString()} — updating…
+                    </span>
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                    <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                      background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red,
+                      animation: justSynced ? "livePulse 0.6s ease" : "none" }} />
+                    {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live") : dataSource === "local" ? "Cached" : "Offline"}
+                    {" "}· {justSynced ? "Updated just now" : "Updated " + lastUpdated.toLocaleTimeString()}
+                  </p>
+                )
               )}
-              <style>{`@keyframes livePulse { 0% { transform: scale(1); } 45% { transform: scale(2.2); } 100% { transform: scale(1); } }`}</style>
+              <style>{`
+                @keyframes livePulse { 0% { transform: scale(1); } 45% { transform: scale(2.2); } 100% { transform: scale(1); } }
+                @keyframes spin { to { transform: rotate(360deg); } }
+              `}</style>
               {isViewingActive && (biggestRiser || biggestFaller || nextEvent) && (
                 <div style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
