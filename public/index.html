@@ -15,7 +15,24 @@
     <title>Fantasy Life Hub</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <!-- A plain <link rel="stylesheet"> here blocks first paint on a
+         third-party round-trip before the browser can render anything —
+         display=swap (in the URL below) only controls how an already-
+         loaded-but-not-yet-applied font swaps in, it doesn't stop the
+         stylesheet link itself from being render-blocking. The
+         preload-then-swap-media trick below (Filament Group's loadCSS
+         pattern, the standard fix for this) fetches it at high priority
+         without blocking rendering: media="print" makes the browser treat
+         it as a non-blocking resource, and the onload handler flips it to
+         "all" the moment it's actually loaded, applying Inter then — with
+         a <noscript> fallback for the (rare) case JS is unavailable. -->
+    <link rel="preload" as="style"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+    <link rel="stylesheet" media="print" onload="this.media='all'; this.onload=null;"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+    <noscript>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+    </noscript>
     <!-- Pinterest Tag -->
     <script>
       !function(e){if(!window.pintrk){window.pintrk = function () {

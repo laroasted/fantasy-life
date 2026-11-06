@@ -8,51 +8,76 @@
 // Mixpanel's script is commonly blocked by ad blockers / tracking
 // protection. Every exported function must stay a silent no-op when that
 // happens — tracking must never be able to break the app.
-
-import mixpanel from "mixpanel-browser";
+//
+// mixpanel-browser is dynamic-imported below (not a static top-level
+// import) so its ~30-40KB isn't sitting in the main bundle's critical
+// path — it has zero visual payoff on first paint, so it shouldn't
+// compete with real UI code for parse/eval time before the app can
+// render. A call made before that import resolves (app_loaded and
+// season_loaded both fire within the first render, well before a
+// network-fetched chunk could land) is queued and replayed in order once
+// it's ready, rather than silently dropped — dropping those would be a
+// real analytics gap, not just a harmless race.
 
 const TOKEN = process.env.REACT_APP_MIXPANEL_TOKEN;
 
+let mixpanel = null; // set once the dynamic import below resolves
 let ready = false;
+let loading = false;
+const queue = [];
+
+function enqueue(run) {
+  if (ready) { run(mixpanel); return; }
+  if (!loading) return; // initAnalytics() was never called (no token) — permanent no-op
+  queue.push(run);
+}
 
 export function initAnalytics() {
   if (!TOKEN) {
     console.warn("Mixpanel: REACT_APP_MIXPANEL_TOKEN not set, analytics disabled.");
     return;
   }
-  try {
-    mixpanel.init(TOKEN, {
-      debug: process.env.NODE_ENV !== "production",
-      autocapture: false, // manual, deliberate events only
-      track_pageview: false, // single-page tab-switcher — "tab_viewed" covers navigation
-      cross_subdomain_cookie: false,
-      ignore_dnt: false, // respect the browser's Do Not Track setting
-      persistence: "localStorage",
+  loading = true;
+  import("mixpanel-browser")
+    .then((mod) => {
+      const mp = mod.default;
+      mp.init(TOKEN, {
+        debug: process.env.NODE_ENV !== "production",
+        autocapture: false, // manual, deliberate events only
+        track_pageview: false, // single-page tab-switcher — "tab_viewed" covers navigation
+        cross_subdomain_cookie: false,
+        ignore_dnt: false, // respect the browser's Do Not Track setting
+        persistence: "localStorage",
+      });
+      mixpanel = mp;
+      ready = true;
+      queue.splice(0).forEach((run) => run(mixpanel));
+    })
+    .catch((e) => {
+      console.warn("Mixpanel: init failed, analytics disabled.", e);
     });
-    ready = true;
-  } catch (e) {
-    console.warn("Mixpanel: init failed, analytics disabled.", e);
-  }
 }
 
 export function track(eventName, properties) {
-  if (!ready) return;
-  try {
-    mixpanel.track(eventName, properties);
-  } catch (e) {
-    console.warn("Mixpanel: track failed.", eventName, e);
-  }
+  enqueue((mixpanel) => {
+    try {
+      mixpanel.track(eventName, properties);
+    } catch (e) {
+      console.warn("Mixpanel: track failed.", eventName, e);
+    }
+  });
 }
 
 // Starts a duration timer; the next track() of eventName auto-attaches a
 // $duration (seconds) property. Used for Draft Started -> Draft Finalized.
 export function timeEvent(eventName) {
-  if (!ready) return;
-  try {
-    mixpanel.time_event(eventName);
-  } catch (e) {
-    console.warn("Mixpanel: time_event failed.", eventName, e);
-  }
+  enqueue((mixpanel) => {
+    try {
+      mixpanel.time_event(eventName);
+    } catch (e) {
+      console.warn("Mixpanel: time_event failed.", eventName, e);
+    }
+  });
 }
 
 // Single entry point for identifying a signed-in person — picks exactly
@@ -70,16 +95,17 @@ export function timeEvent(eventName) {
 // so the one-time-per-sign-in bookkeeping below (login counts etc.) stays
 // in markCommissionerLogin(), gated separately, instead of repeating here.
 export function identifyPerson({ userId, email, memberId }) {
-  if (!ready) return;
   const distinctId = memberId || userId;
   if (!distinctId) return;
-  try {
-    mixpanel.identify(distinctId);
-    if (email) mixpanel.people.set({ $email: email });
-    if (memberId) mixpanel.register({ member_id: memberId });
-  } catch (e) {
-    console.warn("Mixpanel: identifyPerson failed.", e);
-  }
+  enqueue((mixpanel) => {
+    try {
+      mixpanel.identify(distinctId);
+      if (email) mixpanel.people.set({ $email: email });
+      if (memberId) mixpanel.register({ member_id: memberId });
+    } catch (e) {
+      console.warn("Mixpanel: identifyPerson failed.", e);
+    }
+  });
 }
 
 // One-time-per-sign-in-transition bookkeeping — kept separate from
@@ -88,45 +114,49 @@ export function identifyPerson({ userId, email, memberId }) {
 // commissioner_login_count on every re-render that touches identity, not
 // just on an actual new sign-in).
 export function markCommissionerLogin(role) {
-  if (!ready) return;
-  try {
-    mixpanel.people.set({ role: role || "commissioner" });
-    mixpanel.people.set_once({ first_commissioner_login: new Date().toISOString() });
-    mixpanel.people.set({ last_commissioner_login: new Date().toISOString() });
-    mixpanel.people.increment("commissioner_login_count", 1);
-    mixpanel.register({ is_commissioner: true });
-  } catch (e) {
-    console.warn("Mixpanel: markCommissionerLogin failed.", e);
-  }
+  enqueue((mixpanel) => {
+    try {
+      mixpanel.people.set({ role: role || "commissioner" });
+      mixpanel.people.set_once({ first_commissioner_login: new Date().toISOString() });
+      mixpanel.people.set({ last_commissioner_login: new Date().toISOString() });
+      mixpanel.people.increment("commissioner_login_count", 1);
+      mixpanel.register({ is_commissioner: true });
+    } catch (e) {
+      console.warn("Mixpanel: markCommissionerLogin failed.", e);
+    }
+  });
 }
 
 export function resetIdentity() {
-  if (!ready) return;
-  try {
-    mixpanel.register({ is_commissioner: false });
-    mixpanel.unregister("member_id");
-    mixpanel.reset();
-  } catch (e) {
-    console.warn("Mixpanel: reset failed.", e);
-  }
+  enqueue((mixpanel) => {
+    try {
+      mixpanel.register({ is_commissioner: false });
+      mixpanel.unregister("member_id");
+      mixpanel.reset();
+    } catch (e) {
+      console.warn("Mixpanel: reset failed.", e);
+    }
+  });
 }
 
 export function setDeviceTypeSuperProperty(isMobile) {
-  if (!ready) return;
-  try {
-    mixpanel.register({ device_type: isMobile ? "mobile" : "desktop" });
-  } catch (e) {
-    console.warn("Mixpanel: setDeviceTypeSuperProperty failed.", e);
-  }
+  enqueue((mixpanel) => {
+    try {
+      mixpanel.register({ device_type: isMobile ? "mobile" : "desktop" });
+    } catch (e) {
+      console.warn("Mixpanel: setDeviceTypeSuperProperty failed.", e);
+    }
+  });
 }
 
 export function setSeasonSuperProperties({ year, dataSource }) {
-  if (!ready) return;
-  try {
-    mixpanel.register({ season_year: year, data_source: dataSource });
-  } catch (e) {
-    console.warn("Mixpanel: setSeasonSuperProperties failed.", e);
-  }
+  enqueue((mixpanel) => {
+    try {
+      mixpanel.register({ season_year: year, data_source: dataSource });
+    } catch (e) {
+      console.warn("Mixpanel: setSeasonSuperProperties failed.", e);
+    }
+  });
 }
 
 // ─── Event name constants ───

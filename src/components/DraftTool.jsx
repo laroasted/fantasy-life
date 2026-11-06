@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import { AlertTriangle, Target, Users, Shuffle, Trophy, Pencil, Rocket, History as HistoryIcon, PartyPopper, Download, BarChart3, Eye, XCircle } from "lucide-react";
 import { DRAFT_MEMBERS, MEMBER_COLORS, NEW_MEMBER_COLORS } from "../constants/members";
 import { DRAFT_CATEGORIES, CATEGORY_ORDER, CATEGORY_KEY_TO_ID } from "../constants/categories";
@@ -54,6 +54,66 @@ async function reconcileAfterFailedSave(setLiveSession) {
   const real = await fetchDraftSession();
   setLiveSession(real);
 }
+
+// The "On The Clock" card, isolated into its own component specifically
+// so the 1Hz tick that drives a live session's countdown display (below)
+// re-renders just these few lines instead of the entire draft board,
+// roster panel, and pick history alongside it every second. Everything
+// here that isn't the tick itself (member, canControlTimer, the handlers)
+// is still owned by DraftTool — this only pulls out the part that
+// genuinely needs to update every second.
+const DraftCountdown = memo(function DraftCountdown({
+  liveSession, clockOffsetRef, member, isMobile, canControlTimer, currentPick,
+  pickCount, timer, timerActive, onPause, onStart, onReset, onUndo,
+}) {
+  // Local-only tick for a live session's countdown display — only runs
+  // while a live timer is actually active, and never writes anything;
+  // see computeLiveRemaining() above.
+  const [liveNow, setLiveNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!liveSession || !liveSession.timer_active) return;
+    const id = setInterval(() => setLiveNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [liveSession && liveSession.timer_active, liveSession && liveSession.timer_started_at]);
+
+  const displayTimerActive = liveSession ? !!liveSession.timer_active : timerActive;
+  const displayTimer = liveSession ? computeLiveRemaining(liveSession, liveNow + clockOffsetRef.current) : timer;
+
+  return (
+    <div style={{ ...cardStyle, marginBottom: 16, textAlign: "center",
+      border: `2px solid ${MEMBER_COLORS[member ? member.id : ""] || theme.acc}` }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, textTransform: "uppercase",
+        letterSpacing: 1, marginBottom: isMobile ? 4 : 8 }}>
+        On The Clock · Pick #{currentPick + 1}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+        marginBottom: isMobile ? 8 : 12 }}>
+        {member && <Avatar name={member.name} color={MEMBER_COLORS[member.id]} size={isMobile ? 28 : 34} />}
+        <span style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800,
+          color: MEMBER_COLORS[member ? member.id : ""] }}>
+          {member ? member.name : ""}
+        </span>
+      </div>
+      <div style={{ fontSize: isMobile ? 36 : 48, fontWeight: 800, fontFamily: "monospace",
+        color: displayTimer <= 15 ? theme.red : displayTimer <= 30 ? theme.yel : theme.txt, marginBottom: 8 }}>
+        {Math.floor(displayTimer / 60)}:{String(displayTimer % 60).padStart(2, "0")}
+      </div>
+      {canControlTimer && (
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+          {displayTimerActive
+            ? <button onClick={onPause} style={buttonStyle(theme.yel)}>⏸ Pause</button>
+            : <button onClick={onStart} style={buttonStyle(theme.grn)}>▶ Start</button>}
+          <button onClick={onReset}
+            style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↻ Reset</button>
+          {pickCount > 0 && (
+            <button onClick={onUndo}
+              style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↩ Undo</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
 
 export default function DraftTool({ onFinalize, isCommissioner, commissionerEmail, memberId, currentSeasonYear, currentSeasonMembers }) {
   const [phase, setPhase] = useState("setup");
@@ -186,15 +246,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     };
   }, []);
 
-  // Local-only tick for a live session's countdown display — only runs
-  // while a live timer is actually active, and never writes anything;
-  // see computeLiveRemaining() above.
-  const [liveNow, setLiveNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!liveSession || !liveSession.timer_active) return;
-    const id = setInterval(() => setLiveNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [liveSession && liveSession.timer_active, liveSession && liveSession.timer_started_at]);
+  // The 1Hz tick for a live session's countdown display now lives inside
+  // DraftCountdown itself (below), not here — see that component's own
+  // comment for why.
 
   // Seed the finalize screen's season-name input from the resumed
   // session — otherwise a commissioner who refreshes (or opens a second
@@ -231,7 +285,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   }, []);
 
   // Local mock-draft timer only — a live session's countdown is derived
-  // (see computeLiveRemaining/liveNow above), never ticked via setState.
+  // inside DraftCountdown itself (computeLiveRemaining/liveNow there),
+  // never ticked via setState in this component.
   useEffect(() => {
     if (liveSession) return;
     if (timerActive && timer > 0) {
@@ -349,8 +404,6 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // to guard there, and giving every member clock control would just
   // invite collisions over who's allowed to pause whose turn).
   const canControlTimer = !liveSession || isCommissioner;
-  const displayTimerActive = liveSession ? !!liveSession.timer_active : timerActive;
-  const displayTimer = liveSession ? computeLiveRemaining(liveSession, liveNow + clockOffsetRef.current) : timer;
   const headerSeasonLabel = liveSession ? liveSession.season_name : seasonName;
 
   const isComplete = effective.snakeOrder.length > 0 && effective.currentPick >= effective.snakeOrder.length;
@@ -432,14 +485,20 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     makingPickRef.current = true;
     const key = member.id + "-" + catId;
     const expectedPick = effective.currentPick;
+    // Computed fresh here, not from render-time state — the countdown
+    // display's own 1Hz tick lives inside DraftCountdown now, not in this
+    // component, so there's no per-second-fresh value sitting in scope to
+    // read; this is the same pattern already used elsewhere in this file
+    // (see the two computeLiveRemaining() calls below) for exactly that
+    // reason.
     track(EVENTS.DRAFT_PICK_MADE, {
       pick_number: effective.currentPick + 1,
       round: effective.snakeOrder[effective.currentPick] ? effective.snakeOrder[effective.currentPick].round + 1 : null,
       category: DRAFT_ID_TO_CATEGORY_KEY[catId] || catId,
       member_id: member.id,
       is_custom_pick: !!isCustom,
-      seconds_remaining: displayTimer,
-      is_timer_active: displayTimerActive,
+      seconds_remaining: liveSession ? computeLiveRemaining(liveSession, Date.now() + clockOffsetRef.current) : timer,
+      is_timer_active: liveSession ? !!liveSession.timer_active : timerActive,
     });
     setSelectedCategory(null); setSearchFilter(""); setCustomInput(""); setPickError("");
     if (isMobile) setMobilePanel("draft");
@@ -1053,39 +1112,23 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         </div>
       ) : (
         <div>
-          {/* On the clock */}
-          <div style={{ ...cardStyle, marginBottom: 16, textAlign: "center",
-            border: `2px solid ${MEMBER_COLORS[member ? member.id : ""] || theme.acc}` }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, textTransform: "uppercase",
-              letterSpacing: 1, marginBottom: isMobile ? 4 : 8 }}>
-              On The Clock · Pick #{effective.currentPick + 1}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-              marginBottom: isMobile ? 8 : 12 }}>
-              {member && <Avatar name={member.name} color={MEMBER_COLORS[member.id]} size={isMobile ? 28 : 34} />}
-              <span style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800,
-                color: MEMBER_COLORS[member ? member.id : ""] }}>
-                {member ? member.name : ""}
-              </span>
-            </div>
-            <div style={{ fontSize: isMobile ? 36 : 48, fontWeight: 800, fontFamily: "monospace",
-              color: displayTimer <= 15 ? theme.red : displayTimer <= 30 ? theme.yel : theme.txt, marginBottom: 8 }}>
-              {Math.floor(displayTimer / 60)}:{String(displayTimer % 60).padStart(2, "0")}
-            </div>
-            {canControlTimer && (
-              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-                {displayTimerActive
-                  ? <button onClick={handleTimerPause} style={buttonStyle(theme.yel)}>⏸ Pause</button>
-                  : <button onClick={handleTimerStart} style={buttonStyle(theme.grn)}>▶ Start</button>}
-                <button onClick={handleTimerReset}
-                  style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↻ Reset</button>
-                {effective.pickHistory.length > 0 && (
-                  <button onClick={undoPick}
-                    style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↩ Undo</button>
-                )}
-              </div>
-            )}
-          </div>
+          {/* On the clock — see DraftCountdown's own comment for why this
+              is a separate component rather than inline JSX here. */}
+          <DraftCountdown
+            liveSession={liveSession}
+            clockOffsetRef={clockOffsetRef}
+            member={member}
+            isMobile={isMobile}
+            canControlTimer={canControlTimer}
+            currentPick={effective.currentPick}
+            pickCount={effective.pickHistory.length}
+            timer={timer}
+            timerActive={timerActive}
+            onPause={handleTimerPause}
+            onStart={handleTimerStart}
+            onReset={handleTimerReset}
+            onUndo={undoPick}
+          />
 
           {/* Category selection — commissioner, local mock, or (now)
               whoever's actually on the clock; a spectator watching
