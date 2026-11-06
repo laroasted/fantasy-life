@@ -18,6 +18,17 @@
 -- which member is the biggest riser/faller from the returned per-member
 -- deltas stays a client-side reduce, same as before — this RPC just
 -- supplies the numbers, not the "which one counts as a mover" judgment.
+--
+-- Only returns members present in the LATEST snapshot (latest_total is
+-- not null below) — matching the original JS, which only ever iterated
+-- Object.keys(latest). score_history rows key off season_year + member_id,
+-- not picks, so a same-year re-draft with a changed roster (see
+-- DraftTool.jsx's pre-flight check around the "already has N picks"
+-- error) can leave a departed member's OLD rows sitting in a prior
+-- snapshot with nothing in any snapshot taken after the re-draft.
+-- Without this filter, that member's missing latest total coalesces to
+-- 0 and their old score gets reported as a drop for someone who isn't
+-- even in the league anymore.
 create or replace function public.biggest_score_movers(p_season_year integer)
 returns table (member_id text, delta numeric)
 language sql
@@ -63,11 +74,12 @@ as $$
   )
   select
     t.member_id,
-    round(coalesce(t.latest_total, 0) - coalesce(t.baseline_total, 0), 2) as delta
+    round(t.latest_total - coalesce(t.baseline_total, 0), 2) as delta
   from totals t, latest l, baseline b
   where l.latest_date is not null
     and b.baseline_date is not null
     and l.latest_date is distinct from b.baseline_date
+    and t.latest_total is not null
 $$;
 
 grant execute on function public.biggest_score_movers(integer) to anon, authenticated;
