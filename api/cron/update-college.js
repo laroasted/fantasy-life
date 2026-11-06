@@ -1,10 +1,73 @@
 /**
-* Fantasy Life — NCAAF & NCAAB AP Rankings Updater
+* Fantasy Life — NCAAF & NCAAB AP Rankings + Bowl/Tournament Bonus Updater
 * Respects commissioner locks from seasons.locks column.
 *
 * Tiebreaker: players with the same AP points split/average the base
 * points they collectively occupy.
 * e.g. 3-way tie for ranks 2–4 out of 12 = (11+10+9)/3 = 10.0 each
+*
+* FIX (2026-11) — Automated bowl/tournament bonus
+*   Bonus used to be commissioner-only manual entry (Settings → Scores &
+*   Bonus). Now resolved from ESPN's own postseason schedule data for each
+*   picked team, same vendor already trusted for base scoring — mirrors
+*   update-sports.js's playoff-bracket bonus (PLAYOFF_ROUNDS/classifyRound/
+*   fetchTeamPostseasonGames/computePlayoffTier), rewritten file-local per
+*   this repo's no-shared-lib-between-crons convention, with two
+*   differences specific to college:
+*
+*   1. NCAAB's bracket (Round of 32 → Sweet 16 → Elite 8 → Final Four →
+*      National Championship) is a clean single-elimination tree, exactly
+*      like the five sports in update-sports.js — same "furthest-round-
+*      reached, same tier whether won or lost" semantics for every round
+*      but the championship.
+*
+*   2. NCAAF's bonus rule — "10:Win Natl Champ | 7:Lose Natl Champ |
+*      5:Lose Semi | 3:Lose QF | 2:Lose 1st Rd | 1:Win Other Bowl" — is the
+*      CFP era version (12 teams as of 2026, evergreen to a future
+*      expansion since this classifies by round NAME, not bracket size).
+*      Unlike an earlier draft of this file, every CFP round now follows
+*      the exact same "furthest-round-reached, same tier whether won or
+*      lost" semantics as NCAAB and the five sports in update-sports.js —
+*      there's no special-cased win/lose split on any one round anymore.
+*      The "1:Win Other Bowl" tier is a team that missed the CFP bracket
+*      entirely but won its assigned non-playoff bowl — detected as "last
+*      postseason game's text isn't a CFP round at all" (no "College
+*      Football Playoff" prefix), using the bowl's own name (ESPN's note
+*      headline) as the label; a non-playoff bowl LOSS resolves to an
+*      explicit 0, not left untouched — a known, classified outcome, not
+*      an unclassifiable guess. An unclassified game that IS CFP-prefixed
+*      (a round-name wording this file's keywords don't recognize) returns
+*      null instead of guessing Other Bowl — see computeNCAAFTier.
+*
+*   Round-name keywords verified live via Firecrawl against the actual
+*   completed 2025-26 CFP (Jan 2026) and 2025-26 NCAA tournament (Mar/Apr
+*   2026) note-headline text — see docs/bonus-automation.md. Evergreen by
+*   design: matched by what ESPN calls the round this year. Bonus
+*   resolution is gated per PICK, by that team's own postseason schedule
+*   (fetchTeamPostseasonGames) actually having a completed game — not by a
+*   day-scoped scoreboard query. An earlier version gated on "does today's
+*   seasontype=3 scoreboard slate return anything," which Codex's review on
+*   this PR caught as a real bug: both sports' scoreboard endpoint rejects a
+*   date-range query (confirmed live — both return 400), and NCAAB's
+*   endpoint is day-granular (confirmed live, unlike NCAAF's), so a single
+*   gap day between rounds — routine in both brackets — could make that
+*   check report "no bracket" and skip an already-decided result for a run
+*   or more. A per-team schedule lookup has no such gap: it just returns
+*   whatever that team has actually played, any day it's called.
+*
+*   Team IDs (needed for the per-team schedule lookup) come from a
+*   SEPARATE full-roster endpoint (fetchESPNTeams), not the AP rankings
+*   endpoint used for base scoring — the AP poll only lists ranked teams,
+*   and an unranked team can still win a bowl game. The two fetches are
+*   independent on purpose: if the AP poll endpoint has no data yet (e.g.
+*   preseason), base scoring is skipped but bonus resolution still runs.
+*
+*   Like update-sports.js's FIX 8, the old `isActive()` freeze-date early-
+*   `continue` (Dec 9 for NCAAF, Mar 5 for NCAAB) has been replaced with a
+*   `baseFrozen` flag that only gates base/metric/record writes — bowl
+*   season and the NCAA tournament both run well past those dates, so
+*   bonus resolution must not be skipped just because base is frozen.
+*   Auto-lock is NOT added here — out of scope for this change.
 */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -17,12 +80,156 @@ const COLLEGE_LEAGUES = {
  NCAAF: {
   url: 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings',
   activeStart: { month: 8, day: 15 }, freezeDate: { month: 12, day: 9 },
+  sport: 'football', league: 'college-football',
  },
  NCAAB: {
   url: 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/rankings',
   activeStart: { month: 11, day: 1 }, freezeDate: { month: 3, day: 5 },
+  sport: 'basketball', league: 'mens-college-basketball',
  },
 };
+
+// ═══════════════════════════════════════════════════════════════════════
+// BOWL / TOURNAMENT BONUS — matched by ROUND NAME, never by calendar date.
+// `keywords` are matched case-insensitively against whatever free text
+// ESPN attaches to a postseason game (event name/shortName + any
+// `notes[].headline`). Verified live (see file header) against:
+//   NCAAF: "College Football Playoff First Round Game" /
+//          "College Football Playoff Quarterfinal at the <Bowl>" /
+//          "College Football Playoff Semifinal at the <Bowl>" /
+//          "College Football Playoff National Championship Presented by <Sponsor>"
+//   NCAAB: "NCAA Men's Basketball Championship - <Region> - 1st Round" /
+//          "... - 2nd Round" / "... - Sweet 16" / "... - Elite 8" /
+//          "... - Final Four" / "... - National Championship"
+// ═══════════════════════════════════════════════════════════════════════
+const NCAAF_ROUNDS = [
+ { label: 'CFP First Round', keywords: ['playoff first round'], loseTier: 2 },
+ { label: 'CFP Quarterfinal', keywords: ['playoff quarterfinal'], loseTier: 3 },
+ { label: 'CFP Semifinal', keywords: ['playoff semifinal'], loseTier: 5 },
+ { label: 'National Championship', keywords: ['national championship'], winTier: 10, loseTier: 7 },
+];
+
+const NCAAB_ROUNDS = [
+ { label: 'First Four', keywords: ['first four'], loseTier: 0 },
+ { label: 'Round of 64', keywords: ['1st round'], loseTier: 0 },
+ { label: 'Round of 32', keywords: ['2nd round'], loseTier: 1 },
+ { label: 'Sweet 16', keywords: ['sweet 16'], loseTier: 2 },
+ { label: 'Elite 8', keywords: ['elite 8'], loseTier: 3 },
+ { label: 'Final Four', keywords: ['final four'], loseTier: 5 },
+ { label: 'National Championship', keywords: ['national championship'], winTier: 10, loseTier: 7 },
+];
+
+// Finds the most-advanced round whose keywords appear in `text`. Checked
+// from the championship round backwards — same as update-sports.js.
+function classifyRound(text, rounds) {
+ var lower = (text || '').toLowerCase();
+ for (var i = rounds.length - 1; i >= 0; i--) {
+  if (rounds[i].keywords.some(function(k) { return lower.indexOf(k) !== -1; })) return { index: i, round: rounds[i] };
+ }
+ return null;
+}
+
+// Every team in the league (not just AP-ranked ones) — needed to resolve
+// an espnTeamId for the per-team schedule lookup below, since an unranked
+// team can still win a bowl game. Independent of fetchAPRankings on
+// purpose (see file header) — same {id, teamName, displayName,
+// abbreviation, location} shape matchTeam() already expects, so it's
+// reused as-is against this list.
+async function fetchESPNTeams(sport, league) {
+ try {
+  var url = 'https://site.api.espn.com/apis/site/v2/sports/' + sport + '/' + league + '/teams?limit=1000';
+  var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) return null;
+  var data = await res.json();
+  var teams = data?.sports?.[0]?.leagues?.[0]?.teams || [];
+  var out = [];
+  for (var t of teams) {
+   var team = t.team || {};
+   if (!team.id) continue;
+   out.push({ id: team.id, teamName: team.name || '', displayName: team.displayName || '', abbreviation: team.abbreviation || '', location: team.location || '' });
+  }
+  return out.length > 0 ? out : null;
+ } catch (err) { console.error(' ' + league + ': team list fetch error — ' + err.message); return null; }
+}
+
+// One team's completed postseason games, oldest first. `noteHeadline` is
+// kept separate from the broader `text` classification blob — it's the
+// clean bowl-game name used for NCAAF's "Other Bowl" label when a game
+// doesn't classify as a CFP round. Never throws.
+async function fetchTeamPostseasonGames(sport, league, teamId) {
+ try {
+  var url = 'https://site.api.espn.com/apis/site/v2/sports/' + sport + '/' + league + '/teams/' + teamId + '/schedule?seasontype=3';
+  var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+  if (!res.ok) return [];
+  var data = await res.json();
+  var events = data?.events || [];
+  return events.map(function(e) {
+   var comp = e?.competitions?.[0];
+   var statusObj = comp?.status || e?.status;
+   var completed = !!statusObj?.type?.completed;
+   var competitor = (comp?.competitors || []).find(function(c) { return String(c?.team?.id ?? c?.id) === String(teamId); });
+   var won = !!competitor?.winner;
+   var notes = comp?.notes || [];
+   var noteHeadline = notes[0]?.headline || '';
+   var textParts = [e?.name, e?.shortName, e?.week?.text].concat(notes.map(function(n) { return n?.headline; })).filter(Boolean);
+   var dateMs = e?.date ? new Date(e.date).getTime() : 0;
+   return { completed: completed, won: won, text: textParts.join(' | '), noteHeadline: noteHeadline, dateMs: dateMs };
+  }).filter(function(g) { return g.completed; }).sort(function(a, b) { return a.dateMs - b.dateMs; });
+ } catch (err) { console.error('  Team schedule fetch failed for team ' + teamId + ':', err.message); return []; }
+}
+
+// Shared furthest-round-reached resolution for both brackets — every round
+// but the championship uses the same tier whether the team won or lost
+// that specific game (the number represents "survived to this depth");
+// only the final round distinguishes a win from a loss. Returns null (no
+// change) if the last completed game's round can't be confidently
+// classified against the given `rounds` table.
+function computeBracketTier(games, rounds) {
+ if (!games || games.length === 0) return null;
+ var last = games[games.length - 1];
+ var classified = classifyRound(last.text, rounds);
+ if (!classified) return null;
+ var index = classified.index, round = classified.round;
+ var isFinalRound = index === rounds.length - 1;
+ var tier = (last.won && isFinalRound) ? round.winTier : round.loseTier;
+ var label = isFinalRound ? ((last.won ? 'Won ' : 'Lost ') + round.label) : ((last.won ? 'Advanced past ' : 'Lost ') + round.label);
+ return { tier: tier, label: label };
+}
+
+function computeNCAABTier(games) {
+ return computeBracketTier(games, NCAAB_ROUNDS);
+}
+
+// NCAAF: the same bracket resolution as NCAAB, plus a fallback for a team
+// that missed the CFP bracket entirely — won → 1 point (the "Other Bowl"
+// tier), lost → 0 — both confidently resolved, not left as "no signal".
+// This fires only when BOTH hold: the note headline has no "College
+// Football Playoff" prefix (rules out a real CFP game whose round wording
+// these keywords don't recognize — every CFP quarterfinal/semifinal is
+// itself hosted AT a bowl venue, e.g. "College Football Playoff
+// Quarterfinal at the Rose Bowl Presented by Prudential", so checking for
+// "Bowl" alone would wrongly let an unrecognized CFP round through just
+// because its venue name contains the word) AND the headline contains
+// "Bowl" (rules out an FCS playoff game via a custom/manual pick resolving
+// to an FCS program — fetchESPNTeams isn't division-filtered — whose note,
+// e.g. "FCS Championship - Quarterfinals", has neither signal). Getting
+// both of these right took three rounds of Codex review on this PR: first
+// using "not matched to any round" alone (too broad — guessed Other Bowl
+// for any unrecognized CFP round), then "no CFP prefix" alone (missed the
+// FCS case), then "contains Bowl" alone (missed the CFP-venue-name case
+// this fixes). Only the combination of both is a positive, non-guessing
+// identification of an actual non-playoff bowl game.
+function computeNCAAFTier(games) {
+ var bracketResult = computeBracketTier(games, NCAAF_ROUNDS);
+ if (bracketResult) return bracketResult;
+ if (!games || games.length === 0) return null;
+ var last = games[games.length - 1];
+ var headline = (last.noteHeadline || '').toLowerCase();
+ if (headline.indexOf('college football playoff') !== -1) return null;
+ if (headline.indexOf('bowl') === -1) return null;
+ var bowlName = last.noteHeadline;
+ return last.won ? { tier: 1, label: 'Won ' + bowlName } : { tier: 0, label: 'Lost ' + bowlName };
+}
 
 const NAME_ALIASES = { 'Ole Miss': 'Mississippi', 'SMU': 'SMU Mustangs', 'LSU': 'LSU Tigers', 'UCLA': 'UCLA Bruins', 'USC': 'USC Trojans', 'BYU': 'BYU Cougars', 'TCU': 'TCU Horned Frogs' };
 
@@ -119,30 +326,59 @@ module.exports = async function handler(req, res) {
  for (var [league, config] of Object.entries(COLLEGE_LEAGUES)) {
   console.log('Processing ' + league + '...');
 
-  if (!isActive(config)) {
+  // Base scoring can be frozen for the season (offseason / past the
+  // freeze date) while the bowl/tournament bracket that bonus depends on
+  // is still live weeks later — so a frozen base no longer skips the
+  // league entirely; it only skips the base/metric/record writes below.
+  // Bonus resolution always runs. See file header.
+  var baseFrozen = !isActive(config);
+  if (baseFrozen) {
    var freezeStr = config.freezeDate.month + '/' + config.freezeDate.day;
-   console.log(' ' + league + ': Frozen (past ' + freezeStr + ')');
-   results[league] = { status: 'frozen', reason: 'Past freeze date (' + freezeStr + ')' };
-   continue;
+   console.log(' ' + league + ': Past ' + freezeStr + ' — base frozen, bonus still evaluated');
   }
 
   var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', seasonYear).eq('category', league);
   if (pickErr || !picks || picks.length === 0) { results[league] = { status: 'skipped', reason: 'no picks' }; continue; }
 
+  // Independent of bonus resolution below — the AP poll can have no data
+  // yet (preseason) without that blocking bowl/tournament bonus.
   var espnTeams = await fetchAPRankings(league, config);
-  if (!espnTeams) { results[league] = { status: 'skipped', reason: 'no ESPN data' }; continue; }
-
-  console.log(' ' + league + ': Found ' + espnTeams.length + ' ranked teams');
-
-  var matched = [];
-  for (var pick of picks) {
-   var espnTeam = matchTeam(pick.pick, espnTeams);
-   matched.push({ ...pick, espnTeam: espnTeam ? espnTeam.displayName : null, apRank: espnTeam ? espnTeam.rank : 'Unranked', apPoints: espnTeam ? espnTeam.apPoints : 0 });
+  var matched;
+  if (espnTeams) {
+   console.log(' ' + league + ': Found ' + espnTeams.length + ' ranked teams');
+   matched = [];
+   for (var pick of picks) {
+    var espnTeam = matchTeam(pick.pick, espnTeams);
+    matched.push({ ...pick, espnTeam: espnTeam ? espnTeam.displayName : null, apRank: espnTeam ? espnTeam.rank : 'Unranked', apPoints: espnTeam ? espnTeam.apPoints : 0 });
+   }
+   matched.sort(function(a, b) { return b.apPoints - a.apPoints; });
+   matched = assignBasePointsWithTiebreaker(matched, picks.length);
+  } else {
+   console.log(' ' + league + ': No AP data — base unchanged, bonus still evaluated');
+   matched = picks.map(function(p) { return { ...p, espnTeam: null, apRank: 'Unranked', apPoints: 0, newBase: p.base, rank: 0 }; });
   }
 
-  // Sort descending by apPoints, then apply tiebreaker
-  matched.sort(function(a, b) { return b.apPoints - a.apPoints; });
-  matched = assignBasePointsWithTiebreaker(matched, picks.length);
+  // ── Bowl/tournament bonus resolution (see NCAAF_ROUNDS/NCAAB_ROUNDS above) ──
+  // Gated per pick by that team's own postseason schedule actually having a
+  // completed game — not by a day-scoped scoreboard slate (see file header
+  // for why; Codex review finding on this PR). The extra per-team calls run
+  // every day, not just in-season — each resolves to an empty game list in
+  // well under a second during the offseason, same cost class as the base
+  // AP-rankings fetch already does unconditionally above.
+  var bonusByPickId = {};
+  var fullTeams = await fetchESPNTeams(config.sport, config.league);
+  if (fullTeams) {
+   for (var m of matched) {
+    var teamMatch = matchTeam(m.pick, fullTeams);
+    if (!teamMatch || !teamMatch.id) continue;
+    var games = await fetchTeamPostseasonGames(config.sport, config.league, teamMatch.id);
+    var result = league === 'NCAAF' ? computeNCAAFTier(games) : computeNCAABTier(games);
+    if (result) bonusByPickId[m.id] = result;
+   }
+   if (Object.keys(bonusByPickId).length === 0) console.log(' ' + league + ': No bonus changes resolved this run');
+  } else {
+   console.log(' ' + league + ': Could not fetch team list — bonus unchanged');
+  }
 
   var updated = 0, rankings = [];
 
@@ -151,17 +387,25 @@ module.exports = async function handler(req, res) {
    var baseLocked = isFieldLocked(locks, league, ownerName, 'base');
    var metricLocked = isFieldLocked(locks, league, ownerName, 'metric');
    var recordLocked = isFieldLocked(locks, league, ownerName, 'record');
+   var bonusLocked = isFieldLocked(locks, league, ownerName, 'bonus');
+
+   var bonusResult = bonusByPickId[m.id];
+   var bonusWritable = !!bonusResult && !bonusLocked;
+   var baseWritable = !baseFrozen && !!espnTeams && !baseLocked;
+   var rankingsWritable = !baseFrozen && !!espnTeams;
 
    var updateObj = { updated_at: new Date().toISOString() };
-   if (!baseLocked) updateObj.base = m.newBase;
-   if (!metricLocked) updateObj.metric = m.apPoints;
-   if (!recordLocked) updateObj.record = m.apPoints > 0 ? m.apPoints + ' AP pts (' + m.apRank + ')' : 'Unranked';
+   if (baseWritable) updateObj.base = m.newBase;
+   if (rankingsWritable && !metricLocked) updateObj.metric = m.apPoints;
+   if (rankingsWritable && !recordLocked) updateObj.record = m.apPoints > 0 ? m.apPoints + ' AP pts (' + m.apRank + ')' : 'Unranked';
+   if (bonusWritable) { updateObj.bonus = bonusResult.tier; updateObj.bonus_note = bonusResult.label; }
 
    var skipped = [];
-   if (baseLocked) skipped.push('base');
-   if (metricLocked) skipped.push('metric');
-   if (recordLocked) skipped.push('record');
-   if (skipped.length > 0) console.log(' ' + ownerName + ': skipped locked: ' + skipped.join(', '));
+   if (rankingsWritable && baseLocked) skipped.push('base');
+   if (rankingsWritable && metricLocked) skipped.push('metric');
+   if (rankingsWritable && recordLocked) skipped.push('record');
+   if (bonusResult && bonusLocked) skipped.push('bonus');
+   if (skipped.length > 0) console.log(' ' + ownerName + ': skipped locked/frozen fields: ' + skipped.join(', '));
 
    var { error: updateErr } = await supabase.from('picks').update(updateObj).eq('id', m.id);
    if (updateErr) { console.error(' Failed to update ' + m.member_id + ':', updateErr.message); continue; }
@@ -169,29 +413,37 @@ module.exports = async function handler(req, res) {
    updated++;
 
    // Diff against the pre-update row (m.base, m.bonus) to log what
-   // actually moved — same pattern as update-sports.js. A locked base
-   // means updateObj.base was never set, so newBaseVal === m.base and
-   // delta is naturally 0, no special case needed to skip locked no-ops.
-   var newBaseVal = baseLocked ? (Number(m.base) || 0) : (Number(m.newBase) || 0);
+   // actually moved — same pattern as update-sports.js, now accounting
+   // for a bonus change same as base.
+   var newBaseVal = baseWritable ? (Number(m.newBase) || 0) : (Number(m.base) || 0);
+   var newBonusVal = bonusWritable ? bonusResult.tier : (Number(m.bonus) || 0);
    var oldTotal = (Number(m.base) || 0) + (Number(m.bonus) || 0);
-   var newTotal = newBaseVal + (Number(m.bonus) || 0);
+   var newTotal = newBaseVal + newBonusVal;
    var delta = Math.round((newTotal - oldTotal) * 10) / 10;
    if (delta !== 0) {
+    var causeParts = [];
+    if (baseWritable) causeParts.push((m.espnTeam || 'Unranked') + (m.apPoints > 0 ? ' (#' + m.apRank + ' AP, ' + m.apPoints + ' pts)' : ''));
+    if (bonusWritable) causeParts.push(bonusResult.label);
     scoreEvents.push({
      season_year: seasonYear,
      member_id: m.member_id,
      category: league,
      delta: delta,
-     cause: (m.espnTeam || 'Unranked') + (m.apPoints > 0 ? ' (#' + m.apRank + ' AP, ' + m.apPoints + ' pts)' : ''),
+     cause: causeParts.join(' — ') || (m.espnTeam || 'Unranked'),
      source: 'update-college',
     });
    }
 
-   rankings.push({ rank: m.rank, member: m.member_id, pick: m.pick, espnMatch: m.espnTeam || 'Unranked', apRank: m.apRank, apPoints: m.apPoints, base: baseLocked ? m.base : m.newBase, bonus: Number(m.bonus) || 0, total: (baseLocked ? m.base : m.newBase) + (Number(m.bonus) || 0), lockedFields: skipped.length > 0 ? skipped : undefined });
+   rankings.push({
+    rank: m.rank, member: m.member_id, pick: m.pick, espnMatch: m.espnTeam || 'Unranked', apRank: m.apRank, apPoints: m.apPoints,
+    base: newBaseVal, bonus: newBonusVal, total: newBaseVal + newBonusVal,
+    ...(bonusResult && { bonusDetected: bonusResult.label }),
+    ...(skipped.length > 0 && { lockedFields: skipped }),
+   });
   }
 
   console.log(' ' + league + ': Updated ' + updated + '/' + matched.length + ' picks');
-  results[league] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings };
+  results[league] = { status: baseFrozen ? 'bonus_only' : 'updated', updated: updated, total: picks.length, rankings: rankings };
  }
 
  await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
