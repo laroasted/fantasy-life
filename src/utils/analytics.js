@@ -24,11 +24,12 @@ const TOKEN = process.env.REACT_APP_MIXPANEL_TOKEN;
 let mixpanel = null; // set once the dynamic import below resolves
 let ready = false;
 let loading = false;
+let disabled = false; // the import or mp.init() failed — permanent no-op, same as no token
 const queue = [];
 
 function enqueue(run) {
   if (ready) { run(mixpanel); return; }
-  if (!loading) return; // initAnalytics() was never called (no token) — permanent no-op
+  if (!loading || disabled) return; // never called, or failed below — permanent no-op either way
   queue.push(run);
 }
 
@@ -54,7 +55,16 @@ export function initAnalytics() {
       queue.splice(0).forEach((run) => run(mixpanel));
     })
     .catch((e) => {
+      // Common, not rare — this is the "blocked by an ad blocker /
+      // tracking protection" case this file's top comment already warns
+      // about, just arriving as a rejected import instead of a thrown
+      // init() now. Without this, every later track()/identifyPerson()/etc.
+      // call for the rest of the session would keep pushing onto `queue`
+      // with nothing left to ever drain it — an unbounded leak for a
+      // single blocked script load, not a one-time cost.
       console.warn("Mixpanel: init failed, analytics disabled.", e);
+      disabled = true;
+      queue.length = 0;
     });
 }
 
