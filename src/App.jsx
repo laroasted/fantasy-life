@@ -1406,9 +1406,19 @@ export default function App() {
                   activity feed would just silently flicker to new values
                   with the status dot sitting there saying "Live" the
                   whole time, and only pulse a confirmation after the
-                  numbers had already changed with no warning. */}
+                  numbers had already changed with no warning.
+                  (3) refreshing — a manual Refresh click runs EVERY
+                  data-updating cron job in sequence (see handleRefresh),
+                  each writing its own rows as it finishes, which fires its
+                  own independent realtimeSyncPending cycle through the
+                  same subscription (2) relies on. Without folding
+                  refreshing in here too, those ~10 separate cycles each
+                  resolve on their own timeline, so the chip itself would
+                  flicker on and off every couple of seconds for the whole
+                  refresh instead of staying up as the one continuous
+                  operation it actually is from the user's side. */}
               {lastUpdated && isViewingActive && (
-                (initialSyncPending && syncDelayPassed) || realtimeSyncPending ? (
+                (initialSyncPending && syncDelayPassed) || realtimeSyncPending || refreshing ? (
                   <p style={{ margin: "6px 0 0", display: "flex", justifyContent: "center" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px",
                       borderRadius: 999, border: "1px solid " + theme.bdr, background: theme.srf,
