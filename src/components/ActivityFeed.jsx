@@ -41,21 +41,27 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
  // seasonData reference below, even though nothing may have changed)
  // can tell itself apart from a genuine switch to a different season.
  var loadedYearRef = useRef(null);
+ // Whether THIS year has ever actually resolved — fresh data, a cached
+ // fallback, or a confirmed-empty result all count; an outright failure
+ // with no cache does not. Gates the loading skeleton together with
+ // isYearChange below: without this, a same-year retry after a failed
+ // first attempt (no cache available) would see isYearChange === false,
+ // skip re-entering the loading state, but still unconditionally clear
+ // `error` — landing on rows=[], loading=false, error=null, which
+ // renders "No activity yet" while that retry is still in flight.
+ var hasResolvedRef = useRef(false);
 
  var load = useCallback(async function () {
   var myRequestId = ++requestIdRef.current;
   var stillCurrent = function () { return requestIdRef.current === myRequestId; };
   if (!seasonYear) { setLoading(false); return; }
-  // Only show the skeleton on a genuine first load for this year — a
-  // same-year refetch should keep showing the rows already on screen
-  // until the fresh ones are ready, not flash back to a blank skeleton
-  // every single time (this used to fire on every realtime-triggered
-  // reload during a cron update or a manual Refresh, several times a
-  // minute). Switching to a different season, though, must not keep
-  // showing the previous year's rows even briefly.
   var isYearChange = loadedYearRef.current !== seasonYear;
   loadedYearRef.current = seasonYear;
-  if (isYearChange) { setRows([]); setLoading(true); }
+  if (isYearChange) hasResolvedRef.current = false;
+  // Only skip the loading skeleton when there's already something real
+  // on screen for this year to keep showing — a genuine year switch, or
+  // a same-year retry with nothing resolved yet, both still need it.
+  if (!hasResolvedRef.current) { setRows([]); setLoading(true); }
   setError(null);
   var cacheKey = STORAGE_KEYS.ACTIVITY_FEED_PREFIX + "-" + seasonYear;
 
@@ -83,6 +89,7 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
     setRows(cached);
     setIsStale(true);
     setLoading(false);
+    hasResolvedRef.current = true;
     return;
    }
    setError(err.message);
@@ -96,6 +103,7 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
   setRows(allRows);
   setIsStale(false);
   storageSet(cacheKey, JSON.stringify(allRows)).catch(function () {});
+  hasResolvedRef.current = true;
   setLoading(false);
  // Depending on the seasonData reference, not just seasonYear, matters
  // because the Refresh button (App.jsx's handleRefresh) runs the crons
