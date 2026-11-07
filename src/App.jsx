@@ -1029,6 +1029,20 @@ export default function App() {
     }
     let cancelled = false;
     let debounceTimer = null;
+    // A cron that keeps writing past the 1200ms debounce window queues a
+    // second reload while the first is still awaiting its network
+    // round-trip — two overlapping cycles, not one. realtimeSyncPending
+    // must stay true for as long as EITHER a debounce is still armed
+    // (hasn't fired yet) OR a fetch is actually in flight; a plain
+    // true/false flag that one cycle's resolution clears unconditionally
+    // would drop it while the other cycle is still working. Both checks
+    // below run synchronously, before any `await`, so there's no tick
+    // where a just-fired timer has armed nothing yet but also hasn't
+    // incremented inFlightReloads yet.
+    let inFlightReloads = 0;
+    function updateRealtimeSyncPending() {
+      setRealtimeSyncPending(!!debounceTimer || inFlightReloads > 0);
+    }
 
     // A single cron run touches many `picks` rows (plus several
     // `score_events` inserts) in one burst — debounce so that burst
@@ -1038,12 +1052,18 @@ export default function App() {
     // ahead of the flicker instead of only confirming it after the fact.
     function scheduleReload() {
       if (debounceTimer) clearTimeout(debounceTimer);
-      setRealtimeSyncPending(true);
       debounceTimer = setTimeout(async () => {
+        debounceTimer = null;
         if (cancelled) return;
-        await loadSeason(false, "realtime");
+        inFlightReloads++;
+        updateRealtimeSyncPending();
+        try {
+          await loadSeason(false, "realtime");
+        } finally {
+          inFlightReloads--;
+        }
         if (cancelled) return;
-        setRealtimeSyncPending(false);
+        updateRealtimeSyncPending();
         // Same reasoning as the mount effect's equivalent check: only a
         // genuinely fresh Supabase result earns the "just now"
         // confirmation — a reload that silently fell back to cached or
@@ -1053,6 +1073,7 @@ export default function App() {
           setTimeout(() => { if (!cancelled) setJustSynced(false); }, 2500);
         }
       }, 1200);
+      updateRealtimeSyncPending();
     }
 
     const channel = supabase
