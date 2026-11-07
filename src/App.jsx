@@ -655,8 +655,22 @@ export default function App() {
 
     // Set the real numbers immediately — projections are a nice-to-have
     // overlay (below), never worth delaying the actual scoreboard for.
-    active.projections = active.projections || {};
-    setActiveSeason(active);
+    // Carry over whatever projections the PREVIOUS activeSeason already
+    // had for this same year instead of resetting to {} here —
+    // loadSeason() runs on every realtime-triggered reload too (several
+    // times during a single manual Refresh; see #61/#62), and a fresh
+    // fetchSeasonFromSupabase() result never includes projections at all
+    // (a separate fetch, below). Without this, Scoreboard.jsx's
+    // "Projected Final" toggle — gated on projections being non-empty —
+    // would disappear and reappear on every single reload cycle,
+    // bouncing the whole standings layout under it. The fetch below
+    // still always runs and replaces this with the real current
+    // projections once it resolves; this only avoids the pointless
+    // blank in between.
+    setActiveSeason((prev) => {
+      active.projections = (prev && prev.year === active.year && prev.projections) || {};
+      return active;
+    });
     setDataSource(source);
     setLastUpdated(resolvedAt);
     setSeasonSuperProperties({ year: active?.year, dataSource: source });
