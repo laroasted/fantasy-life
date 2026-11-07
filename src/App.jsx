@@ -1012,6 +1012,16 @@ export default function App() {
   // season, without them lifting a finger.
   const [realtimeLive, setRealtimeLive] = useState(false);
   const [justSynced, setJustSynced] = useState(false);
+  // True from the moment a cron's database change schedules a reload
+  // until that reload resolves — the realtime counterpart to
+  // initialSyncPending above. Unlike that one, this isn't time-gated
+  // behind an extra delay: scheduleReload's own 1200ms debounce already
+  // absorbs a burst of individual row changes into one reload, so a
+  // second gate here would just delay the warning past the point where
+  // the scoreboard/activity feed numbers have already silently changed
+  // underneath it — the exact "why did that just flicker with no
+  // warning" gap this is meant to close.
+  const [realtimeSyncPending, setRealtimeSyncPending] = useState(false);
   useEffect(() => {
     if (!isViewingActive || !activeYear) {
       setRealtimeLive(false);
@@ -1019,19 +1029,51 @@ export default function App() {
     }
     let cancelled = false;
     let debounceTimer = null;
+    // A cron that keeps writing past the 1200ms debounce window queues a
+    // second reload while the first is still awaiting its network
+    // round-trip — two overlapping cycles, not one. realtimeSyncPending
+    // must stay true for as long as EITHER a debounce is still armed
+    // (hasn't fired yet) OR a fetch is actually in flight; a plain
+    // true/false flag that one cycle's resolution clears unconditionally
+    // would drop it while the other cycle is still working. Both checks
+    // below run synchronously, before any `await`, so there's no tick
+    // where a just-fired timer has armed nothing yet but also hasn't
+    // incremented inFlightReloads yet.
+    let inFlightReloads = 0;
+    function updateRealtimeSyncPending() {
+      setRealtimeSyncPending(!!debounceTimer || inFlightReloads > 0);
+    }
 
     // A single cron run touches many `picks` rows (plus several
     // `score_events` inserts) in one burst — debounce so that burst
-    // becomes one quiet reload, not a dozen.
+    // becomes one quiet reload, not a dozen. realtimeSyncPending goes
+    // true the moment the first change in a burst arrives, well before
+    // the numbers actually change, so the status chip can warn "updating"
+    // ahead of the flicker instead of only confirming it after the fact.
     function scheduleReload() {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(async () => {
+        debounceTimer = null;
         if (cancelled) return;
-        await loadSeason(false, "realtime");
+        inFlightReloads++;
+        updateRealtimeSyncPending();
+        try {
+          await loadSeason(false, "realtime");
+        } finally {
+          inFlightReloads--;
+        }
         if (cancelled) return;
-        setJustSynced(true);
-        setTimeout(() => { if (!cancelled) setJustSynced(false); }, 2500);
+        updateRealtimeSyncPending();
+        // Same reasoning as the mount effect's equivalent check: only a
+        // genuinely fresh Supabase result earns the "just now"
+        // confirmation — a reload that silently fell back to cached or
+        // hardcoded data shouldn't claim freshness it doesn't have.
+        if (lastSourceRef.current === "supabase") {
+          setJustSynced(true);
+          setTimeout(() => { if (!cancelled) setJustSynced(false); }, 2500);
+        }
       }, 1200);
+      updateRealtimeSyncPending();
     }
 
     const channel = supabase
@@ -1048,6 +1090,7 @@ export default function App() {
       cancelled = true;
       if (debounceTimer) clearTimeout(debounceTimer);
       setRealtimeLive(false);
+      setRealtimeSyncPending(false);
       supabase.removeChannel(channel);
     };
   }, [activeYear, isViewingActive, loadSeason]);
@@ -1347,18 +1390,25 @@ export default function App() {
               <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: 0 }}>
                 {draftDateStr} through {viewingYear + 1} Academy Awards
               </p>
-              {/* While a cache-seeded first paint is still waiting on the
-                  real fetch behind it (see initialSyncPending above), and
-                  only once that's taken long enough to actually notice,
-                  swap the quiet status line for a louder chip — same
+              {/* Two different moments share this same louder chip — same
                   spinner + pill treatment validated in the design mockup
                   for this (https://claude.ai/artifact/EFoSniEDWCpcBBGUz1t7kg):
                   a breathing dot alone read as ambiguous/decorative, the
                   spinner is what actually registered as "something is
                   happening," and the compact inline footprint won over a
-                  full banner row once both had the same spinner. */}
+                  full banner row once both had the same spinner.
+                  (1) A cache-seeded first paint still waiting on the real
+                  fetch behind it, once that's taken long enough to
+                  actually notice (initialSyncPending && syncDelayPassed).
+                  (2) A cron's database change about to replace the
+                  numbers currently on screen (realtimeSyncPending) — this
+                  one isn't delay-gated; without it, the scoreboard and
+                  activity feed would just silently flicker to new values
+                  with the status dot sitting there saying "Live" the
+                  whole time, and only pulse a confirmation after the
+                  numbers had already changed with no warning. */}
               {lastUpdated && isViewingActive && (
-                initialSyncPending && syncDelayPassed ? (
+                (initialSyncPending && syncDelayPassed) || realtimeSyncPending ? (
                   <p style={{ margin: "6px 0 0", display: "flex", justifyContent: "center" }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px",
                       borderRadius: 999, border: "1px solid " + theme.bdr, background: theme.srf,
