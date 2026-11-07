@@ -36,12 +36,26 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
  var [error, setError] = useState(null);
  var [isStale, setIsStale] = useState(false);
  var requestIdRef = useRef(0);
+ // Which season year `rows` currently holds, so a same-year refetch
+ // (every realtime/manual-refresh reload re-runs load() via the changed
+ // seasonData reference below, even though nothing may have changed)
+ // can tell itself apart from a genuine switch to a different season.
+ var loadedYearRef = useRef(null);
 
  var load = useCallback(async function () {
   var myRequestId = ++requestIdRef.current;
   var stillCurrent = function () { return requestIdRef.current === myRequestId; };
   if (!seasonYear) { setLoading(false); return; }
-  setLoading(true);
+  // Only show the skeleton on a genuine first load for this year — a
+  // same-year refetch should keep showing the rows already on screen
+  // until the fresh ones are ready, not flash back to a blank skeleton
+  // every single time (this used to fire on every realtime-triggered
+  // reload during a cron update or a manual Refresh, several times a
+  // minute). Switching to a different season, though, must not keep
+  // showing the previous year's rows even briefly.
+  var isYearChange = loadedYearRef.current !== seasonYear;
+  loadedYearRef.current = seasonYear;
+  if (isYearChange) { setRows([]); setLoading(true); }
   setError(null);
   var cacheKey = STORAGE_KEYS.ACTIVITY_FEED_PREFIX + "-" + seasonYear;
 
