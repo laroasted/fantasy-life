@@ -499,7 +499,7 @@ export default function App() {
         return;
       }
 
-      if (!result) {
+      if (!result || result.errored) {
         // One retry before giving up — with nothing else in this app that
         // would ever come back and finish this lookup (the next thing to
         // fire this listener again could be the SDK's own token-refresh
@@ -507,15 +507,25 @@ export default function App() {
         // slow lock acquisition could permanently leave authConfirmed
         // false for the whole session: no Mixpanel identity, and for an
         // actual commissioner, no counted login. Flagged in PR review.
-        console.warn("Auth state change: getCommissionerRole timed out — retrying once");
+        //
+        // `result.errored` (a fast query/network failure, as opposed to
+        // the whole call timing out) gets the same retry — see
+        // getCommissionerRole's own comment on why a transient error must
+        // never be treated as a confirmed "no member claimed" answer.
+        console.warn("Auth state change: getCommissionerRole failed or timed out — retrying once");
         try {
           result = await withTimeout(getCommissionerRole(session), 10000, null);
         } catch (e) {
           result = null;
         }
         if (!isMounted) return;
-        if (!result) {
-          console.warn("Auth state change: getCommissionerRole timed out twice — leaving role as-is");
+        if (!result || result.errored) {
+          // Still no confirmed answer — leave role/memberId/the cached
+          // identity exactly as they are rather than falling through to
+          // the auto-claim path below, which would otherwise treat this
+          // unresolved failure as "not claimed yet" and could overwrite a
+          // perfectly good cached member_id with null.
+          console.warn("Auth state change: getCommissionerRole failed twice — leaving role as-is");
           setAuthReady(true);
           return;
         }
