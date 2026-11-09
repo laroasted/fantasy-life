@@ -193,7 +193,7 @@ export async function signOutCommissioner() {
 */
 export async function getCommissionerRole(session) {
  const activeSession = session || (await supabase.auth.getSession()).data?.session || null;
- if (!activeSession?.user) return { role: null, memberId: null };
+ if (!activeSession?.user) return { role: null, memberId: null, errored: false };
 
  const email = normalizeEmail(activeSession.user.email);
  const configuredRole = isConfiguredCommissionerEmail(email) ? 'commissioner' : null;
@@ -206,14 +206,27 @@ export async function getCommissionerRole(session) {
  .maybeSingle();
 
  if (error) {
+  // A query error (network blip, transient Postgres/RLS hiccup — common
+  // right as a backgrounded PWA resumes and has to re-establish its
+  // network stack) is NOT the same thing as "this account has no
+  // claimed member," but used to be returned identically as
+  // `memberId: null`. The caller couldn't tell the two apart, so a
+  // one-off failure here looked like a confirmed "not claimed yet,"
+  // which fell through to the auto-claim fallback and — if that also
+  // failed under the same bad network conditions — overwrote the
+  // locally cached identity with null, poisoning the NEXT cold start's
+  // optimistic hydration too even though profiles.member_id was never
+  // actually cleared. `errored: true` lets App.jsx's caller retry this
+  // the same way it already retries an outright timeout, instead of
+  // acting on it as a real answer.
   console.warn('profiles role lookup failed:', error.message);
-  return { role: configuredRole, memberId: null };
+  return { role: configuredRole, memberId: null, errored: true };
  }
 
- return { role: configuredRole || data?.role || null, memberId: data?.member_id || null };
+ return { role: configuredRole || data?.role || null, memberId: data?.member_id || null, errored: false };
  } catch (err) {
  console.warn('getCommissionerRole error:', err);
- return { role: configuredRole, memberId: null };
+ return { role: configuredRole, memberId: null, errored: true };
  }
 }
 
