@@ -520,12 +520,25 @@ export default function App() {
         }
         if (!isMounted) return;
         if (!result || result.errored) {
-          // Still no confirmed answer — leave role/memberId/the cached
-          // identity exactly as they are rather than falling through to
-          // the auto-claim path below, which would otherwise treat this
-          // unresolved failure as "not claimed yet" and could overwrite a
-          // perfectly good cached member_id with null.
-          console.warn("Auth state change: getCommissionerRole failed twice — leaving role as-is");
+          // Still no confirmed answer for member_id — leave memberId/the
+          // cached identity exactly as they are rather than falling
+          // through to the auto-claim path below, which would otherwise
+          // treat this unresolved failure as "not claimed yet" and could
+          // overwrite a perfectly good cached member_id with null.
+          //
+          // The commissioner role is a separate story: when `result`
+          // exists at all (an `errored` result, as opposed to an outright
+          // `!result` double-timeout with no data whatsoever),
+          // getCommissionerRole() already derived its `role` from the
+          // email allowlist check alone, independent of the profiles
+          // query that actually failed — so it's just as reliable as a
+          // clean lookup and safe to apply, instead of leaving a
+          // first-time/uncached commissioner stuck locked out of
+          // commissioner-only controls until some later auth event
+          // happens to succeed (next token refresh could be up to an
+          // hour away). Flagged in PR review.
+          console.warn("Auth state change: getCommissionerRole failed twice — leaving memberId as-is");
+          if (result) setCommissionerRole(result.role);
           setAuthReady(true);
           return;
         }
