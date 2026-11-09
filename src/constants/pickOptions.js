@@ -2,6 +2,8 @@
 // These populate the selection list during the draft.
 // Categories with empty arrays use free-text "Custom..." input only.
 
+import { CANONICAL_COUNTRIES } from "./countries";
+
 export const PICK_OPTIONS = {
  nfl: [
   "ARI Cardinals", "ATL Falcons", "BAL Ravens", "BUF Bills",
@@ -115,6 +117,12 @@ export const PICK_OPTIONS = {
  actor: ["Custom..."],
  actress: ["Custom..."],
  musician: ["Custom..."],
- country: ["Custom..."],
+ // Backed by CANONICAL_COUNTRIES (src/constants/countries.js) — the exact
+ // same list api/cron/update-country.js resolves picks against, so every
+ // option here is guaranteed matchable at scoring time. "Custom..." stays
+ // as an escape hatch for a genuinely unlisted case (a newly independent
+ // state, a disputed territory) — same free-text behavior as before for
+ // that edge case, just no longer the ONLY option.
+ country: [...CANONICAL_COUNTRIES, "Custom..."],
  stock: ["Custom..."],
 };
