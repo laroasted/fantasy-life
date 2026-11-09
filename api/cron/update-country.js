@@ -83,6 +83,18 @@ const COUNTRY_NOC = {
   'Switzerland': 'SUI', 'Thailand': 'THA', 'Turkey': 'TUR',
   'Ukraine': 'UKR', 'Uruguay': 'URU', 'Venezuela': 'VEN',
   'Zimbabwe': 'ZIM',
+  // Added alongside the Country dropdown (src/constants/countries.js) going
+  // live with all ~196 ISO-recognized countries as real options instead of
+  // free text only — these four are real Winter Olympics medal nations that
+  // were reachable before only by typing the name exactly, and were missing
+  // here same as the other ~118 non-winter-sport nations in that list that
+  // have no NOC entry because there's genuinely no medal data to match
+  // regardless of whether a code exists for them. These four are different:
+  // real historical Winter medalists, so the gap was an actual scoring
+  // miss, not a no-op. Codes confirmed against the current IOC country-code
+  // list (en.wikipedia.org/wiki/List_of_IOC_country_codes).
+  'Belarus': 'BLR', 'Estonia': 'EST',
+  'Liechtenstein': 'LIE', 'Uzbekistan': 'UZB',
 };
  
 const OLYMPIC_BONUS = { 1: 10, 2: 7, 3: 5, 4: 3, 5: 2 };
