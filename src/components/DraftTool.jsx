@@ -200,6 +200,13 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     const q = customInput.trim();
     if (!cfg || !q) { setCustomSuggestions([]); setCustomLookupLoading(false); return; }
     let cancelled = false;
+    // Clear the PREVIOUS query's suggestions immediately, synchronously —
+    // not just when the new result lands. Without this, editing the input
+    // again left the old candidates rendered (and clickable) for the
+    // entire debounce + network round-trip; clicking one in that window
+    // would submit a canonical label that matched what was typed a moment
+    // ago, not what the input currently shows. Caught in PR review.
+    setCustomSuggestions([]);
     setCustomLookupLoading(true);
     const debounce = setTimeout(async () => {
       try {
