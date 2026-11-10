@@ -414,11 +414,26 @@ export default function App() {
       // attempt with no fallback.
       let session;
       try {
-        const sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+        let sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
         if (!sessionResult) {
-          // Timed out, not corrupted — leave stored session/role state
-          // untouched, but still mark the initial check as done. This used
-          // to skip setAuthReady here, relying entirely on the
+          // One retry before giving up — same reasoning as the retry on
+          // getCommissionerRole's own timeout further below: a single slow
+          // lock acquisition must not be the only chance this gets. This
+          // specific timeout is the one reported live as "signed in on
+          // mobile, but some mornings the account menu shows signed-out
+          // until I close and reopen the app" — the first open after being
+          // backgrounded overnight is exactly when a cold connection is
+          // most likely to blow one 10s window, and closing/reopening just
+          // gives the same check a second, now-warmed-up attempt. Retrying
+          // once in place gets that same second attempt without needing
+          // the person to do it by hand.
+          console.warn("loadAuth: getSession timed out — retrying once");
+          sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+        }
+        if (!sessionResult) {
+          // Timed out twice, not corrupted — leave stored session/role
+          // state untouched, but still mark the initial check as done. This
+          // used to skip setAuthReady here, relying entirely on the
           // onAuthStateChange listener below to set it once it fired —
           // reliable in every Chromium test this session ran, but NOT in
           // real-world Safari: confirmed live, a signed-in person's entire
@@ -428,7 +443,7 @@ export default function App() {
           // (unlike gotrue-js's own Web Locks usage elsewhere), so this is a
           // safe, guaranteed-to-fire path regardless of what the listener
           // does or how long it takes.
-          console.warn("loadAuth: getSession timed out — leaving stored session untouched");
+          console.warn("loadAuth: getSession timed out twice — leaving stored session untouched");
           if (isMounted) setAuthReady(true);
           return;
         }
@@ -1455,8 +1470,14 @@ export default function App() {
                   refresh instead of staying up as the one continuous
                   operation it actually is from the user's side. */}
               {lastUpdated && isViewingActive && (
-                (initialSyncPending && syncDelayPassed) || realtimeSyncPending || refreshing ? (
-                  <p style={{ margin: "6px 0 0", display: "flex", justifyContent: "center" }}>
+                // Fixed-height wrapper so swapping between the louder pill
+                // (padding + border) and the plain status line (no padding,
+                // smaller font) never changes this row's height — without
+                // it, every transition between the two nudged everything
+                // below down and back up, a visible page jump each time.
+                <div style={{ marginTop: 6, minHeight: 29, display: "flex",
+                  alignItems: "center", justifyContent: "center" }}>
+                  {(initialSyncPending && syncDelayPassed) || realtimeSyncPending || refreshing ? (
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px",
                       borderRadius: 999, border: "1px solid " + theme.bdr, background: theme.srf,
                       fontSize: 12, fontWeight: 700, color: theme.txt }}>
@@ -1467,17 +1488,17 @@ export default function App() {
                       </svg>
                       Showing last-known scores from {lastUpdated.toLocaleTimeString()} — updating…
                     </span>
-                  </p>
-                ) : (
-                  <p style={{ fontSize: 10, color: theme.dim, margin: "4px 0 0", opacity: 0.6,
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-                    <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
-                      background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red,
-                      animation: justSynced ? "livePulse 0.6s ease" : "none" }} />
-                    {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live") : dataSource === "local" ? "Cached" : "Offline"}
-                    {" "}· {justSynced ? "Updated just now" : "Updated " + lastUpdated.toLocaleTimeString()}
-                  </p>
-                )
+                  ) : (
+                    <span style={{ fontSize: 10, color: theme.dim, opacity: 0.6,
+                      display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                        background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red,
+                        animation: justSynced ? "livePulse 0.6s ease" : "none" }} />
+                      {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live") : dataSource === "local" ? "Cached" : "Offline"}
+                      {" "}· {justSynced ? "Updated just now" : "Updated " + lastUpdated.toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
               )}
               <style>{`
                 @keyframes livePulse { 0% { transform: scale(1); } 45% { transform: scale(2.2); } 100% { transform: scale(1); } }
