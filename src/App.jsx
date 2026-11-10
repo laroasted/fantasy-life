@@ -11,6 +11,7 @@ import {
   Bell,
   BellOff,
 } from "lucide-react";
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
 import { withTimeout } from "./utils/helpers";
@@ -413,13 +414,56 @@ export default function App() {
 
   useEffect(() => {
     let isMounted = true;
- 
+
+    // Resolves supabase.auth.getSession(), tolerating its two non-corrupt
+    // failure modes — an outright timeout, and a retryable fetch error
+    // thrown mid-refresh (isAuthRetryableFetchError, exported by the SDK
+    // itself and what its own internal refresh logic uses to decide the
+    // exact same question) — with one retry each, same reasoning either
+    // way: a single slow/flaky attempt right as a phone wakes from being
+    // backgrounded overnight must not be the only chance this gets, or
+    // the account menu reads as signed-out until the person closes and
+    // reopens the app. Shared by loadAuth() below AND the
+    // onAuthStateChange listener's own INITIAL_SESSION firing further
+    // down, which hits this exact same race independently through the
+    // SDK's own _emitInitialSession (confirmed against its source —
+    // flagged in PR review) and used to trust its ambiguous null outright.
+    // Returns `{ resolved: true, session }` once a session value is
+    // actually confirmed (including a confirmed "no session"), or
+    // `{ resolved: false }` when both attempts were inconclusive — the
+    // caller should leave whatever it already has untouched rather than
+    // guess. Throws only on a genuinely non-retryable error (the server
+    // actually rejecting the stored token), for the caller's own
+    // sign-out handling.
+    async function resolveSession() {
+      let sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+      if (!sessionResult) {
+        console.warn("resolveSession: getSession timed out — retrying once");
+        sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+      }
+      if (!sessionResult) {
+        console.warn("resolveSession: getSession timed out twice — leaving stored session untouched");
+        return { resolved: false };
+      }
+      if (sessionResult.error && isAuthRetryableFetchError(sessionResult.error)) {
+        console.warn("resolveSession: getSession hit a retryable fetch error — retrying once", sessionResult.error);
+        sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+        if (!sessionResult) {
+          console.warn("resolveSession: getSession timed out on retry — leaving stored session untouched");
+          return { resolved: false };
+        }
+        if (sessionResult.error && isAuthRetryableFetchError(sessionResult.error)) {
+          console.warn("resolveSession: getSession still hitting a retryable fetch error — leaving stored session untouched", sessionResult.error);
+          return { resolved: false };
+        }
+      }
+      if (sessionResult.error) throw new Error(sessionResult.error.message || "getSession failed");
+      return { resolved: true, session: sessionResult.data?.session || null };
+    }
+
     async function loadAuth() {
-      // Only resolves the session object itself here, quickly, and handles
-      // the one case that genuinely means "this stored session is
-      // unusable": getSession() throwing outright on a corrupted/malformed
-      // token. Role and member_id are deliberately NOT fetched here — that
-      // used to happen in both this function AND the onAuthStateChange
+      // Role and member_id are deliberately NOT fetched here — that used
+      // to happen in both this function AND the onAuthStateChange
       // listener's first firing, which fixed a real double-query
       // performance bug but introduced a worse one: when this function's
       // own fetch timed out, NOTHING ever retried role/memberId for that
@@ -432,25 +476,10 @@ export default function App() {
       // attempt with no fallback.
       let session;
       try {
-        let sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
-        if (!sessionResult) {
-          // One retry before giving up — same reasoning as the retry on
-          // getCommissionerRole's own timeout further below: a single slow
-          // lock acquisition must not be the only chance this gets. This
-          // specific timeout is the one reported live as "signed in on
-          // mobile, but some mornings the account menu shows signed-out
-          // until I close and reopen the app" — the first open after being
-          // backgrounded overnight is exactly when a cold connection is
-          // most likely to blow one 10s window, and closing/reopening just
-          // gives the same check a second, now-warmed-up attempt. Retrying
-          // once in place gets that same second attempt without needing
-          // the person to do it by hand.
-          console.warn("loadAuth: getSession timed out — retrying once");
-          sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
-        }
-        if (!sessionResult) {
-          // Timed out twice, not corrupted — leave stored session/role
-          // state untouched, but still mark the initial check as done. This
+        const result = await resolveSession();
+        if (!result.resolved) {
+          // Inconclusive, not corrupted — leave stored session/role state
+          // untouched, but still mark the initial check as done. This
           // used to skip setAuthReady here, relying entirely on the
           // onAuthStateChange listener below to set it once it fired —
           // reliable in every Chromium test this session ran, but NOT in
@@ -461,12 +490,10 @@ export default function App() {
           // (unlike gotrue-js's own Web Locks usage elsewhere), so this is a
           // safe, guaranteed-to-fire path regardless of what the listener
           // does or how long it takes.
-          console.warn("loadAuth: getSession timed out twice — leaving stored session untouched");
           if (isMounted) setAuthReady(true);
           return;
         }
-        if (sessionResult.error) throw new Error(sessionResult.error.message || "getSession failed");
-        session = sessionResult.data?.session || null;
+        session = result.session;
       } catch (e) {
         console.error("loadAuth failed, clearing local session:", e);
         try { await supabase.auth.signOut({ scope: "local" }); } catch (e2) {}
@@ -502,6 +529,37 @@ export default function App() {
     // for the gap that shortcut left.)
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
+
+      if (!session && _event === "INITIAL_SESSION") {
+        // This specific firing — the SDK's own first-firing session check
+        // — goes through the exact same getSession()-style refresh-on-
+        // expiry path as loadAuth() above, independently: on a retryable
+        // network error partway through that refresh, the SDK's internal
+        // _emitInitialSession throws and calls back here with session set
+        // to null even though nothing about the stored session is
+        // actually wrong (confirmed against the SDK's own source —
+        // flagged in PR review). Unlike a real SIGNED_OUT/USER_DELETED
+        // event, INITIAL_SESSION's null is ambiguous, so re-resolve it
+        // with the same retry-tolerant helper loadAuth() uses instead of
+        // trusting it outright — only a genuinely confirmed absence (or a
+        // non-retryable rejection, handled by the catch below) should
+        // clear anything.
+        let confirmed;
+        try {
+          confirmed = await resolveSession();
+        } catch (e) {
+          confirmed = { resolved: true, session: null };
+        }
+        if (!isMounted) return;
+        if (!confirmed.resolved) {
+          // Still inconclusive — leave everything exactly as it is rather
+          // than guess; the SDK's next auth event (or a later manual
+          // retry) will settle this.
+          return;
+        }
+        session = confirmed.session;
+      }
+
       setCommissionerSession(session || null);
 
       if (!session) {
