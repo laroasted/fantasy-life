@@ -95,8 +95,22 @@ begin
     end if;
   end if;
 
+  -- Scoped to picks keyed for THIS category only ("-" || p_category_id
+  -- as the key's suffix — same memberId-categoryId format every key in
+  -- `picks` already uses, built the same way a few lines below). Without
+  -- the scope, this matched `value = p_selection` against EVERY key in
+  -- `picks`, across every category and member — so the moment anyone
+  -- picked e.g. "Alabama" for NCAAF, NCAAB's own, entirely independent
+  -- "Alabama" slot was rejected as selection_already_taken for the rest
+  -- of the draft, a real false positive (NCAAF/NCAAB share ~30 school
+  -- names; NCAAB/MLS both have "Cincinnati"). right() rather than LIKE
+  -- so a category id is matched literally, never as a wildcard pattern.
+  -- DraftTool.jsx's own advisory list filter had the identical bug and
+  -- is fixed the same way there.
   if not p_is_custom and exists (
-    select 1 from jsonb_each_text(v_session.picks) where value = p_selection
+    select 1 from jsonb_each_text(v_session.picks)
+    where value = p_selection
+      and right(key, length(p_category_id) + 1) = '-' || p_category_id
   ) then
     raise exception 'selection_already_taken';
   end if;
