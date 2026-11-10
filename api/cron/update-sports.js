@@ -705,3 +705,17 @@ module.exports = async function handler(req, res) {
     results,
   });
 };
+
+// Attached to the handler export (not re-exported as the module's default)
+// so api/draft-lookup.js can require() this file's own live ESPN fetch —
+// NOT its matchTeam() — to power MLS's draft-time "did you mean" lookup,
+// without a second, separately-maintained copy of the standings-fetch URL
+// and parsing that could silently drift from this one (the same drift
+// problem Country's old duplicated COUNTRY_ISO3 had — see
+// src/constants/countries.js's own comment). matchTeam() itself stays
+// untouched and un-exported: it's single-best-match-oriented, built for
+// resolving an already-fully-typed pick during scoring, not for listing
+// several live candidates as someone types — draft-lookup.js does its own
+// lightweight substring filter over this same fetched list instead.
+module.exports.fetchESPNStandings = fetchESPNStandings;
+module.exports.ESPN_LEAGUES = ESPN_LEAGUES;

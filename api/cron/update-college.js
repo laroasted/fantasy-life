@@ -451,3 +451,13 @@ module.exports = async function handler(req, res) {
  console.log('\n Done!');
  return res.status(200).json({ message: 'College AP rankings update complete', season: seasonYear, timestamp: new Date().toISOString(), results: results });
 };
+
+// Attached to the handler export so api/draft-lookup.js can require() this
+// file's own fetchESPNTeams()/COLLEGE_LEAGUES — same reasoning as
+// update-sports.js's equivalent export: one live-fetch source of truth for
+// both scoring and the draft-time NCAAF/NCAAB "did you mean" lookup,
+// instead of a second copy of the ESPN URL/parsing that could drift. This
+// file's own matchTeam() stays untouched and un-exported for the same
+// reason noted there.
+module.exports.fetchESPNTeams = fetchESPNTeams;
+module.exports.COLLEGE_LEAGUES = COLLEGE_LEAGUES;
