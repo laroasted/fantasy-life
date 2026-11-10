@@ -893,9 +893,27 @@ module.exports = async function handler(req, res) {
     if (bonusEntry && bonusLocked) skipped.push('bonus');
     if (skipped.length > 0) console.log('  ' + ownerName + ': locked — ' + skipped.join(', '));
  
-    var { error: pickErr } = await supabase.from('picks').update(updateObj).eq('id', r.id);
+    // Optimistic concurrency on whichever of base/bonus this cycle
+    // writes — same fix, same reasoning as update-sports.js's identical
+    // comment: without conditioning on the pre-update value just read
+    // (r.base/r.bonus), two near-simultaneous invocations of this cron
+    // (the scheduled weekly run and a visitor's manual Refresh via
+    // api/refresh-all.js, or a retried Vercel cron trigger) both push
+    // their own score_events row for the same real change. Whichever
+    // commits first moves base/bonus away from what this one read, so a
+    // second invocation's conditional UPDATE matches zero rows — and the
+    // music_songs delete/insert below is skipped too, rather than
+    // redundantly churning rows a concurrent run already wrote.
+    var pickQuery = supabase.from('picks').update(updateObj).eq('id', r.id);
+    if (!baseLocked) pickQuery = pickQuery.eq('base', r.base);
+    if (bonusWritable) pickQuery = pickQuery.eq('bonus', r.bonus);
+    var { data: updatedPickRows, error: pickErr } = await pickQuery.select('id');
     if (pickErr) { console.error('✗ Failed to update pick ' + r.member_id + ':', pickErr.message); continue; }
- 
+    if (!updatedPickRows || updatedPickRows.length === 0) {
+      console.log('  ' + r.member_id + ': base/bonus changed under us (a concurrent run already applied this) — skipping duplicate score event');
+      continue;
+    }
+
     await supabase.from('music_songs').delete().eq('pick_id', r.id);
     if (r.songs.length > 0) {
       var songRows = r.songs.map(function(s) {

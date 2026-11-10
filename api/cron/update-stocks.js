@@ -125,12 +125,29 @@ module.exports = async function handler(req, res) {
     if (metricLocked) skipped.push('metric');
     if (skipped.length > 0) console.log('  ' + ownerName + ': skipped locked: ' + skipped.join(', '));
  
-    var { error: pickUpdateErr } = await supabase.from('picks').update(pickUpdate).eq('id', r.id);
+    // Optimistic concurrency on `base` (the only field this diffs into a
+    // score event — see the scoreEvents comment above) — same reasoning
+    // and same fix as update-sports.js's equivalent comment: without
+    // conditioning this UPDATE on the pre-update value just read
+    // (r.base), two near-simultaneous invocations of this cron (the
+    // scheduled run and a visitor's manual Refresh via
+    // api/refresh-all.js, or a retried Vercel cron trigger) both compute
+    // the same new base from the same fetched price and both push their
+    // own score_events row for the same real change. Whichever commits
+    // first changes `base` away from what this invocation read, so a
+    // second invocation's conditional UPDATE matches zero rows.
+    var pickUpdateQuery = supabase.from('picks').update(pickUpdate).eq('id', r.id);
+    if (!baseLocked) pickUpdateQuery = pickUpdateQuery.eq('base', r.base);
+    var { data: updatedPickRows, error: pickUpdateErr } = await pickUpdateQuery.select('id');
     if (pickUpdateErr) { console.error('  Failed to update pick ' + r.member_id + ':', pickUpdateErr.message); continue; }
- 
+    if (!updatedPickRows || updatedPickRows.length === 0) {
+      console.log('  ' + r.member_id + ': base changed under us (a concurrent run already applied this) — skipping duplicate score event');
+      continue;
+    }
+
     var { error: stockUpdateErr } = await supabase.from('stock_prices').update({ close_price: r.closePrice }).eq('pick_id', r.id);
     if (stockUpdateErr) { console.error('  Failed to update stock_prices ' + r.member_id + ':', stockUpdateErr.message); continue; }
- 
+
     updated++;
 
     // base-only diff against the pre-update row (r.base) — see the

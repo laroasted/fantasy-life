@@ -398,9 +398,23 @@ module.exports = async function handler(req, res) {
           console.log('  🔒 ' + ownerName + ': skipped locked: ' + skipped.join(', '));
         }
 
-        var { error } = await supabase.from('picks').update(updateObj).eq('id', r.id);
+        // Optimistic concurrency on `base` (the only field GDP's own
+        // delta below is computed from) — same fix, same reasoning as
+        // update-sports.js's identical comment: without conditioning on
+        // the pre-update value just read (r.base), two near-simultaneous
+        // invocations of this cron (the scheduled monthly run and a
+        // visitor's manual Refresh via api/refresh-all.js, or a retried
+        // Vercel cron trigger) both push their own score_events row for
+        // the same real change. Whichever commits first moves base away
+        // from what this one read, so a second invocation's conditional
+        // UPDATE matches zero rows.
+        var updateQuery = supabase.from('picks').update(updateObj).eq('id', r.id);
+        if (!baseLocked) updateQuery = updateQuery.eq('base', r.base);
+        var { data: updatedRows, error } = await updateQuery.select('id');
         if (error) {
           console.error('  DB error updating ' + r.pick + ':', error.message);
+        } else if (!updatedRows || updatedRows.length === 0) {
+          console.log('  ' + ownerName + ': base changed under us (a concurrent run already applied this) — skipping duplicate score event');
         } else {
           updated++;
 
@@ -508,13 +522,25 @@ module.exports = async function handler(req, res) {
 
           var picksWriteOk = true;
           if (!olyErr && !bonusLocked) {
-            var { error: picksErr } = await supabase.from('picks').update({
+            // Optimistic concurrency on `bonus` (the only field this
+            // Olympics delta is computed from) — same fix, same
+            // reasoning as the GDP block above and update-sports.js's
+            // original comment: without conditioning on the pre-update
+            // value just read (pick.bonus), two near-simultaneous
+            // invocations of this cron both push their own score_events
+            // row for the same real medal-count change. A lost race sets
+            // picksWriteOk = false, the same flag an outright write error
+            // already uses to suppress the duplicate score event below.
+            var { data: updatedPicksRows, error: picksErr } = await supabase.from('picks').update({
               bonus: bonusPts,
               bonus_note: bonusPts > 0 ? medalNote : '',
               updated_at: new Date().toISOString()
-            }).eq('id', pick.id);
+            }).eq('id', pick.id).eq('bonus', pick.bonus).select('id');
             if (picksErr) {
               console.error('  DB error updating bonus for ' + pick.pick + ':', picksErr.message);
+              picksWriteOk = false;
+            } else if (!updatedPicksRows || updatedPicksRows.length === 0) {
+              console.log('  ' + ownerName2 + ': bonus changed under us (a concurrent run already applied this) — skipping duplicate score event');
               picksWriteOk = false;
             } else {
               olympicsUpdated++;
