@@ -349,8 +349,10 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   separate file per route or a `[action].js` dynamic path segment — a
   separate file per route would push this app's Serverless Function
   count over the Vercel Hobby plan's 12-per-deployment cap (this repo
-  sits at exactly 11; every file directly under `api/` not prefixed `_`
-  is its own function), and the bracket-segment version specifically
+  sits at exactly 12 as of `api/draft-lookup.js` below — every file
+  under `api/`, cron subfolder included, not prefixed `_`, is its own
+  function — meaning there is no slot left for a 13th without either
+  consolidating further or upgrading off Hobby), and the bracket-segment version specifically
   does not route correctly on this project's Vercel config — a request
   to it 404/405s through the static SPA fallback instead of reaching
   the function. A flat, non-nested filename is what every other route
@@ -458,6 +460,64 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   happen server-side (`VAPID_PRIVATE_KEY`). Reports back `sent`/`failed`
   counts so "no active subscription for this member" is distinguishable
   from a real send failure.
+
+## Draft-time pick lookup (autocomplete / "did you mean")
+
+- Fixes a real gap: the categories with no closed option list (Actor,
+  Actress, Musician, Stock) and the three sports whose curated dropdown is
+  a popularity-trimmed subset of a bigger real league (NCAAF, NCAAB, MLS —
+  see "Custom..." in `src/constants/pickOptions.js`) used to go straight
+  to free text with nothing checking it until the scoring cron ran, weeks
+  later, with no human watching. A misspelling either froze that
+  category's score at zero forever with the only trace a Vercel log line
+  no one reads, or — for Actor/Actress specifically — `findPersonId()`'s
+  TMDB fuzzy-search fallback (`update-entertainment.js`) could silently
+  attach a real but WRONG person's stats to the pick, no error at all.
+  Country had the same problem until its own fix (see "Country" in the
+  event reference above this file's Mixpanel section) gave it a real,
+  closed dropdown; these five categories can't get that same fix because
+  there's no small closed universe to enumerate — the fix here is a live
+  lookup instead.
+- `api/draft-lookup.js` is a read-only, on-demand resolver — no auth, no
+  DB writes — hit from `DraftTool.jsx`'s "Custom..." field as the person
+  types (350ms debounce), dispatched by `?category=actor|actress|
+  musician|stock|team` (`&sport=ncaaf|ncaab|mls` for `team`) the same way
+  `api/push.js` dispatches by `?action=` — see that file's own comment on
+  why this has to be one file, not five: it's the 12th and last available
+  function under the Hobby 12-cap (see "Push notifications" above).
+- Actor/Actress hits TMDB's `/search/person` (same `TMDB_API_KEY` as
+  `update-entertainment.js`); Musician hits MusicBrainz's `/ws/2/artist`
+  (free, no key, requires a descriptive `User-Agent` per its usage
+  policy); Stock hits Yahoo Finance's `/v1/finance/search` (free, no key —
+  a different Yahoo endpoint than `update-stocks.js`'s own `/v8/finance/
+  chart` price fetch, since that one needs an already-correct ticker and
+  returns no company name, wrong shape for "search by whatever was
+  typed"). `team` reuses `update-sports.js`'s `fetchESPNStandings`/
+  `ESPN_LEAGUES` (MLS) and `update-college.js`'s `fetchESPNTeams`/
+  `COLLEGE_LEAGUES` (NCAAF/NCAAB) — both files now attach those to their
+  `module.exports` specifically so this endpoint has one live-fetch
+  source of truth to call instead of a second copy of the ESPN URL/
+  parsing that could drift, same reasoning as Country's shared
+  `src/constants/countries.js`. Deliberately NOT reusing either file's own
+  `matchTeam()` — that's single-best-match, built for resolving an
+  already-fully-typed pick during scoring, not listing live candidates as
+  someone types; this file does its own lightweight substring filter over
+  the same fetched team list instead.
+- Tennis/Golf/F1 are deliberately NOT covered — `update-events.js`'s
+  matching for those depends on HTML-scraped ESPN pages, too slow/fragile
+  to call synchronously from an autocomplete, and their curated dropdowns
+  already cover the realistic field well enough that Custom is rarely
+  reached for them anyway.
+- The key design choice: a confirmed suggestion submits that candidate's
+  own canonical label (`isCustom: false`, same path as a normal dropdown
+  click) instead of the person's raw typed text. That's what actually
+  closes both failure modes — a name picked this way is, by construction,
+  one the scoring cron's exact/near-exact match path resolves on the
+  first try, never needing TMDB's risky first-fuzzy-result fallback or
+  leaving a typo to fail silently. Raw free text is still accepted exactly
+  as before (Enter, or the Pick button with no suggestion chosen) for
+  whenever there's genuinely no good match — this is additive, not a
+  replacement for that escape hatch.
 
 ## Governance
 

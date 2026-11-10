@@ -28,6 +28,23 @@ Object.entries(CATEGORY_KEY_TO_ID).forEach(([key, id]) => {
   DRAFT_ID_TO_CATEGORY_KEY[id] = key;
 });
 
+// Categories whose "Custom..." free-text field gets a live "did you mean"
+// lookup against api/draft-lookup.js, keyed the same way that endpoint's
+// own `?category=`/`?sport=` params are — see that file's header comment
+// for the full reasoning. Deliberately excludes tennis/golf/f1 (their
+// scoring match depends on HTML-scraped pages, too fragile/slow to call
+// live from an autocomplete) and country (already a closed, fully-
+// curated dropdown as of the Country fix, no free text to spell-check).
+const DRAFT_LOOKUP_CONFIG = {
+  actor: { category: "actor" },
+  actress: { category: "actress" },
+  musician: { category: "musician" },
+  stock: { category: "stock" },
+  ncaaf: { category: "team", sport: "ncaaf" },
+  ncaab: { category: "team", sport: "ncaab" },
+  mls: { category: "team", sport: "mls" },
+};
+
 // How many seconds are left on a live session's clock right now — not a
 // value written to the DB every second (see phase14_live_draft.sql's own
 // comment on this), but derived locally from the three fields that ARE
@@ -150,6 +167,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [showHistory, setShowHistory] = useState(false);
   const [showRoster, setShowRoster] = useState(null);
   const [customInput, setCustomInput] = useState("");
+  const [customSuggestions, setCustomSuggestions] = useState([]);
+  const [customLookupLoading, setCustomLookupLoading] = useState(false);
   const [pickHistory, setPickHistory] = useState([]);
   // Defaults to NEXT season (current season's year + 1), not literally
   // today's calendar year — a draft started partway through, say, 2026
@@ -168,6 +187,35 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   const timerRef = useRef(null);
+
+  // Live "did you mean" lookup for the Custom field, against
+  // api/draft-lookup.js — see DRAFT_LOOKUP_CONFIG above and that file's
+  // own header comment for the full reasoning. Debounced so typing
+  // doesn't fire a network request per keystroke; `cancelled` guards
+  // against a slow response for an earlier keystroke landing after a
+  // newer one already started (or the category/input changed again),
+  // which would otherwise clobber the newer, more relevant result.
+  useEffect(() => {
+    const cfg = selectedCategory && DRAFT_LOOKUP_CONFIG[selectedCategory.id];
+    const q = customInput.trim();
+    if (!cfg || !q) { setCustomSuggestions([]); setCustomLookupLoading(false); return; }
+    let cancelled = false;
+    setCustomLookupLoading(true);
+    const debounce = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ category: cfg.category, query: q });
+        if (cfg.sport) params.set("sport", cfg.sport);
+        const res = await fetch("/api/draft-lookup?" + params.toString());
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled) setCustomSuggestions(data.candidates || []);
+      } catch (e) {
+        if (!cancelled) setCustomSuggestions([]);
+      } finally {
+        if (!cancelled) setCustomLookupLoading(false);
+      }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(debounce); };
+  }, [customInput, selectedCategory]);
 
   // ═══════════════════════════════════════════════════════════════
   // LIVE DRAFT — roadmap step 1 of 2 (see docs/live-draft-phase2.md
@@ -1168,16 +1216,54 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                       .filter((opt) => !Object.values(effective.picks).includes(opt))
                       .map((opt) => {
                         if (opt === "Custom...") {
+                          // Live-lookup-eligible categories (DRAFT_LOOKUP_CONFIG)
+                          // get a "did you mean" suggestion list below the raw
+                          // input — see api/draft-lookup.js's header comment for
+                          // why. Picking a suggestion submits ITS canonical
+                          // label (isCustom: false, same path as a normal
+                          // dropdown option), not whatever was typed; the
+                          // input/button above stays exactly as before for
+                          // anyone who ignores the suggestions or whose pick
+                          // genuinely isn't found.
+                          const lookupCfg = DRAFT_LOOKUP_CONFIG[selectedCategory.id];
                           return (
-                            <div key="custom" style={{ display: "flex", gap: 8 }}>
-                              <input value={customInput} onChange={(e) => setCustomInput(e.target.value)}
-                                placeholder="Type custom pick..." style={{ ...inputStyle, flex: 1 }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" && customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
-                                }} />
-                              <button onClick={() => {
-                                if (customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
-                              }} style={{ ...buttonStyle(theme.grn), padding: "8px 16px" }}>Pick</button>
+                            <div key="custom">
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <input value={customInput} onChange={(e) => setCustomInput(e.target.value)}
+                                  placeholder="Type custom pick..." style={{ ...inputStyle, flex: 1 }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" && customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
+                                  }} />
+                                <button onClick={() => {
+                                  if (customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
+                                }} style={{ ...buttonStyle(theme.grn), padding: "8px 16px" }}>Pick</button>
+                              </div>
+                              {lookupCfg && customInput.trim() && (
+                                <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                                  {customLookupLoading && (
+                                    <div style={{ fontSize: 11, color: theme.dim }}>Searching…</div>
+                                  )}
+                                  {!customLookupLoading && customSuggestions.length === 0 && (
+                                    <div style={{ fontSize: 11, color: theme.dim }}>
+                                      No matches found — "Pick" will submit "{customInput.trim()}" as typed.
+                                    </div>
+                                  )}
+                                  {customSuggestions.map((s) => (
+                                    <button key={s.id} onClick={() => makePick(selectedCategory.id, s.label, false)}
+                                      style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
+                                        textAlign: "left", padding: "6px 10px",
+                                        display: "flex", alignItems: "center", gap: 8 }}>
+                                      {s.photoUrl && (
+                                        <img src={s.photoUrl} alt="" style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                                      )}
+                                      <span>
+                                        <div style={{ fontSize: 12, fontWeight: 600 }}>{s.label}</div>
+                                        {s.sublabel && <div style={{ fontSize: 10, color: theme.dim }}>{s.sublabel}</div>}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         }
