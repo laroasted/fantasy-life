@@ -235,6 +235,24 @@ export default function App() {
     const cached = readCachedActiveSeason();
     return cached ? cached.season : null;
   });
+  // Mirrors activeSeason, but updated manually and synchronously by
+  // handleSettingsSave itself (below) the instant it computes a new
+  // season — never by relying on React to have actually committed a
+  // render yet. handleSettingsSave reads THIS, not `activeSeason`
+  // directly, as the base for the next save. This is what makes two
+  // settings saves fired back-to-back actually safe: an earlier version
+  // read setActiveSeason's own functional-updater argument for this
+  // instead, assuming React invokes it synchronously — true only via
+  // React's "eager state" bailout, which specifically does NOT apply
+  // when another update on the same state is already queued, i.e.
+  // exactly the back-to-back-saves case this exists to handle (caught
+  // independently by this repo's own Claude Code review bot and Codex
+  // — both named the same mechanism). The effect below keeps this in
+  // sync for every OTHER way activeSeason can change (loadSeason, a
+  // realtime refresh) — not needed for the settings-save race itself,
+  // just so this ref never goes stale relative to reality in general.
+  const activeSeasonRef = useRef(activeSeason);
+  useEffect(() => { activeSeasonRef.current = activeSeason; }, [activeSeason]);
   const [archivedSeasons, setArchivedSeasons] = useState([]);
   // Separate from `loaded` on purpose: `loaded` now flips as soon as the
   // active season alone is in hand (it no longer waits on archived
@@ -845,32 +863,36 @@ export default function App() {
   // build their patch this way now instead of cloning the `seasonData`
   // prop they were handed. That prop can be stale the instant two of
   // those fire close together (a fast double-click, or two separate
-  // instant-save actions landing in the same tick before React delivers
-  // the first one's result back down as a new prop) — each used to clone
+  // instant-save actions landing in the same tick) — each used to clone
   // from the SAME pre-save season, so the second call's onSave silently
-  // discarded whichever change wasn't the last one to reach
-  // setActiveSeason, not whichever the commissioner actually intended to
-  // keep. Running the updater inside setActiveSeason's own functional
-  // form means it always applies on top of the real current state,
-  // never a stale snapshot — the same reason loadSeason() elsewhere in
-  // this file uses the functional form for its projections patch.
+  // discarded whichever change wasn't the last one applied, not
+  // whichever the commissioner actually intended to keep.
+  //
+  // `updater(prevSeason)` is called directly, as a plain synchronous
+  // function call against activeSeasonRef.current — not inside
+  // setActiveSeason's functional-updater argument, which an earlier
+  // version of this fix relied on and which does NOT reliably run
+  // synchronously (that's React's "eager state" bailout, which React
+  // skips once another update on this state is already queued —
+  // precisely the back-to-back-saves case this function exists to
+  // handle). A plain function call has no such ambiguity: by the time
+  // this line returns, `updater` has definitely already run.
   const handleSettingsSave = useCallback(async (updater) => {
     if (!isCommissioner) {
       throw new Error("Commissioner access required to save season settings.");
     }
-    let updatedSeason, prevSeasonRef;
-    setActiveSeason((prev) => {
-      prevSeasonRef = prev;
-      updatedSeason = updater(prev);
-      return updatedSeason;
-    });
+    const prevSeason = activeSeasonRef.current;
+    const updatedSeason = updater(prevSeason);
     // An updater signals "nothing actually changed" by returning the
-    // exact `prev` reference it was handed rather than a new object —
-    // applyChanges() does this when there were no pending edits to save.
-    // Skip the cache write and the two Supabase round-trips entirely in
-    // that case, the same no-op short-circuit the old, pre-refactor code
-    // had before it ever touched onSave at all.
-    if (updatedSeason === prevSeasonRef) return;
+    // exact `prevSeason` reference it was handed rather than a new
+    // object — applyChanges()/applyPaywallChanges() do this when there
+    // were no pending edits to save. Skip the ref update, the cache
+    // write, and the two Supabase round-trips entirely in that case,
+    // the same no-op short-circuit the pre-refactor code had before it
+    // ever touched onSave at all.
+    if (updatedSeason === prevSeason) return;
+    activeSeasonRef.current = updatedSeason;
+    setActiveSeason(updatedSeason);
     cacheActiveSeason(updatedSeason);
     // Both save calls return a boolean rather than throwing (see their
     // own comments in storage.js) — previously neither was checked, so a

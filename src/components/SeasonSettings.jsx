@@ -16,6 +16,28 @@ var EVENT_CATS = ["Tennis", "Golf", "F1"];
 var COUNTRY_CATS = ["Country"];
 var STOCK_CATS = ["Stock"];
 
+// The editable-field definitions for Musician's two independent
+// sub-arrays — single source of truth for both the detail editor's
+// render (where they used to be defined inline, separately, as
+// `songFields`/`grammyFields`) and deleteDetailRow's lock reindex below.
+// A field-level lock key never embeds which subArray it belongs to
+// (unlike a row-level key) — only `<cat>|<owner>|d<idx>|<fieldKey>` —
+// so the reindex uses these key NAMES to tell a songs-row field lock
+// apart from a grammys-row field lock sharing the same index, rather
+// than matching the shared `d<idx>|` prefix alone (which would also
+// reindex/delete the OTHER subArray's field lock at that index, even
+// though its own array never changed — Codex-caught, real).
+var SONG_FIELDS = [
+ { key: "title", label: "Song", type: "text" },
+ { key: "weeks", label: "Weeks", type: "number" },
+ { key: "numOneWeeks", label: "#1 Wks", type: "number" },
+];
+var GRAMMY_FIELDS = [
+ { key: "category", label: "Category", type: "text" },
+ { key: "result", label: "Result", type: "select", options: ["win", "nom"] },
+ { key: "pts", label: "Pts", type: "number" },
+];
+
 function catType(cat) {
  if (SPORT_CATEGORIES.includes(cat)) return "sport";
  if (FILM_CATS.includes(cat)) return "film";
@@ -423,15 +445,23 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    // fields the scoring crons are allowed to overwrite. Row-level keys
    // embed `subArray` when present (see the rKey construction in
    // renderArrayEditor below) so they're matched and rewritten scoped to
-   // it; field-level keys never embed subArray at all in this file's
-   // existing key format, only `cat|owner|d<idx>|<fieldKey>` \u2014 matched
-   // and rewritten on that basis alone. That's unambiguous today because
-   // no two subArrays sharing a category currently reuse a field key
-   // name (songs: title/weeks/numOneWeeks; grammys: category/result/pts)
-   // \u2014 would need its own fix if that ever changed.
+   // it directly. Field-level keys never embed subArray in their own
+   // format at all \u2014 only `cat|owner|d<idx>|<fieldKey>` \u2014 so for
+   // Musician specifically (the one category with two independent
+   // sub-arrays sharing this key shape) the field NAME is used to tell
+   // which subArray a given field lock actually belongs to (SONG_FIELDS/
+   // GRAMMY_FIELDS above \u2014 same definitions the Musician editor renders
+   // from); a key matching the prefix but belonging to the OTHER
+   // subArray is left alone entirely. Matching on the shared prefix
+   // alone used to also reindex/delete the sibling subArray's field
+   // lock at the same index, even though that array never changed
+   // (Codex-caught, real).
    if (newSeason.locks) {
     var rowPrefix = (subArray ? (cat + "|" + owner + "|" + subArray) : (cat + "|" + owner)) + "|row";
     var fieldPrefix = cat + "|" + owner + "|d";
+    var fieldKeysForThisSubArray = subArray === "songs" ? SONG_FIELDS.map(function (f) { return f.key; })
+     : subArray === "grammys" ? GRAMMY_FIELDS.map(function (f) { return f.key; })
+     : null; // no subArray split for this category \u2014 any field key matching the prefix is this row's
     var updatedLocks = {};
     Object.keys(newSeason.locks).forEach(function (k) {
      if (k.indexOf(rowPrefix) === 0 && /^\d+$/.test(k.slice(rowPrefix.length))) {
@@ -446,9 +476,16 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
       if (pipeIdx > 0 && /^\d+$/.test(afterPrefix.slice(0, pipeIdx))) {
        var fn = parseInt(afterPrefix.slice(0, pipeIdx), 10);
        var fieldRest = afterPrefix.slice(pipeIdx); // leading "|" + fieldKey
-       if (fn === idx) return; // the deleted row's own field lock
-       updatedLocks[fn > idx ? (fieldPrefix + (fn - 1) + fieldRest) : k] = newSeason.locks[k];
-       return;
+       var fieldKeyName = fieldRest.slice(1);
+       var belongsToThisSubArray = !fieldKeysForThisSubArray || fieldKeysForThisSubArray.indexOf(fieldKeyName) !== -1;
+       if (belongsToThisSubArray) {
+        if (fn === idx) return; // the deleted row's own field lock
+        updatedLocks[fn > idx ? (fieldPrefix + (fn - 1) + fieldRest) : k] = newSeason.locks[k];
+        return;
+       }
+       // Shares the prefix but belongs to the sibling subArray (e.g.
+       // deleting a songs row while this key is a grammys field lock,
+       // or vice versa) \u2014 that array didn't change, leave it untouched.
       }
      }
      updatedLocks[k] = newSeason.locks[k]; // unrelated lock \u2014 untouched
@@ -797,16 +834,8 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   if (ct === "event") return renderArrayEditor(entry, d.majors || [], getDetailFields(), "Event");
 
   if (ct === "music") {
-   var songFields = [
-    { key: "title", label: "Song", type: "text" },
-    { key: "weeks", label: "Weeks", type: "number" },
-    { key: "numOneWeeks", label: "#1 Wks", type: "number" },
-   ];
-   var grammyFields = [
-    { key: "category", label: "Category", type: "text" },
-    { key: "result", label: "Result", type: "select", options: ["win", "nom"] },
-    { key: "pts", label: "Pts", type: "number" },
-   ];
+   var songFields = SONG_FIELDS;
+   var grammyFields = GRAMMY_FIELDS;
    return (
     <div style={{ padding: "8px 0" }}>
      <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4 }}>Billboard Songs</div>
