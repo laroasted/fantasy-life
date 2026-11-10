@@ -67,7 +67,7 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
 
   var { data, error: err } = await supabasePublic
    .from("score_events")
-   .select("member_id, category, delta, cause, occurred_at")
+   .select("id, member_id, category, delta, cause, occurred_at")
    .eq("season_year", seasonYear)
    .order("occurred_at", { ascending: false })
    .limit(FEED_LIMIT);
@@ -169,7 +169,14 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
      var positive = Number(ev.delta) > 0;
      var clickable = !!onCategorySelect;
      return (
-      <div key={idx}
+      // Keyed by the row's own id, not array index — every realtime/
+      // refresh refetch returns a brand-new array (a new event pushes the
+      // rest down a slot), so an index key made React treat every row as
+      // "changed" each time and re-render all their text at once, reading
+      // as the whole feed flashing. Keying by id lets it recognize
+      // untouched rows and just move them, so only the genuinely new row
+      // visibly appears.
+      <div key={ev.id != null ? ev.id : idx}
        className={clickable ? "interactive" : undefined}
        onClick={clickable ? function () {
          track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surface || "scoreboard", category: ev.category, previous_category: "activity_feed" });
