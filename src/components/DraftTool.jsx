@@ -1220,7 +1220,30 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                   <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
                     {(PICK_OPTIONS[selectedCategory.id] || ["Custom..."])
                       .filter((opt) => opt.toLowerCase().includes(searchFilter.toLowerCase()))
-                      .filter((opt) => !Object.values(effective.picks).includes(opt))
+                      .filter((opt) => {
+                        // Scoped to THIS category's own picks (key suffix
+                        // "-<categoryId>"), not every pick anyone has made
+                        // in any category. The old check compared against
+                        // Object.values(effective.picks) as a whole, so
+                        // once any member picked e.g. "Alabama" for NCAAF,
+                        // NCAAB's own, independent "Alabama" option — a
+                        // real, untaken slot — silently vanished from this
+                        // list for the rest of the draft, for every
+                        // category that happens to share a name with
+                        // another (NCAAF/NCAAB share ~30 school names;
+                        // NCAAB/MLS both have "Cincinnati"). Mirrors the
+                        // equally-scoped fix in submit_draft_pick's own
+                        // selection_already_taken check
+                        // (supabase/phase19_draft_pick_rpcs.sql) — that one
+                        // is the real, server-enforced gate; this is only
+                        // the advisory client-side list, same relationship
+                        // as the category_already_picked check just above
+                        // it in that file.
+                        const suffix = "-" + selectedCategory.id;
+                        return !Object.entries(effective.picks).some(
+                          ([key, val]) => val === opt && key.endsWith(suffix)
+                        );
+                      })
                       .map((opt) => {
                         if (opt === "Custom...") {
                           // Live-lookup-eligible categories (DRAFT_LOOKUP_CONFIG)
