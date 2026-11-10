@@ -839,17 +839,64 @@ export default function App() {
     setActiveTab("scoreboard");
   }, [activeSeason, archivedSeasons]);
  
-  const handleSettingsSave = useCallback(async (updatedSeason) => {
+  // `updater` is a function (prev) => updatedSeason, not an
+  // already-computed object — SeasonSettings.jsx's own toggleLock/
+  // addDetailRow/deleteDetailRow/applyChanges/applyPaywallChanges all
+  // build their patch this way now instead of cloning the `seasonData`
+  // prop they were handed. That prop can be stale the instant two of
+  // those fire close together (a fast double-click, or two separate
+  // instant-save actions landing in the same tick before React delivers
+  // the first one's result back down as a new prop) — each used to clone
+  // from the SAME pre-save season, so the second call's onSave silently
+  // discarded whichever change wasn't the last one to reach
+  // setActiveSeason, not whichever the commissioner actually intended to
+  // keep. Running the updater inside setActiveSeason's own functional
+  // form means it always applies on top of the real current state,
+  // never a stale snapshot — the same reason loadSeason() elsewhere in
+  // this file uses the functional form for its projections patch.
+  const handleSettingsSave = useCallback(async (updater) => {
     if (!isCommissioner) {
       throw new Error("Commissioner access required to save season settings.");
     }
-    setActiveSeason(updatedSeason);
+    let updatedSeason, prevSeasonRef;
+    setActiveSeason((prev) => {
+      prevSeasonRef = prev;
+      updatedSeason = updater(prev);
+      return updatedSeason;
+    });
+    // An updater signals "nothing actually changed" by returning the
+    // exact `prev` reference it was handed rather than a new object —
+    // applyChanges() does this when there were no pending edits to save.
+    // Skip the cache write and the two Supabase round-trips entirely in
+    // that case, the same no-op short-circuit the old, pre-refactor code
+    // had before it ever touched onSave at all.
+    if (updatedSeason === prevSeasonRef) return;
     cacheActiveSeason(updatedSeason);
+    // Both save calls return a boolean rather than throwing (see their
+    // own comments in storage.js) — previously neither was checked, so a
+    // failed Supabase write (network blip, RLS hiccup, migration not yet
+    // applied) was invisible to the commissioner: the UI already showed
+    // the change as saved, and it would silently revert on the next
+    // reload/realtime refresh with no error ever surfaced. Local state
+    // and the cache are deliberately left as the optimistic new value
+    // either way — reverting them here would just be a second, different
+    // kind of surprise (the commissioner's own edit vanishing mid-session)
+    // — but the thrown error below is what lets a caller that awaits this
+    // (every onSave call site in SeasonSettings.jsx now does) show that
+    // the write didn't actually persist.
+    let locksOk = true, paywallsOk = true;
     if (updatedSeason.locks && updatedSeason.year) {
-      await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
+      locksOk = await saveLocksToSupabase(updatedSeason.year, updatedSeason.locks);
     }
     if (updatedSeason.paywalls && updatedSeason.year) {
-      await savePaywallsToSupabase(updatedSeason.year, updatedSeason.paywalls);
+      paywallsOk = await savePaywallsToSupabase(updatedSeason.year, updatedSeason.paywalls);
+    }
+    if (!locksOk || !paywallsOk) {
+      throw new Error(
+        "Saved locally, but the write to Supabase failed (" +
+        [!locksOk && "locks", !paywallsOk && "paywalls"].filter(Boolean).join(", ") +
+        ") — this change may revert on the next reload. Check your connection and try again."
+      );
     }
   }, [isCommissioner]);
 
