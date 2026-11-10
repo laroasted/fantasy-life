@@ -608,12 +608,28 @@ module.exports = async function handler(req, res) {
         // there's nothing to log a delta for).
         var newBaseVal, newBonusVal, writeFailed = false;
         if (Object.keys(updateObj).length > 0) {
-          var { error } = await supabase.from('picks').update(updateObj).eq('id', matchingPick.id);
-          if (!error) {
+          // Optimistic concurrency on whichever of base/bonus this cycle
+          // writes — same fix, same reasoning as update-sports.js's
+          // identical comment: without conditioning on the pre-update
+          // value just read (matchingPick.base/bonus), two near-
+          // simultaneous invocations of this cron (the scheduled weekly
+          // run and a visitor's manual Refresh via api/refresh-all.js, or
+          // a retried Vercel cron trigger) both push their own
+          // score_events row for the same real change. A lost race is
+          // folded into the existing `writeFailed` path below — it
+          // already means "nothing changed from this invocation's own
+          // perspective," which is exactly right here too: a concurrent
+          // run already applied it, so this one must not record it again.
+          var updateQuery = supabase.from('picks').update(updateObj).eq('id', matchingPick.id);
+          if (!baseLocked) updateQuery = updateQuery.eq('base', matchingPick.base);
+          if (bonusWritable) updateQuery = updateQuery.eq('bonus', matchingPick.bonus);
+          var { data: updatedPickRows, error } = await updateQuery.select('id');
+          if (!error && updatedPickRows && updatedPickRows.length > 0) {
             updated++;
             newBaseVal = baseLocked ? (Number(matchingPick.base) || 0) : (Number(r.base) || 0);
             newBonusVal = bonusWritable ? bonusEntry.tier : (Number(matchingPick.bonus) || 0);
           } else {
+            if (!error) console.log('    ' + own + ': base/bonus changed under us (a concurrent run already applied this) — skipping duplicate score event');
             writeFailed = true;
             newBaseVal = Number(matchingPick.base) || 0;
             newBonusVal = Number(matchingPick.bonus) || 0;

@@ -269,6 +269,28 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   already has in memory (matched ESPN team/athlete, chart weeks,
   box-office/RT score, % price change, GDP growth %, Olympic medal rank)
   for the `cause` text, then calls the shared `writeScoreEventsAndNotify()`
+  — but only after the `picks` UPDATE that actually applies the real
+  score change, and that UPDATE is itself optimistically-concurrent on
+  whichever of `base`/`bonus` it's writing (conditioned on the pre-update
+  value this run read, checked via `.select('id')` returning a row).
+  Without that, two near-simultaneous invocations of the SAME cron — the
+  scheduled Vercel cron and a visitor's manual Refresh
+  (`/api/refresh-all`, which runs these same handlers in-process with no
+  coordination against the independent schedule in `vercel.json`), or
+  Vercel itself retrying a cron trigger — both read the same pre-update
+  row, both compute the same new value from the same fetched data
+  (harmless on its own: the final `picks` row ends up correct either
+  way), and both used to unconditionally overwrite it and push their own
+  `score_events` row for the one real change — the Activity Feed showed
+  it twice and the affected member got two push notifications for it.
+  Whichever invocation's conditional UPDATE commits first moves
+  base/bonus away from what the other one read, so a second, racing
+  invocation's own conditional UPDATE matches zero rows and it backs off
+  — logged, not pushed as a duplicate — instead of double-recording the
+  change. `update-entertainment.js` folds this into its existing
+  `writeFailed` flag (a lost race means the same thing as a failed write
+  for this purpose: nothing to diff from this invocation's perspective);
+  every other cron here uses the same shape inline.
   (`api/_lib/push.js`) to batch-insert the run's `scoreEvents` and send
   the resulting pushes — extracted there (originally inline, only in
   update-sports.js) specifically so this logic has one copy shared across

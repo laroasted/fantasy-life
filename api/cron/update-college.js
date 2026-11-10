@@ -407,8 +407,24 @@ module.exports = async function handler(req, res) {
    if (bonusResult && bonusLocked) skipped.push('bonus');
    if (skipped.length > 0) console.log(' ' + ownerName + ': skipped locked/frozen fields: ' + skipped.join(', '));
 
-   var { error: updateErr } = await supabase.from('picks').update(updateObj).eq('id', m.id);
+   // Optimistic concurrency on whichever of base/bonus this cycle writes
+   // — same fix, same reasoning as update-sports.js's identical comment:
+   // without conditioning on the pre-update value just read (m.base/
+   // m.bonus), two near-simultaneous invocations of this cron (the
+   // scheduled run and a visitor's manual Refresh via
+   // api/refresh-all.js, or a retried Vercel cron trigger) both push
+   // their own score_events row for the same real change. Whichever
+   // commits first moves base/bonus away from what this one read, so a
+   // second invocation's conditional UPDATE matches zero rows.
+   var updateQuery = supabase.from('picks').update(updateObj).eq('id', m.id);
+   if (baseWritable) updateQuery = updateQuery.eq('base', m.base);
+   if (bonusWritable) updateQuery = updateQuery.eq('bonus', m.bonus);
+   var { data: updatedRows, error: updateErr } = await updateQuery.select('id');
    if (updateErr) { console.error(' Failed to update ' + m.member_id + ':', updateErr.message); continue; }
+   if (!updatedRows || updatedRows.length === 0) {
+    console.log(' ' + m.member_id + ': base/bonus changed under us (a concurrent run already applied this) — skipping duplicate score event');
+    continue;
+   }
 
    updated++;
 

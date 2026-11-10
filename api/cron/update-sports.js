@@ -598,8 +598,31 @@ module.exports = async function handler(req, res) {
         console.log(` ${ownerName}: skipped locked/frozen fields: ${skippedFields.join(', ')}`);
       }
 
-      const { error: updateErr } = await supabase.from('picks').update(updateObj).eq('id', m.id);
+      // Optimistic concurrency on whichever of base/bonus this cycle is
+      // actually writing: condition the UPDATE on the pre-update value
+      // this invocation read (m.base/m.bonus), and check whether it
+      // actually matched a row. Without this, two near-simultaneous
+      // invocations of this same cron — the scheduled Vercel cron and a
+      // visitor's manual Refresh (api/refresh-all.js) hitting it around
+      // the same moment, or Vercel itself retrying a cron trigger — both
+      // read the same pre-update row, both independently compute the
+      // same new value from the same ESPN response (harmless on its
+      // own), and both unconditionally overwrote `picks` and pushed
+      // their own score_events row for the same real change: the
+      // Activity Feed showed the change twice and the member got two
+      // push notifications for one score change. Whichever invocation's
+      // UPDATE commits first changes base/bonus away from what this one
+      // read, so the second invocation's conditional UPDATE matches zero
+      // rows — it backs off instead of recording a duplicate.
+      let updateQuery = supabase.from('picks').update(updateObj).eq('id', m.id);
+      if (baseWritable) updateQuery = updateQuery.eq('base', m.base);
+      if (bonusWritable) updateQuery = updateQuery.eq('bonus', m.bonus);
+      const { data: updatedRows, error: updateErr } = await updateQuery.select('id');
       if (updateErr) { console.error(` Failed to update ${m.member_id}:`, updateErr.message); continue; }
+      if (!updatedRows || updatedRows.length === 0) {
+        console.log(` ${m.member_id}: base/bonus changed under us (a concurrent run already applied this) — skipping duplicate score event`);
+        continue;
+      }
 
       updated++;
 
