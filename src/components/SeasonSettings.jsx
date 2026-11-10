@@ -16,6 +16,28 @@ var EVENT_CATS = ["Tennis", "Golf", "F1"];
 var COUNTRY_CATS = ["Country"];
 var STOCK_CATS = ["Stock"];
 
+// The editable-field definitions for Musician's two independent
+// sub-arrays — single source of truth for both the detail editor's
+// render (where they used to be defined inline, separately, as
+// `songFields`/`grammyFields`) and deleteDetailRow's lock reindex below.
+// A field-level lock key never embeds which subArray it belongs to
+// (unlike a row-level key) — only `<cat>|<owner>|d<idx>|<fieldKey>` —
+// so the reindex uses these key NAMES to tell a songs-row field lock
+// apart from a grammys-row field lock sharing the same index, rather
+// than matching the shared `d<idx>|` prefix alone (which would also
+// reindex/delete the OTHER subArray's field lock at that index, even
+// though its own array never changed — Codex-caught, real).
+var SONG_FIELDS = [
+ { key: "title", label: "Song", type: "text" },
+ { key: "weeks", label: "Weeks", type: "number" },
+ { key: "numOneWeeks", label: "#1 Wks", type: "number" },
+];
+var GRAMMY_FIELDS = [
+ { key: "category", label: "Category", type: "text" },
+ { key: "result", label: "Result", type: "select", options: ["win", "nom"] },
+ { key: "pts", label: "Pts", type: "number" },
+];
+
 function catType(cat) {
  if (SPORT_CATEGORIES.includes(cat)) return "sport";
  if (FILM_CATS.includes(cat)) return "film";
@@ -80,6 +102,18 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  // rest of this component's non-persisted UI state; nothing here is
  // saved with the season.
  var _n = useState({}), testPushStatus = _n[0], setTestPushStatus = _n[1];
+ // Set whenever an onSave() call below rejects — App.jsx's
+ // handleSettingsSave throws when the Supabase write itself failed
+ // (network blip, RLS hiccup), as opposed to the commissioner-access
+ // check, which can't fire from here since this whole component is
+ // already gated on isCommissioner. Previously nothing here awaited or
+ // caught onSave at all, so a failed write was invisible — the UI
+ // already showed the change as saved, and it would silently revert on
+ // the next reload with no error anyone ever saw. Shared across every
+ // save action (locks, detail rows, buffered edits, paywalls) rather
+ // than one per mode, since the failure mode and the fix are identical
+ // regardless of which one triggered it.
+ var _o = useState(""), saveError = _o[0], setSaveError = _o[1];
  var pillsRef = useRef(null);
  // Guards the persist effect below against writing a PREVIOUS season's
  // still-in-memory changelog under a NEW season's storage key. Holds the
@@ -216,17 +250,43 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
 
  // ─── Lock toggle ───
  function isLocked(key) { return !!locks[key]; }
+ // Every onSave() call in this file now passes a (prevSeason) => newSeason
+ // updater, not an already-computed object — App.jsx's handleSettingsSave
+ // applies it inside setActiveSeason's own functional form, so it always
+ // runs against the real current state. This function (and
+ // addDetailRow/deleteDetailRow/applyPaywallChanges/applyChanges below)
+ // used to clone the `seasonData` PROP directly — fine in isolation, but
+ // that prop is only as fresh as the last completed render. Two of these
+ // firing back-to-back (a fast double-click, or two separate instant-
+ // save actions anywhere in Settings landing in the same tick, before a
+ // re-render delivers the first one's result back down as a new prop)
+ // used to both clone from the SAME stale season, so the second save
+ // silently discarded whichever change wasn't the last one applied —
+ // not necessarily the one the commissioner actually intended to keep.
+ //
+ // The updater function runs synchronously as part of the onSave() call
+ // (setActiveSeason's updater argument is invoked immediately, not
+ // deferred — only the resulting re-render is) — so a value computed
+ // inside it (like `nowLocked` here) is already set by the time onSave()
+ // returns its pending promise, safe to read right after without
+ // waiting on that promise. Reused the same way in deleteDetailRow below.
  function toggleLock(key) {
-  var newSeason = JSON.parse(JSON.stringify(seasonData));
-  if (!newSeason.locks) newSeason.locks = {};
-  var nowLocked = !newSeason.locks[key];
-  if (newSeason.locks[key]) {
-   delete newSeason.locks[key];
-  } else {
-   newSeason.locks[key] = { at: new Date().toISOString(), by: "commissioner" };
-  }
+  var nowLocked;
+  var promise = onSave(function (prevSeason) {
+   var newSeason = JSON.parse(JSON.stringify(prevSeason));
+   if (!newSeason.locks) newSeason.locks = {};
+   nowLocked = !newSeason.locks[key];
+   if (newSeason.locks[key]) {
+    delete newSeason.locks[key];
+   } else {
+    newSeason.locks[key] = { at: new Date().toISOString(), by: "commissioner" };
+   }
+   return newSeason;
+  });
   track(EVENTS.LOCK_TOGGLED, { category: editCat, field_key: key, is_locked: nowLocked });
-  onSave(newSeason);
+  promise.then(function () { setSaveError(""); }).catch(function (err) {
+   setSaveError(err && err.message ? err.message : "Failed to save — try again.");
+  });
  }
 
  // ─── Paywall settings (per member) ───
@@ -247,38 +307,50 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   setSavedPaywall(false);
  }
  function applyPaywallChanges() {
-  var newSeason = JSON.parse(JSON.stringify(seasonData));
-  if (!newSeason.paywalls) newSeason.paywalls = {};
   var log = [];
-  var touchedMembers = {};
-  Object.keys(paywallEdits).forEach(function (key) {
-   var sep = key.lastIndexOf("|");
-   touchedMembers[key.slice(0, sep)] = true;
+  var promise = onSave(function (prevSeason) {
+   var newSeason = JSON.parse(JSON.stringify(prevSeason));
+   if (!newSeason.paywalls) newSeason.paywalls = {};
+   var touchedMembers = {};
+   Object.keys(paywallEdits).forEach(function (key) {
+    var sep = key.lastIndexOf("|");
+    touchedMembers[key.slice(0, sep)] = true;
+   });
+   Object.keys(touchedMembers).forEach(function (memberId) {
+    var member = members.find(function (m) { return m.id === memberId; });
+    var memberName = member ? member.name : memberId;
+    var existing = newSeason.paywalls[memberId] || { enabled: false, message: "" };
+    var newEnabled = getPaywallVal(memberId, "enabled");
+    var newMessage = getPaywallVal(memberId, "message");
+    if (!!existing.enabled !== !!newEnabled) {
+     log.push("Paywall — " + memberName + ": " + (newEnabled ? "turned ON" : "turned OFF"));
+    }
+    if ((existing.message || "") !== newMessage) {
+     log.push("Paywall — " + memberName + ': message "' + (existing.message || "") + '" → "' + newMessage + '"');
+    }
+    newSeason.paywalls[memberId] = {
+     enabled: !!newEnabled,
+     message: newMessage,
+     updatedAt: new Date().toISOString(),
+    };
+   });
+   // Returning `prevSeason` itself when nothing actually changed lets
+   // App.jsx's handleSettingsSave detect the no-op by reference and skip
+   // the cache write + Supabase round-trips entirely — same reasoning as
+   // applyChanges()'s identical check above.
+   return log.length === 0 ? prevSeason : newSeason;
   });
-  Object.keys(touchedMembers).forEach(function (memberId) {
-   var member = members.find(function (m) { return m.id === memberId; });
-   var memberName = member ? member.name : memberId;
-   var existing = newSeason.paywalls[memberId] || { enabled: false, message: "" };
-   var newEnabled = getPaywallVal(memberId, "enabled");
-   var newMessage = getPaywallVal(memberId, "message");
-   if (!!existing.enabled !== !!newEnabled) {
-    log.push("Paywall — " + memberName + ": " + (newEnabled ? "turned ON" : "turned OFF"));
-   }
-   if ((existing.message || "") !== newMessage) {
-    log.push("Paywall — " + memberName + ': message "' + (existing.message || "") + '" → "' + newMessage + '"');
-   }
-   newSeason.paywalls[memberId] = {
-    enabled: !!newEnabled,
-    message: newMessage,
-    updatedAt: new Date().toISOString(),
-   };
-  });
+  // `log` is populated synchronously inside the updater above — see
+  // toggleLock's comment on why that's safe to read right here, before
+  // the returned promise resolves.
   if (log.length === 0) { setSavedPaywall(true); return; }
   track(EVENTS.SETTINGS_CHANGES_SAVED, { mode: "paywall", changes_count: log.length });
   setChangelog(function (prev) { return log.concat(prev); });
-  onSave(newSeason);
   setSavedPaywall(true);
   setPaywallEdits({});
+  promise.then(function () { setSaveError(""); }).catch(function (err) {
+   setSaveError(err && err.message ? err.message : "Failed to save — try again.");
+  });
  }
 
  // ─── Push tab: send one test push to a single member ───
@@ -315,57 +387,134 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
 
  // ─── Add a detail row ───
  function addDetailRow(cat, owner, subArray) {
-  var newSeason = JSON.parse(JSON.stringify(seasonData));
-  var d = (newSeason.detailedData[cat] || []).find(function (x) { return x.owner === owner; });
-  if (!d) return;
   var ct = catType(cat);
-  if (ct === "sport") { d.rounds = d.rounds || []; d.rounds.push(newDetailRow("sport")); }
-  else if (ct === "film") { d.films = d.films || []; d.films.push(newDetailRow("film")); }
-  else if (ct === "music" && subArray === "songs") { d.songs = d.songs || []; d.songs.push(newDetailRow("music-song")); }
-  else if (ct === "music" && subArray === "grammys") { d.grammys = d.grammys || []; d.grammys.push(newDetailRow("music-grammy")); }
-  else if (ct === "event") { d.majors = d.majors || []; d.majors.push(newDetailRow("event")); }
-  setChangelog(function (prev) { return [cat + " \u2014 " + owner + ": added new " + (subArray || ct) + " row"].concat(prev); });
+  // Guard stays against the (effectively static — members/categories
+  // don't change concurrently with Settings edits) outer `seasonData`;
+  // only the actual mutation below needs to run against the freshest
+  // state, so it's the only part inside the updater. See toggleLock's
+  // comment above for why cloning `seasonData` directly used to lose a
+  // concurrent save.
+  var dCheck = (seasonData.detailedData[cat] || []).find(function (x) { return x.owner === owner; });
+  if (!dCheck) return;
+  var promise = onSave(function (prevSeason) {
+   var newSeason = JSON.parse(JSON.stringify(prevSeason));
+   var d = (newSeason.detailedData[cat] || []).find(function (x) { return x.owner === owner; });
+   if (!d) return newSeason;
+   if (ct === "sport") { d.rounds = d.rounds || []; d.rounds.push(newDetailRow("sport")); }
+   else if (ct === "film") { d.films = d.films || []; d.films.push(newDetailRow("film")); }
+   else if (ct === "music" && subArray === "songs") { d.songs = d.songs || []; d.songs.push(newDetailRow("music-song")); }
+   else if (ct === "music" && subArray === "grammys") { d.grammys = d.grammys || []; d.grammys.push(newDetailRow("music-grammy")); }
+   else if (ct === "event") { d.majors = d.majors || []; d.majors.push(newDetailRow("event")); }
+   return newSeason;
+  });
+  setChangelog(function (prev) { return [cat + " — " + owner + ": added new " + (subArray || ct) + " row"].concat(prev); });
   track(EVENTS.DETAIL_ROW_ADDED, { category: cat, row_type: subArray || ct });
-  onSave(newSeason);
+  promise.then(function () { setSaveError(""); }).catch(function (err) {
+   setSaveError(err && err.message ? err.message : "Failed to save — try again.");
+  });
  }
 
  // ─── Delete a detail row ───
  function deleteDetailRow(cat, owner, idx, subArray) {
-  var newSeason = JSON.parse(JSON.stringify(seasonData));
-  var d = (newSeason.detailedData[cat] || []).find(function (x) { return x.owner === owner; });
-  if (!d) return;
   var ct = catType(cat);
-  var arr;
-  if (subArray === "grammys") arr = d.grammys;
-  else if (subArray === "songs") arr = d.songs;
-  else if (ct === "sport") arr = d.rounds;
-  else if (ct === "film") arr = d.films;
-  else if (ct === "event") arr = d.majors;
-  if (arr && arr[idx]) {
+  var label = null;
+  var promise = onSave(function (prevSeason) {
+   var newSeason = JSON.parse(JSON.stringify(prevSeason));
+   var d = (newSeason.detailedData[cat] || []).find(function (x) { return x.owner === owner; });
+   if (!d) return newSeason;
+   var arr;
+   if (subArray === "grammys") arr = d.grammys;
+   else if (subArray === "songs") arr = d.songs;
+   else if (ct === "sport") arr = d.rounds;
+   else if (ct === "film") arr = d.films;
+   else if (ct === "event") arr = d.majors;
+   if (!arr || !arr[idx]) return newSeason;
+
    var removed = arr[idx];
-   var label = removed.title || removed.round || removed.event || removed.category || "row";
+   label = removed.title || removed.round || removed.event || removed.category || "row";
    arr.splice(idx, 1);
+
+   // Every lock on a row AFTER idx needs its own embedded index shifted
+   // down by one to keep tracking the row it actually belongs to, now
+   // that splice() moved it \u2014 a lock on row 2 must become a lock on row
+   // 1 once row 1 is deleted and row 2 slides into its place. The
+   // previous version only ever deleted the removed row's OWN lock(s),
+   // leaving every later row's lock still keyed to its OLD index from
+   // then on \u2014 silently protecting (or leaving unprotected) the WRONG
+   // row, not a cosmetic bug: these keys are exactly what gates which
+   // fields the scoring crons are allowed to overwrite. Row-level keys
+   // embed `subArray` when present (see the rKey construction in
+   // renderArrayEditor below) so they're matched and rewritten scoped to
+   // it directly. Field-level keys never embed subArray in their own
+   // format at all \u2014 only `cat|owner|d<idx>|<fieldKey>` \u2014 so for
+   // Musician specifically (the one category with two independent
+   // sub-arrays sharing this key shape) the field NAME is used to tell
+   // which subArray a given field lock actually belongs to (SONG_FIELDS/
+   // GRAMMY_FIELDS above \u2014 same definitions the Musician editor renders
+   // from); a key matching the prefix but belonging to the OTHER
+   // subArray is left alone entirely. Matching on the shared prefix
+   // alone used to also reindex/delete the sibling subArray's field
+   // lock at the same index, even though that array never changed
+   // (Codex-caught, real).
+   if (newSeason.locks) {
+    var rowPrefix = (subArray ? (cat + "|" + owner + "|" + subArray) : (cat + "|" + owner)) + "|row";
+    var fieldPrefix = cat + "|" + owner + "|d";
+    var fieldKeysForThisSubArray = subArray === "songs" ? SONG_FIELDS.map(function (f) { return f.key; })
+     : subArray === "grammys" ? GRAMMY_FIELDS.map(function (f) { return f.key; })
+     : null; // no subArray split for this category \u2014 any field key matching the prefix is this row's
+    var updatedLocks = {};
+    Object.keys(newSeason.locks).forEach(function (k) {
+     if (k.indexOf(rowPrefix) === 0 && /^\d+$/.test(k.slice(rowPrefix.length))) {
+      var n = parseInt(k.slice(rowPrefix.length), 10);
+      if (n === idx) return; // the deleted row's own lock
+      updatedLocks[n > idx ? (rowPrefix + (n - 1)) : k] = newSeason.locks[k];
+      return;
+     }
+     if (k.indexOf(fieldPrefix) === 0) {
+      var afterPrefix = k.slice(fieldPrefix.length);
+      var pipeIdx = afterPrefix.indexOf("|");
+      if (pipeIdx > 0 && /^\d+$/.test(afterPrefix.slice(0, pipeIdx))) {
+       var fn = parseInt(afterPrefix.slice(0, pipeIdx), 10);
+       var fieldRest = afterPrefix.slice(pipeIdx); // leading "|" + fieldKey
+       var fieldKeyName = fieldRest.slice(1);
+       var belongsToThisSubArray = !fieldKeysForThisSubArray || fieldKeysForThisSubArray.indexOf(fieldKeyName) !== -1;
+       if (belongsToThisSubArray) {
+        if (fn === idx) return; // the deleted row's own field lock
+        updatedLocks[fn > idx ? (fieldPrefix + (fn - 1) + fieldRest) : k] = newSeason.locks[k];
+        return;
+       }
+       // Shares the prefix but belongs to the sibling subArray (e.g.
+       // deleting a songs row while this key is a grammys field lock,
+       // or vice versa) \u2014 that array didn't change, leave it untouched.
+      }
+     }
+     updatedLocks[k] = newSeason.locks[k]; // unrelated lock \u2014 untouched
+    });
+    newSeason.locks = updatedLocks;
+   }
+
+   return newSeason;
+  });
+  // `label` is populated synchronously inside the updater above (stays
+  // null if the row wasn't actually found, matching the original guard)
+  // \u2014 see toggleLock's comment on why that's safe to read right here.
+  if (label !== null) {
    setChangelog(function (prev) { return [cat + " \u2014 " + owner + ': deleted "' + label + '"'].concat(prev); });
    track(EVENTS.DETAIL_ROW_DELETED, { category: cat, row_type: subArray || ct });
-   if (newSeason.locks) {
-    var prefix = cat + "|" + owner + "|";
-    Object.keys(newSeason.locks).forEach(function (k) {
-     if (k.startsWith(prefix) && (k.includes("|d" + idx + "|") || k.includes("|row" + idx))) {
-      delete newSeason.locks[k];
-     }
-    });
-   }
   }
-  onSave(newSeason);
+  promise.then(function () { setSaveError(""); }).catch(function (err) {
+   setSaveError(err && err.message ? err.message : "Failed to save \u2014 try again.");
+  });
   setConfirmDelete(null);
  }
 
  // ─── Save all pending edits ───
  function applyChanges() {
-  var newSeason = JSON.parse(JSON.stringify(seasonData));
+  var log = [];
+  var promise = onSave(function (prevSeason) {
+  var newSeason = JSON.parse(JSON.stringify(prevSeason));
   var newCats = newSeason.categories;
   var newDetail = newSeason.detailedData;
-  var log = [];
 
   // 1) Score edits (base/bonus)
   Object.keys(edits).forEach(function (key) {
@@ -503,15 +652,30 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    }
   });
 
+  // Returning `prevSeason` itself (not a content-identical clone) when
+  // nothing actually changed lets App.jsx's handleSettingsSave detect
+  // the no-op by reference and skip the cache write + Supabase
+  // round-trips entirely — same short-circuit the pre-refactor code had
+  // by checking log.length before ever calling onSave at all; now that
+  // the mutation has to run inside the updater to see fresh state, the
+  // check has to happen here instead, at the only point both the result
+  // and `log.length` are known.
+  return log.length === 0 ? prevSeason : newSeason;
+  });
+  // `log` is populated synchronously inside the updater above — see
+  // toggleLock's comment on why that's safe to read right here, before
+  // the returned promise resolves.
   if (log.length === 0) { setSaved(true); return; }
   track(EVENTS.SETTINGS_CHANGES_SAVED, { mode: mode, changes_count: log.length });
   setChangelog(function (prev) { return log.concat(prev); });
-  onSave(newSeason);
   setSaved(true);
   setEdits({});
   setSwaps({});
   setBonusNotes({});
   setDetailEdits({});
+  promise.then(function () { setSaveError(""); }).catch(function (err) {
+   setSaveError(err && err.message ? err.message : "Failed to save — try again.");
+  });
  }
 
  // ═══ COMMISSIONER GATE ═══
@@ -670,16 +834,8 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   if (ct === "event") return renderArrayEditor(entry, d.majors || [], getDetailFields(), "Event");
 
   if (ct === "music") {
-   var songFields = [
-    { key: "title", label: "Song", type: "text" },
-    { key: "weeks", label: "Weeks", type: "number" },
-    { key: "numOneWeeks", label: "#1 Wks", type: "number" },
-   ];
-   var grammyFields = [
-    { key: "category", label: "Category", type: "text" },
-    { key: "result", label: "Result", type: "select", options: ["win", "nom"] },
-    { key: "pts", label: "Pts", type: "number" },
-   ];
+   var songFields = SONG_FIELDS;
+   var grammyFields = GRAMMY_FIELDS;
    return (
     <div style={{ padding: "8px 0" }}>
      <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4 }}>Billboard Songs</div>
@@ -795,6 +951,17 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {(Object.keys(edits).length + Object.keys(bonusNotes).length + Object.keys(detailEdits).length + Object.keys(swaps).length + Object.keys(paywallEdits).length) > 0 && (
     <div style={{ fontSize: 11, color: theme.dim, marginTop: -10, marginBottom: 16, textAlign: "center" }}>
      You have unsaved changes — leaving Settings without hitting Save loses them.
+    </div>
+   )}
+   {/* Shared across every save action in this file (locks, detail rows,
+       buffered score/detail/swap edits, paywalls) — see saveError's own
+       declaration above for why a failed Supabase write used to be
+       completely invisible here. */}
+   {saveError && (
+    <div style={{ fontSize: 12, color: "#fca5a5", background: "rgba(239,68,68,0.1)",
+     border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: "8px 10px",
+     marginBottom: 16, textAlign: "center" }}>
+     {saveError}
     </div>
    )}
 
