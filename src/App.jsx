@@ -11,6 +11,7 @@ import {
   Bell,
   BellOff,
 } from "lucide-react";
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
 import { withTimeout } from "./utils/helpers";
@@ -415,18 +416,22 @@ export default function App() {
       let session;
       try {
         let sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+        // getSession() internally refreshes the access token when it's
+        // expired (the normal case on a cold morning open — access tokens
+        // only live ~1hr, so by the next morning it always has). That
+        // refresh is one network round-trip to Supabase's auth server, and
+        // a mobile device's first request right as it wakes from being
+        // backgrounded overnight is exactly the request most likely to hit
+        // a flaky/still-reconnecting connection. A failure there does NOT
+        // throw — it comes back as a normal `error` on the result, which
+        // the retryable-vs-not check below exists to catch — but it can
+        // also simply never resolve, which is what this timed-out case
+        // handles. Retrying once here (same reasoning either way: a single
+        // slow/flaky attempt must not be the only chance this gets) is what
+        // closing and reopening the app was otherwise doing by hand — the
+        // reopen's request just happened to land on a connection that had
+        // since stabilized.
         if (!sessionResult) {
-          // One retry before giving up — same reasoning as the retry on
-          // getCommissionerRole's own timeout further below: a single slow
-          // lock acquisition must not be the only chance this gets. This
-          // specific timeout is the one reported live as "signed in on
-          // mobile, but some mornings the account menu shows signed-out
-          // until I close and reopen the app" — the first open after being
-          // backgrounded overnight is exactly when a cold connection is
-          // most likely to blow one 10s window, and closing/reopening just
-          // gives the same check a second, now-warmed-up attempt. Retrying
-          // once in place gets that same second attempt without needing
-          // the person to do it by hand.
           console.warn("loadAuth: getSession timed out — retrying once");
           sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
         }
@@ -446,6 +451,34 @@ export default function App() {
           console.warn("loadAuth: getSession timed out twice — leaving stored session untouched");
           if (isMounted) setAuthReady(true);
           return;
+        }
+        if (sessionResult.error) {
+          // isAuthRetryableFetchError (exported by the SDK itself, and
+          // what its own internal refresh logic uses to decide the exact
+          // same question) is true for a transient network/fetch failure —
+          // as opposed to the server actually rejecting the stored refresh
+          // token as invalid/expired/revoked. The catch block below used
+          // to treat the two identically: ANY error here, retryable or
+          // not, took the "this stored session is unusable" path and
+          // called signOut(), clearing the real session over what was
+          // often nothing more than that same first-request-after-waking
+          // network blip. One retry, then — if it's still only a retryable
+          // error — leave the stored session alone exactly like the
+          // timeout case above, rather than guess it's corrupted.
+          if (isAuthRetryableFetchError(sessionResult.error)) {
+            console.warn("loadAuth: getSession hit a retryable fetch error — retrying once", sessionResult.error);
+            sessionResult = await withTimeout(supabase.auth.getSession(), 10000, null);
+            if (!sessionResult) {
+              console.warn("loadAuth: getSession timed out on retry — leaving stored session untouched");
+              if (isMounted) setAuthReady(true);
+              return;
+            }
+            if (sessionResult.error && isAuthRetryableFetchError(sessionResult.error)) {
+              console.warn("loadAuth: getSession still hitting a retryable fetch error — leaving stored session untouched", sessionResult.error);
+              if (isMounted) setAuthReady(true);
+              return;
+            }
+          }
         }
         if (sessionResult.error) throw new Error(sessionResult.error.message || "getSession failed");
         session = sessionResult.data?.session || null;
