@@ -521,6 +521,43 @@ export default function App() {
 
     loadAuth();
 
+    // loadAuth() and the listener below only ever get mount-time
+    // attempts — at most two rapid-fire tries each, via resolveSession()'s
+    // own retry. If a phone's network takes longer than that to
+    // re-establish after waking from being backgrounded for a while (a
+    // real possibility: cellular reconnect, DNS, and TLS handshake all
+    // take actual time on a cold wake), both exhaust as "inconclusive"
+    // and nothing else was ever scheduled to try again —
+    // commissionerSession just stays at whatever the optimistic
+    // hydration above gave at mount, which is already null once the
+    // access token's expired (true after more than ~1hr). That's the
+    // exact "signed in on mobile, but shows signed-out until I close and
+    // reopen the app" report: closing/reopening is just a fresh mount
+    // with a fresh pair of attempts, by which point the network has
+    // caught up — nothing about the stored session was ever actually
+    // wrong. Re-running loadAuth() whenever the tab regains visibility or
+    // the browser reports it's back online gives it that same fresh
+    // chance without requiring a manual restart.
+    //
+    // Deliberately unconditional, not gated on whether a session is
+    // already set — a tab that stays alive through the whole background
+    // stretch (no remount at all, notably outside iOS Safari's more
+    // aggressive backgrounded-tab eviction) can still be holding a
+    // session object from before it went stale, and a retry gated on
+    // "currently null" would never run for it (flagged in PR review).
+    // Unconditional is still cheap: getSession() never touches the
+    // network at all when the session it already has isn't actually
+    // expired (see __loadSession() in the SDK), so this is a no-op far
+    // more often than it's a real refresh attempt.
+    function recheckSession() {
+      loadAuth();
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") recheckSession();
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", recheckSession);
+
     // Fires once immediately on subscription, reliably, with whatever
     // session already exists — this is now the ONLY place that fetches
     // role/member_id, on every firing including this first one. (It used
@@ -682,6 +719,8 @@ export default function App() {
     return () => {
       isMounted = false;
       listener?.subscription?.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", recheckSession);
     };
   }, []);
 
