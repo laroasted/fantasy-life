@@ -318,11 +318,6 @@ export default function App() {
   const [authReady, setAuthReady] = useState(true);
   const [authConfirmed, setAuthConfirmed] = useState(false);
   const [commissionerSession, setCommissionerSession] = useState(readOptimisticSession);
-  // Mirrors commissionerSession for the visibility/online retry effect
-  // below to read without needing it in that effect's own dependency
-  // array — see that effect's comment for why.
-  const commissionerSessionRef = useRef(commissionerSession);
-  useEffect(() => { commissionerSessionRef.current = commissionerSession; }, [commissionerSession]);
   const [commissionerRole, setCommissionerRole] = useState(
     () => (readOptimisticSession() ? readCachedIdentity().role : null)
   );
@@ -542,19 +537,26 @@ export default function App() {
     // caught up — nothing about the stored session was ever actually
     // wrong. Re-running loadAuth() whenever the tab regains visibility or
     // the browser reports it's back online gives it that same fresh
-    // chance without requiring a manual restart. Gated on
-    // commissionerSessionRef so it's a no-op once a session is already
-    // confirmed, and cheap even when it's not — getSession() never
-    // touches the network at all if there's no stored session to refresh
-    // (see __loadSession() in the SDK).
-    function recheckIfSignedOut() {
-      if (!commissionerSessionRef.current) loadAuth();
+    // chance without requiring a manual restart.
+    //
+    // Deliberately unconditional, not gated on whether a session is
+    // already set — a tab that stays alive through the whole background
+    // stretch (no remount at all, notably outside iOS Safari's more
+    // aggressive backgrounded-tab eviction) can still be holding a
+    // session object from before it went stale, and a retry gated on
+    // "currently null" would never run for it (flagged in PR review).
+    // Unconditional is still cheap: getSession() never touches the
+    // network at all when the session it already has isn't actually
+    // expired (see __loadSession() in the SDK), so this is a no-op far
+    // more often than it's a real refresh attempt.
+    function recheckSession() {
+      loadAuth();
     }
     function handleVisibilityChange() {
-      if (document.visibilityState === "visible") recheckIfSignedOut();
+      if (document.visibilityState === "visible") recheckSession();
     }
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("online", recheckIfSignedOut);
+    window.addEventListener("online", recheckSession);
 
     // Fires once immediately on subscription, reliably, with whatever
     // session already exists — this is now the ONLY place that fetches
@@ -718,7 +720,7 @@ export default function App() {
       isMounted = false;
       listener?.subscription?.unsubscribe();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("online", recheckIfSignedOut);
+      window.removeEventListener("online", recheckSession);
     };
   }, []);
 
