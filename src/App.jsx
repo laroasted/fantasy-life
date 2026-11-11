@@ -318,6 +318,11 @@ export default function App() {
   const [authReady, setAuthReady] = useState(true);
   const [authConfirmed, setAuthConfirmed] = useState(false);
   const [commissionerSession, setCommissionerSession] = useState(readOptimisticSession);
+  // Mirrors commissionerSession for the visibility/online retry effect
+  // below to read without needing it in that effect's own dependency
+  // array — see that effect's comment for why.
+  const commissionerSessionRef = useRef(commissionerSession);
+  useEffect(() => { commissionerSessionRef.current = commissionerSession; }, [commissionerSession]);
   const [commissionerRole, setCommissionerRole] = useState(
     () => (readOptimisticSession() ? readCachedIdentity().role : null)
   );
@@ -521,6 +526,36 @@ export default function App() {
 
     loadAuth();
 
+    // loadAuth() and the listener below only ever get mount-time
+    // attempts — at most two rapid-fire tries each, via resolveSession()'s
+    // own retry. If a phone's network takes longer than that to
+    // re-establish after waking from being backgrounded for a while (a
+    // real possibility: cellular reconnect, DNS, and TLS handshake all
+    // take actual time on a cold wake), both exhaust as "inconclusive"
+    // and nothing else was ever scheduled to try again —
+    // commissionerSession just stays at whatever the optimistic
+    // hydration above gave at mount, which is already null once the
+    // access token's expired (true after more than ~1hr). That's the
+    // exact "signed in on mobile, but shows signed-out until I close and
+    // reopen the app" report: closing/reopening is just a fresh mount
+    // with a fresh pair of attempts, by which point the network has
+    // caught up — nothing about the stored session was ever actually
+    // wrong. Re-running loadAuth() whenever the tab regains visibility or
+    // the browser reports it's back online gives it that same fresh
+    // chance without requiring a manual restart. Gated on
+    // commissionerSessionRef so it's a no-op once a session is already
+    // confirmed, and cheap even when it's not — getSession() never
+    // touches the network at all if there's no stored session to refresh
+    // (see __loadSession() in the SDK).
+    function recheckIfSignedOut() {
+      if (!commissionerSessionRef.current) loadAuth();
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") recheckIfSignedOut();
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", recheckIfSignedOut);
+
     // Fires once immediately on subscription, reliably, with whatever
     // session already exists — this is now the ONLY place that fetches
     // role/member_id, on every firing including this first one. (It used
@@ -682,6 +717,8 @@ export default function App() {
     return () => {
       isMounted = false;
       listener?.subscription?.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", recheckIfSignedOut);
     };
   }, []);
 
