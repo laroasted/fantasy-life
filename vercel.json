@@ -10,42 +10,51 @@
     "api/refresh-all.js": { "maxDuration": 120 },
     "api/cron/update-projections.js": { "maxDuration": 60 }
   },
-  "crons": [
-    {
+  "schedules": {
+    "update-stocks": {
+      "schedule": "0 2 * * 1-5",
       "path": "/api/cron/update-stocks",
-      "schedule": "0 2 * * 1-5"
+      "requestMethod": "GET"
     },
-    {
+    "update-sports": {
+      "schedule": "0 6 * * *",
       "path": "/api/cron/update-sports",
-      "schedule": "0 6 * * *"
+      "requestMethod": "GET"
     },
-    {
+    "update-college": {
+      "schedule": "0 5 * * *",
       "path": "/api/cron/update-college",
-      "schedule": "0 5 * * *"
+      "requestMethod": "GET"
     },
-    {
+    "update-events": {
+      "schedule": "0 4 * * *",
       "path": "/api/cron/update-events",
-      "schedule": "0 4 * * *"
+      "requestMethod": "GET"
     },
-    {
+    "update-billboard": {
+      "schedule": "0 3 * * 5",
       "path": "/api/cron/update-billboard",
-      "schedule": "0 3 * * 5"
+      "requestMethod": "GET"
     },
-    {
+    "update-entertainment": {
+      "schedule": "0 3 * * 1",
       "path": "/api/cron/update-entertainment",
-      "schedule": "0 3 * * 1"
+      "requestMethod": "GET"
     },
-    {
+    "update-country": {
+      "schedule": "0 7 1 * *",
       "path": "/api/cron/update-country",
-      "schedule": "0 7 1 * *"
+      "requestMethod": "GET"
     },
-    {
+    "snapshot-scores": {
+      "schedule": "0 8 * * *",
       "path": "/api/cron/snapshot-scores",
-      "schedule": "0 8 * * *"
+      "requestMethod": "GET"
     },
-    {
+    "update-projections": {
+      "schedule": "0 9 * * *",
       "path": "/api/cron/update-projections",
-      "schedule": "0 9 * * *"
+      "requestMethod": "GET"
     }
-  ]
+  }
 }

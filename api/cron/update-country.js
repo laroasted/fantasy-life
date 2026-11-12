@@ -229,7 +229,7 @@ async function fetchOlympicMedals() {
 module.exports = async function handler(req, res) {
   var authHeader = req.headers['authorization'];
   var cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== 'Bearer ' + cronSecret) {
+  if (!cronSecret || authHeader !== 'Bearer ' + cronSecret) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   if (!SUPABASE_SERVICE_KEY) {
