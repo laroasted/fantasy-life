@@ -310,6 +310,26 @@ calls, not a verified live response for every endpoint added here.
   NBA's "second round"/"semifinals" wording and whether MLS's postseason is
   queryable the same `seasontype=3` way as the other four are the two
   specific soft spots to check first.
+  **FIX 9 (2026-11) — a real bug found live, not just a soft spot:**
+  `seasontype=3` turned out not to mean what the original design assumed.
+  Once there's no live bracket, ESPN silently ignores the filter and falls
+  back to the current regular-season slate instead of an empty `events`
+  array — confirmed live in November against NFL/NBA/NHL with no
+  postseason anywhere nearby, each still returning a normal week of
+  upcoming regular-season games under this exact URL.
+  `fetchPostseasonExists`/`isChampionshipDecided` only ever checked
+  `events.length > 0`, so they reported "postseason exists" essentially
+  every day of the year. Confirmed live that this incorrectly fired NBA's
+  and NHL's `onRegularSeasonEnd` auto-lock on `base` the very first time
+  the cron ran with the auto-lock migration live — `base` then stayed
+  locked indefinitely (auto-lock fires once per season and never
+  re-fires), while `record`/`metric` kept updating fine since neither is
+  gated by this check. Fixed by checking each event's own `season.type`
+  field instead of just its presence — reliably `3` for a genuine
+  postseason game and `2` for this fallback, verified against both the
+  false-positive response and a real historical NBA Finals game.
+  `update-events.js` (Tennis/Golf/F1) doesn't use this existence-check
+  pattern at all, so it isn't exposed to this specific bug.
 - **Lowest** — Tennis majors. Unlike golf's one-leaderboard-per-tournament
   shape, ESPN's tennis scoreboard is one event per MATCH, so Final/SF exits
   are classified from free-text match labels the same way the sports
