@@ -178,13 +178,31 @@ function classifyRound(text, rounds) {
 // sport's native season-year labeling, and getting that offset wrong
 // would silently query the wrong year. Omitting it lets ESPN resolve
 // "current" itself, which is what "is a bracket live right now" means.
+//
+// FIX 9 (2026-11) — `seasontype=3` is silently ignored once there's no
+// live bracket: ESPN falls back to the current REGULAR-season slate
+// instead of returning an empty `events` array, so `events.length > 0`
+// alone was never "a bracket exists" — it was "this league plays games,"
+// true essentially every day of the year. Live-verified: in November,
+// with no NFL/NBA/NHL postseason anywhere close, this URL still returned
+// a normal week's upcoming regular-season games. Confirmed live that this
+// incorrectly fired NBA/NHL's `onRegularSeasonEnd` auto-lock on `base` on
+// the very first run after the auto-lock migration went live — `base`
+// then stayed locked indefinitely (auto-lock fires once per season and
+// never re-fires), while `record`/`metric` kept updating fine since they
+// aren't gated by this check at all. Each event's own `season.type` field
+// reliably reports `3` for a genuine postseason game and `2` for this
+// fallback (verified against both the current false-positive response and
+// a real historical Finals game), so that's the actual signal to check —
+// not the plain presence of events.
 async function fetchPostseasonExists(sport, league) {
   try {
     const url = `https://site.api.espn.com/apis/site/v2/sports/${sport}/${league}/scoreboard?seasontype=3`;
     const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
     if (!res.ok) return false;
     const data = await res.json();
-    return Array.isArray(data?.events) && data.events.length > 0;
+    const events = data?.events || [];
+    return events.some((e) => e?.season?.type === 3);
   } catch (err) {
     console.error(`  Postseason existence check failed for ${league}:`, err.message);
     return false;
@@ -274,7 +292,11 @@ async function isChampionshipDecided(sport, league, rounds) {
     const data = await res.json();
     const events = data?.events || [];
     const finalRound = rounds[rounds.length - 1];
+    // FIX 9 — same `season.type === 3` requirement as fetchPostseasonExists,
+    // for the same reason: a regular-season fallback event could otherwise
+    // coincidentally satisfy "completed" + keyword text.
     return events.some((e) => {
+      if (e?.season?.type !== 3) return false;
       const comp = e?.competitions?.[0];
       const completed = !!(comp?.status || e?.status)?.type?.completed;
       if (!completed) return false;
