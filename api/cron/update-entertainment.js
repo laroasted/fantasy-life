@@ -429,7 +429,7 @@ function formatDate(isoDate) {
  
 module.exports = async function handler(req, res) {
   var authHeader = req.headers['authorization'], cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== 'Bearer ' + cronSecret) return res.status(401).json({ error: 'Unauthorized' });
+  if (!cronSecret || authHeader !== 'Bearer ' + cronSecret) return res.status(401).json({ error: 'Unauthorized' });
   if (!SUPABASE_SERVICE_KEY) return res.status(500).json({ error: 'Missing SUPABASE_SERVICE_KEY' });
   if (!TMDB_API_KEY) return res.status(500).json({ error: 'Missing TMDB_API_KEY' });
   if (!OMDB_API_KEY) return res.status(500).json({ error: 'Missing OMDB_API_KEY' });

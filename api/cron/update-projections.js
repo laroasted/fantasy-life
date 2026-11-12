@@ -1167,7 +1167,7 @@ async function logRun(supabase, seasonYear, category, status, detail, startedAt)
 module.exports = async function handler(req, res) {
   const authHeader = req.headers['authorization'];
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== 'Bearer ' + cronSecret) return res.status(401).json({ error: 'Unauthorized' });
+  if (!cronSecret || authHeader !== 'Bearer ' + cronSecret) return res.status(401).json({ error: 'Unauthorized' });
   if (!SUPABASE_SERVICE_KEY) return res.status(500).json({ error: 'Missing SUPABASE_SERVICE_KEY env var' });
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
