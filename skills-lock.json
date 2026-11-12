@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "vercel-schedules": {
+      "source": "vercel/vercel-plugin",
+      "sourceType": "github",
+      "skillPath": "skills/vercel-schedules/SKILL.md",
+      "computedHash": "facae23bf4a18a45073c7fb4b08899990403eeb519416879b1370059d119e89e"
+    }
+  }
+}
