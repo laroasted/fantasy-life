@@ -200,6 +200,33 @@ function readOptimisticSession() {
   }
 }
 
+// Same storage read as readOptimisticSession(), minus the expiry check —
+// used only to decide whether the CACHED role/memberId (below) is worth
+// painting optimistically, never to stand in for the session object
+// itself. Reported live: on a cold mobile open hours later, the access
+// token is *always* expired by then (~1hr lifetime), so
+// readOptimisticSession() reads null and this file's own identity cache
+// — "larosa", sitting right there in CACHED_IDENTITY_KEY the whole
+// time — went unused, painting the "choose who you are" fallback picker
+// instead for however long getCommissionerRole() took to actually
+// confirm it (worst case 20-30s across loadAuth's own retry, longer on
+// a still-reconnecting network) before correcting back to the right
+// name. Device identity doesn't expire the way an access token does —
+// an expired token just means the real check below has to refresh it,
+// which it already does, and already corrects this cache if it turns
+// out wrong — so there's no reason to withhold the cached name while
+// that happens.
+function hasStoredSession() {
+  try {
+    var raw = window.localStorage.getItem(SUPABASE_SESSION_STORAGE_KEY);
+    if (!raw) return false;
+    var parsed = JSON.parse(raw);
+    return !!(parsed && parsed.access_token && parsed.user);
+  } catch (e) {
+    return false;
+  }
+}
+
 function readCachedIdentity() {
   try {
     var raw = window.localStorage.getItem(CACHED_IDENTITY_KEY);
@@ -319,12 +346,12 @@ export default function App() {
   const [authConfirmed, setAuthConfirmed] = useState(false);
   const [commissionerSession, setCommissionerSession] = useState(readOptimisticSession);
   const [commissionerRole, setCommissionerRole] = useState(
-    () => (readOptimisticSession() ? readCachedIdentity().role : null)
+    () => (hasStoredSession() ? readCachedIdentity().role : null)
   );
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [memberId, setMemberId] = useState(
-    () => (readOptimisticSession() ? readCachedIdentity().memberId : null)
+    () => (hasStoredSession() ? readCachedIdentity().memberId : null)
   );
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [claimedMemberIds, setClaimedMemberIds] = useState([]);
