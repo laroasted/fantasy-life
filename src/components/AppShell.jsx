@@ -2,6 +2,7 @@ import { Trophy, Bell, BellOff, Settings as SettingsIcon } from "lucide-react";
 import { theme } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
+import { getContrastText } from "../utils/helpers";
 
 // ── App navigation shell ──
 //
@@ -73,7 +74,8 @@ export default function AppShell({
               <span style={{
                 width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
                 background: (memberId && MEMBER_COLORS[memberId]) || theme.dim,
-                color: "#fff", fontSize: 11, fontWeight: 700,
+                color: getContrastText((memberId && MEMBER_COLORS[memberId]) || theme.dim),
+                fontSize: 11, fontWeight: 700,
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}>
                 {(accountDisplayName || "?").charAt(0).toUpperCase()}
@@ -90,8 +92,7 @@ export default function AppShell({
                 <div onClick={() => setShowAccountMenu(false)}
                   style={{ position: "fixed", inset: 0, zIndex: 150 }} />
                 <div style={{
-                  position: "absolute", top: "calc(100% + 6px)",
-                  left: compact ? 0 : undefined, right: compact ? undefined : 0,
+                  position: "absolute", top: "calc(100% + 6px)", left: 0,
                   background: theme.card, border: "1px solid " + theme.bdr,
                   borderRadius: 10, padding: 10, minWidth: 220,
                   zIndex: 151, boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
@@ -176,7 +177,7 @@ export default function AppShell({
         )}
         {authError && (
           <div style={{
-            position: "absolute", top: "100%", left: compact ? 0 : undefined, right: compact ? undefined : 0,
+            position: "absolute", top: "100%", left: 0,
             marginTop: 4, fontSize: 10, color: "#fca5a5", whiteSpace: "nowrap",
           }}>
             {authError}
