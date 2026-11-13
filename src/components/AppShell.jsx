@@ -191,16 +191,17 @@ export default function AppShell({
   // header, mobile account-menu row), not just visually sized to fit the
   // icon. Desktop rail can afford to size these a bit smaller since mouse
   // precision isn't the same constraint.
-  function IconButton({ onClick, title, active, size, children: icon }) {
+  function IconButton({ onClick, title, active, size, disabled, children: icon }) {
     return (
-      <button onClick={onClick} title={title} aria-label={title}
+      <button onClick={onClick} title={title} aria-label={title} disabled={disabled}
         style={{
           background: "none",
           border: "1px solid " + (active ? theme.acc : theme.bdr),
           borderRadius: 8,
           width: size, height: size, flexShrink: 0,
-          color: active ? theme.acc : theme.dim,
-          cursor: "pointer",
+          color: disabled ? theme.dim : active ? theme.acc : theme.dim,
+          cursor: disabled ? "default" : "pointer",
+          opacity: disabled ? 0.6 : 1,
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
         {icon}
@@ -219,7 +220,7 @@ export default function AppShell({
   });
 
   const refreshButton = (
-    <IconButton onClick={handleRefresh} title={refreshing ? "Refreshing..." : "Refresh"} size={isMobile ? 44 : 32}>
+    <IconButton onClick={handleRefresh} disabled={refreshing} title={refreshing ? "Refreshing..." : "Refresh"} size={isMobile ? 44 : 32}>
       <span style={{ display: "inline-block", animation: refreshing ? "spin 1s linear infinite" : "none" }}>↻</span>
     </IconButton>
   );
