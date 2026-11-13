@@ -3,7 +3,6 @@ import {
   Trophy,
   BarChart3,
   TrendingUp,
-  TrendingDown,
   Calendar as CalendarIcon,
   ClipboardList,
   Target,
@@ -1410,7 +1409,7 @@ export default function App() {
         )}
         {activeTab === "scoreboard" && (
           <div>
-            <div style={{ textAlign: "center", maxWidth: 760, margin: isMobile ? "0 auto 20px" : "0 0 20px" }}>
+            <div style={{ textAlign: isMobile ? "center" : "left", maxWidth: 760, margin: isMobile ? "0 auto 20px" : "0 0 20px" }}>
               <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: 0, textAlign: isMobile ? "center" : "left" }}>
                 {draftDateStr} through {viewingYear + 1} Academy Awards
               </p>
@@ -1491,46 +1490,28 @@ export default function App() {
                 @keyframes livePulse { 0% { transform: scale(1); } 45% { transform: scale(2.2); } 100% { transform: scale(1); } }
                 @keyframes spin { to { transform: rotate(360deg); } }
               `}</style>
-              {isViewingActive && (biggestRiser || biggestFaller || nextEvent) && (
+              {/* Biggest riser/faller moved to sit next to the Current/
+                  Projected toggle inside Scoreboard.jsx — performance
+                  movement belongs with the performance-view control, not
+                  here with the season's date range and sync status.
+                  nextEvent stays: it's the same kind of "orientation"
+                  context as the two lines above it. */}
+              {isViewingActive && nextEvent && (
                 <div style={{
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  gap: isMobile ? 10 : 16, flexWrap: "wrap",
+                  display: "inline-flex", alignItems: "center", gap: 5,
                   marginTop: 14, padding: isMobile ? "7px 14px" : "8px 18px",
                   background: theme.card, border: `1px solid ${theme.bdr}`, borderRadius: 999,
                   fontSize: isMobile ? 11 : 12,
                 }}>
-                  {biggestRiser && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                      <TrendingUp size={13} color={theme.grn} />
-                      <b style={{ color: theme.acc }}>{biggestRiser.name}</b>
-                      <span style={{ color: theme.dim }}>+{biggestRiser.delta} this week</span>
-                    </span>
-                  )}
-                  {biggestRiser && biggestFaller && (
-                    <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
-                  )}
-                  {biggestFaller && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                      <TrendingDown size={13} color={theme.red} />
-                      <b style={{ color: theme.txt }}>{biggestFaller.name}</b>
-                      <span style={{ color: theme.dim }}>{biggestFaller.delta} this week</span>
-                    </span>
-                  )}
-                  {(biggestRiser || biggestFaller) && nextEvent && (
-                    <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
-                  )}
-                  {nextEvent && (
-                    <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                      <CalendarIcon size={12} color={theme.dim} />
-                      <span style={{ color: theme.dim }}>Next:</span>
-                      <b style={{ color: theme.txt }}>{nextEvent.title}</b>
-                      <span style={{ color: theme.dim }}>{fmtEventWhen(nextEvent.date)}</span>
-                    </span>
-                  )}
+                  <CalendarIcon size={12} color={theme.dim} />
+                  <span style={{ color: theme.dim }}>Next:</span>
+                  <b style={{ color: theme.txt }}>{nextEvent.title}</b>
+                  <span style={{ color: theme.dim }}>{fmtEventWhen(nextEvent.date)}</span>
                 </div>
               )}
             </div>
-            <Scoreboard seasonData={viewingSeasonData} onUnlockPaywall={isViewingActive ? handlePaywallUnlock : undefined} memberId={memberId} />
+            <Scoreboard seasonData={viewingSeasonData} onUnlockPaywall={isViewingActive ? handlePaywallUnlock : undefined} memberId={memberId}
+              biggestRiser={isViewingActive ? biggestRiser : null} biggestFaller={isViewingActive ? biggestFaller : null} />
             <div style={{ maxWidth: 760, margin: "20px auto 0" }}>
               <AdUnit slot="9806940854" />
             </div>
