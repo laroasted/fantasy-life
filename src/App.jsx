@@ -7,9 +7,6 @@ import {
   Calendar as CalendarIcon,
   ClipboardList,
   Target,
-  Settings as SettingsIcon,
-  Bell,
-  BellOff,
 } from "lucide-react";
 import { theme } from "./constants/theme";
 import { build2025 } from "./data";
@@ -37,10 +34,10 @@ import {
   fetchClaimedMemberIds,
   SUPABASE_SESSION_STORAGE_KEY,
 } from "./utils/storage";
-import { DRAFT_MEMBERS, MEMBER_COLORS } from "./constants/members";
+import { DRAFT_MEMBERS } from "./constants/members";
 import Scoreboard from "./components/Scoreboard";
 import AdUnit from "./components/AdUnit";
-import ScrollFadeEdges from "./components/ScrollFadeEdges";
+import AppShell from "./components/AppShell";
 import { Skeleton } from "./components/Badges";
 
 // Scoreboard (above) is the default tab and the one every link/share
@@ -285,7 +282,7 @@ export default function App() {
   // Shared with Scoreboard.jsx via useViewport() so the header widens in
   // lockstep with Scoreboard's sidebar instead of the two hand-copying the
   // same breakpoint numbers (see useViewport.js).
-  const { isMobile, isWide } = useViewport();
+  const { isMobile } = useViewport();
   // See the "Optimistic auth hydration" comment above: these three start
   // from whatever's already in localStorage instead of null/false, so the
   // account menu has something to show on the very first render rather
@@ -390,8 +387,6 @@ export default function App() {
     const newUrl = window.location.pathname + (search ? "?" + search : "") + window.location.hash;
     window.history.replaceState(null, "", newUrl);
   }, [activeTab]);
-
-  const tabBarRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -1170,252 +1165,35 @@ export default function App() {
   return (
     <div style={{ background: theme.bg, minHeight: "100vh", color: theme.txt,
       fontFamily: "Inter, system-ui, sans-serif" }}>
-      {/* ── Header + Tabs ── */}
-      <div style={{
-        background: theme.card,
-        borderBottom: "1px solid " + theme.bdr,
-        padding: isMobile ? "12px 12px 0" : "16px 20px 0",
-        // Not literal 0 — body's own safe-area padding (public/index.html)
-        // only clears the status bar/notch on initial load; once this
-        // sticks during scroll, position:sticky recalculates against the
-        // viewport directly, bypassing that padding. Pinning top to the
-        // same env() value keeps it below the status bar in standalone
-        // (Added to Home Screen) mode even after scrolling, with no
-        // effect in an ordinary browser tab where it's 0px.
-        position: "sticky", top: "env(safe-area-inset-top, 0px)", zIndex: 100,
-      }}>
-        <div style={{ maxWidth: (isWide && activeTab === "scoreboard") ? 1080 : 900, margin: "0 auto" }}>
-          {/* Title row */}
-          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12,
-            marginBottom: isMobile ? 10 : 16 }}>
-            <Trophy size={isMobile ? 22 : 28} color={theme.acc} style={{ flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <h1 style={{
-                fontSize: isMobile ? 18 : 22, fontWeight: 800, margin: 0, color: "#FAFAFA",
-              }}>Fantasy Life</h1>
-            </div>
-            {pushSupported && (
-              <button
-                onClick={handlePushToggle}
-                title={pushEnabled ? "Turn off notifications" : "Get notified about score updates"}
-                style={{
-                  background: "none",
-                  border: "1px solid " + theme.bdr,
-                  borderRadius: 8,
-                  padding: isMobile ? "6px" : "6px 8px",
-                  color: pushEnabled ? theme.acc : theme.dim,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  flexShrink: 0,
-                }}>
-                {pushEnabled ? <Bell size={16} /> : <BellOff size={16} />}
-              </button>
-            )}
-            {/* Account menu — always visible on every tab, not just Draft/Settings,
-                so it's never ambiguous who (if anyone) is signed in on this
-                device. Avatar + name double as the "who's logged in" signal;
-                the dropdown's explicit Sign out exists so a shared device
-                doesn't silently stay logged in as whoever used it last. */}
-            {authReady && (
-              <div style={{ position: "relative", flexShrink: 0 }}>
-                {commissionerSession ? (
-                  <>
-                    <button
-                      onClick={() => setShowAccountMenu((v) => !v)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 6,
-                        background: "none",
-                        border: "1px solid " + theme.bdr,
-                        borderRadius: 8,
-                        padding: isMobile ? "4px 6px" : "4px 10px 4px 6px",
-                        color: theme.txt,
-                        cursor: "pointer",
-                      }}>
-                      <span style={{
-                        width: 20, height: 20, borderRadius: "50%",
-                        background: (memberId && MEMBER_COLORS[memberId]) || theme.dim,
-                        color: "#fff", fontSize: 11, fontWeight: 700,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        flexShrink: 0,
-                      }}>
-                        {(accountDisplayName || "?").charAt(0).toUpperCase()}
-                      </span>
-                      {!isMobile && (
-                        <span style={{ fontSize: 11, fontWeight: 700 }}>
-                          {accountDisplayName || "Set your name"}
-                        </span>
-                      )}
-                    </button>
-                    {showAccountMenu && (
-                      <>
-                        <div onClick={() => setShowAccountMenu(false)}
-                          style={{ position: "fixed", inset: 0, zIndex: 150 }} />
-                        <div style={{
-                          position: "absolute", top: "calc(100% + 6px)", right: 0,
-                          background: theme.card, border: "1px solid " + theme.bdr,
-                          borderRadius: 10, padding: 10, minWidth: 220,
-                          zIndex: 151, boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-                        }}>
-                          {isCommissioner && (
-                            <div style={{ fontSize: 11, color: "#86efac", fontWeight: 700, marginBottom: 8 }}>
-                              Commissioner
-                            </div>
-                          )}
-                          {memberId ? (
-                            <div style={{ fontSize: 11, color: theme.dim, marginBottom: 10 }}>
-                              Signed in as {accountDisplayName}
-                            </div>
-                          ) : (
-                            <div style={{ marginBottom: 10 }}>
-                              <div style={{ fontSize: 11, color: theme.dim, marginBottom: 6 }}>
-                                Which of these are you?
-                              </div>
-                              {claimError && (
-                                <div style={{ fontSize: 10, color: "#fca5a5", marginBottom: 6 }}>
-                                  {claimError}
-                                </div>
-                              )}
-                              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
-                                {unclaimedMembers.map((m) => (
-                                  <button key={m.id}
-                                    onClick={() => handleClaimMember(m.id)}
-                                    disabled={!!claimingId}
-                                    style={{
-                                      textAlign: "left",
-                                      background: "none", border: "1px solid " + theme.bdr,
-                                      borderRadius: 6, padding: "5px 8px",
-                                      color: theme.txt, fontSize: 12,
-                                      cursor: claimingId ? "default" : "pointer",
-                                      opacity: claimingId === m.id ? 0.6 : 1,
-                                    }}>
-                                    {m.name}
-                                  </button>
-                                ))}
-                                {unclaimedMembers.length === 0 && (
-                                  <div style={{ fontSize: 11, color: theme.dim }}>
-                                    Everyone's claimed — ask the commissioner if yours is wrong.
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          <button
-                            onClick={() => { setShowAccountMenu(false); handleCommissionerSignOut(); }}
-                            disabled={authLoading}
-                            style={{
-                              width: "100%",
-                              background: "none", border: "1px solid " + theme.bdr,
-                              borderRadius: 8, padding: "6px 10px",
-                              color: theme.txt, fontSize: 11,
-                              cursor: authLoading ? "default" : "pointer",
-                            }}>
-                            Sign out
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <button
-                    onClick={() => { setAuthError(""); handleGoogleSignIn(); }}
-                    disabled={authLoading}
-                    style={{
-                      background: "none",
-                      border: "1px solid " + theme.bdr,
-                      borderRadius: 8,
-                      padding: isMobile ? "5px 8px" : "6px 10px",
-                      color: theme.txt,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: authLoading ? "default" : "pointer",
-                      opacity: authLoading ? 0.6 : 1,
-                    }}>
-                    {authLoading ? "Redirecting…" : "Sign in with Google"}
-                  </button>
-                )}
-                {authError && (
-                  <div style={{
-                    position: "absolute", top: "100%", right: 0, marginTop: 4,
-                    fontSize: 10, color: "#fca5a5", whiteSpace: "nowrap",
-                  }}>
-                    {authError}
-                  </div>
-                )}
-              </div>
-            )}
-            <button onClick={handleRefresh} disabled={refreshing}
-              style={{
-                background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
-                padding: isMobile ? "5px 8px" : "6px 12px",
-                color: refreshing ? theme.dim : theme.mut,
-                fontSize: isMobile ? 11 : 12, cursor: refreshing ? "default" : "pointer",
-                display: "flex", alignItems: "center", gap: 4,
-                opacity: refreshing ? 0.6 : 1, transition: "opacity 0.2s",
-                flexShrink: 0,
-              }}>
-              <span style={{ display: "inline-block",
-                animation: refreshing ? "spin 1s linear infinite" : "none" }}>↻</span>
-              {!isMobile && (refreshing ? "Refreshing..." : "Refresh")}
-            </button>
-            <button onClick={() => {
-                track(EVENTS.TAB_VIEWED, { tab_name: "settings", previous_tab: activeTab, is_mobile: isMobile });
-                setActiveTab("settings");
-              }}
-              title="Settings"
-              style={{
-                background: "none",
-                border: "1px solid " + (activeTab === "settings" ? theme.acc : theme.bdr),
-                borderRadius: 8,
-                padding: isMobile ? "5px 7px" : "6px 9px",
-                color: activeTab === "settings" ? theme.acc : theme.mut,
-                cursor: "pointer",
-                display: "flex", alignItems: "center",
-                flexShrink: 0,
-              }}>
-              <SettingsIcon size={isMobile ? 14 : 15} />
-            </button>
-            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-          </div>
- 
-          {/* Tab bar */}
-          <ScrollFadeEdges scrollRef={tabBarRef} fadeColor={theme.card}>
-          <div ref={tabBarRef} style={{
-            display: "flex", gap: 0,
-            overflowX: isMobile ? "auto" : "visible",
-            WebkitOverflowScrolling: "touch",
-            msOverflowStyle: "none", scrollbarWidth: "none",
-          }}>
-            {TABS.map(function (t) {
-              var isActive = activeTab === t.id;
-              return (
-                <button key={t.id} onClick={function () {
-                    track(EVENTS.TAB_VIEWED, { tab_name: t.id, previous_tab: activeTab, is_mobile: isMobile });
-                    setActiveTab(t.id);
-                  }}
-                  style={{
-                    flex: isMobile ? "0 0 auto" : "unset",
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: isMobile ? "8px 10px" : "10px 20px",
-                    background: "none", border: "none",
-                    borderBottom: isActive ? "2px solid " + theme.acc : "2px solid transparent",
-                    color: isActive ? theme.acc : theme.dim,
-                    fontSize: isMobile ? 11 : 13,
-                    fontWeight: isActive ? 700 : 500,
-                    cursor: "pointer", whiteSpace: "nowrap",
-                  }}>
-                  <t.Icon size={isMobile ? 14 : 15} />
-                  <span>{t.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          </ScrollFadeEdges>
-        </div>
-      </div>
-
+      <AppShell
+        tabs={TABS}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isMobile={isMobile}
+        pushSupported={pushSupported}
+        pushEnabled={pushEnabled}
+        handlePushToggle={handlePushToggle}
+        authReady={authReady}
+        commissionerSession={commissionerSession}
+        showAccountMenu={showAccountMenu}
+        setShowAccountMenu={setShowAccountMenu}
+        memberId={memberId}
+        accountDisplayName={accountDisplayName}
+        isCommissioner={isCommissioner}
+        claimError={claimError}
+        unclaimedMembers={unclaimedMembers}
+        claimingId={claimingId}
+        handleClaimMember={handleClaimMember}
+        handleCommissionerSignOut={handleCommissionerSignOut}
+        authLoading={authLoading}
+        authError={authError}
+        setAuthError={setAuthError}
+        handleGoogleSignIn={handleGoogleSignIn}
+        handleRefresh={handleRefresh}
+        refreshing={refreshing}
+      >
       {/* ── Tab Content ── */}
-      <div key={activeTab} style={{ padding: isMobile ? "12px 8px" : "20px 16px", animation: "fadeSlideIn 0.2s ease" }}>
+      <div key={activeTab} style={{ animation: "fadeSlideIn 0.2s ease" }}>
         {["scoreboard", "trends", "calendar", "recap"].includes(activeTab) && availableSeasons.length > 1 && (
           <div style={{ maxWidth: 760, margin: "0 auto 14px", display: "flex", alignItems: "center",
             justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1616,6 +1394,7 @@ export default function App() {
           Privacy Policy
         </button>
       </div>
+      </AppShell>
     </div>
   );
 }

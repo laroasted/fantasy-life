@@ -66,6 +66,35 @@ export function rowBorder(rank) {
 }
 
 /**
+* Pick a legible text color for a solid-fill background, using the real
+* WCAG relative-luminance formula rather than a hardcoded per-color table —
+* stays correct automatically if a MEMBER_COLORS value ever changes, and
+* already covers NEW_MEMBER_COLORS (members added during draft setup) for
+* free, which a parallel lookup table would silently miss.
+* @param {string} hex - background color, e.g. "#3b82f6"
+* @returns {string} theme.bg ("#0B0E14") or theme.txt ("#F2F3F5")
+*/
+export function getContrastText(hex) {
+ const c = hex.replace("#", "");
+ const r = parseInt(c.substring(0, 2), 16) / 255;
+ const g = parseInt(c.substring(2, 4), 16) / 255;
+ const b = parseInt(c.substring(4, 6), 16) / 255;
+ const linearize = (v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+ const luminance = 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+ // Relative luminance of theme.bg ("#0B0E14") and theme.txt ("#F2F3F5"),
+ // precomputed the same way. Pick whichever candidate actually gives the
+ // higher contrast ratio against this background — for a handful of
+ // medium-luminance member colors (e.g. the indigo used for one member)
+ // neither option clears the ideal 4.5:1 WCAG AA threshold, and defaulting
+ // to one fixed choice on "failure" can land on the worse of the two; this
+ // always returns the better available option instead.
+ const darkLum = 0.004363, lightLum = 0.8973;
+ const contrastWithDark = (luminance + 0.05) / (darkLum + 0.05);
+ const contrastWithLight = (lightLum + 0.05) / (luminance + 0.05);
+ return contrastWithDark >= contrastWithLight ? theme.bg : theme.txt;
+}
+
+/**
 * Expanded detail header style (consistent across all expanded views).
 */
 export const expandedHeaderStyle = {

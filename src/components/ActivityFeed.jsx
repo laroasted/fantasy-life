@@ -168,6 +168,10 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
      var paywalled = isPaywalled(seasonData, ev.member_id);
      var positive = Number(ev.delta) > 0;
      var clickable = !!onCategorySelect;
+     // A real <button> when clickable (keyboard focus + Enter/Space for
+     // free, matching how CategoryPill already does this), a plain <div>
+     // otherwise — never a div with just an onClick, which was mouse-only.
+     var RowTag = clickable ? "button" : "div";
      return (
       // Keyed by the row's own id, not array index — every realtime/
       // refresh refetch returns a brand-new array (a new event pushes the
@@ -176,13 +180,19 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
       // as the whole feed flashing. Keying by id lets it recognize
       // untouched rows and just move them, so only the genuinely new row
       // visibly appears.
-      <div key={ev.id != null ? ev.id : idx}
+      <RowTag key={ev.id != null ? ev.id : idx}
+       type={clickable ? "button" : undefined}
        className={clickable ? "interactive" : undefined}
        onClick={clickable ? function () {
          track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: surface || "scoreboard", category: ev.category, previous_category: "activity_feed" });
          onCategorySelect(ev.category);
         } : undefined}
-       style={{ cursor: clickable ? "pointer" : "default" }}>
+       style={{
+        cursor: clickable ? "pointer" : "default",
+        display: "block", width: "100%", textAlign: "left",
+        border: "none", background: "none", padding: 0,
+        font: "inherit", color: "inherit",
+       }}>
        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
          <Avatar name={memberName} color={MEMBER_COLORS[ev.member_id]} size={18} />
@@ -202,7 +212,7 @@ export default function ActivityFeed({ seasonData, onCategorySelect, surface }) 
         {(CATEGORY_LABELS[ev.category] || ev.category)}{ev.cause ? " — " + ev.cause : ""}
         <span style={{ opacity: 0.7 }}> · {fmtWhen(ev.occurred_at)}</span>
        </div>
-      </div>
+      </RowTag>
      );
     })}
    </div>
