@@ -20,6 +20,11 @@ export const theme = {
   yel: "#eab308",
   you: "#3b82f6", // fixed "this is your row" accent — same for every signed-in
                   // member, independent of their own MEMBER_COLORS entry.
+  up: "#38bdf8",   // category-strength "high" tick — blue, not green. Distinct
+                   // from grn/red above (those mean win/loss elsewhere, e.g.
+                   // Stock's pctChange bar) so this pairing stays colorblind-
+                   // safe without touching that unrelated semantic.
+  down: "#fb923c", // category-strength "low" tick — orange, not red.
 };
 
 // Radius scale — pick one of these three for anything new instead of a

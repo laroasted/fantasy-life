@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, memo } from "react";
 import { Lock, ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
-import { theme, cardStyle } from "../constants/theme";
+import { theme, cardStyle, shadow } from "../constants/theme";
 import { rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
 import { track, EVENTS } from "../utils/analytics";
 import { useViewport } from "../utils/useViewport";
@@ -699,14 +699,14 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
  // === MAIN RENDER ===
  return (
   <div style={{ maxWidth: isWide ? 1080 : 760, margin: "0 auto" }}>
-   {/* MOCK ONLY — page-level two-column layout preview. Below 1024px this
-       collapses back to exactly what's shipped today (single column,
-       sidebar hidden). Not wired up anywhere else yet. */}
+   {/* Two-column layout: sidebar (Category Leaders + Activity) alongside
+       the standings below 1024px/isWide, single column with the sidebar
+       hidden above it. */}
    <div style={{ display: isWide ? "flex" : "block", gap: isWide ? 28 : 0, alignItems: "flex-start" }}>
    <div style={{ flex: 1, minWidth: 0 }}>
    {/* Category pills */}
    <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
-   <div ref={pillsRef} style={{
+   <div ref={pillsRef} role="group" aria-label="Category filter" style={{
     display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
     gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
     overflowX: isMobile ? "auto" : "visible",
@@ -738,13 +738,15 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        has loaded for this season (never shows a toggle with nothing behind it). */}
    {hasProjections && (
     <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-     <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${theme.bdr}`, overflow: "hidden" }}>
-      <button onClick={function () { if (showProjected) toggleProjected(); }}
+     <div role="radiogroup" aria-label="Score view" style={{ display: "flex", borderRadius: 8, border: `1px solid ${theme.bdr}`, overflow: "hidden" }}>
+      <button type="button" role="radio" aria-checked={!showProjected}
+       onClick={function () { if (showProjected) toggleProjected(); }}
        style={{
         padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
         background: !showProjected ? theme.acc : "transparent", color: !showProjected ? "#1a1300" : theme.dim,
        }}>Current</button>
-      <button onClick={function () { if (!showProjected) toggleProjected(); }}
+      <button type="button" role="radio" aria-checked={showProjected}
+       onClick={function () { if (!showProjected) toggleProjected(); }}
        style={{
         padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
         background: showProjected ? theme.acc : "transparent", color: showProjected ? "#1a1300" : theme.dim,
@@ -795,6 +797,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           borderRight: "1px solid " + rowBorderColor,
           borderBottom: isExp ? "none" : "1px solid " + rowBorderColor,
           borderLeft: "1px solid " + rowBorderColor,
+          boxShadow: shadow.sm,
           cursor: "pointer",
           padding: isMobile ? "8px 10px" : "10px 12px" }}>
          <div style={{ display: "grid",
@@ -814,9 +817,13 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           </span>
           {isExp ? <ChevronDown size={14} color={theme.dim} /> : <ChevronRight size={14} color={theme.dim} />}
          </div>
-         {/* MOCK ONLY — inline category-strength strip + standout caption,
-             desktop-width preview. Uses real per-row catScores already
-             computed above. Remove this comment once it's real. */}
+         {/* Category-strength strip + standout caption. Diverging shape +
+             position encoding (top fill = high, bottom fill = low), not
+             color alone — reads correctly for red/green colorblind viewers
+             (~1 in 12 men) even on top of the already colorblind-safe
+             blue/orange pairing (theme.up/theme.down, distinct from
+             theme.grn/red, which mean win/loss elsewhere). Real per-row
+             catScores, every row — not just the top of the standings. */}
          {!isMobile && !memberPaywalled && (function () {
           var scores = showProjected ? m.catScoresProjected : m.catScores;
           var ticks = CATEGORY_ORDER.map(function (k) {
@@ -830,11 +837,15 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
            <div>
             <div style={{ display: "flex", gap: 2, marginTop: 7, paddingLeft: 36 }}>
              {ticks.map(function (t) {
-              var color = t.status === "none" ? "rgba(255,255,255,0.06)"
-               : t.status === "high" ? theme.grn : t.status === "low" ? theme.red : "rgba(255,255,255,0.18)";
               return (
                <div key={t.key} title={t.key + ": " + (t.hasEntry ? t.pts + " pts" : "no pick")}
-                style={{ flex: 1, height: 5, borderRadius: 3, background: color }} />
+                style={{ flex: 1, display: "flex", flexDirection: "column", height: 9 }}>
+                <div style={{ flex: 1, borderRadius: "2px 2px 0 0",
+                 background: t.status === "high" ? theme.up : "rgba(255,255,255,0.06)" }} />
+                <div style={{ height: 1, background: theme.bdr }} />
+                <div style={{ flex: 1, borderRadius: "0 0 2px 2px",
+                 background: t.status === "low" ? theme.down : "rgba(255,255,255,0.06)" }} />
+               </div>
               );
              })}
             </div>
@@ -842,7 +853,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
              <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", marginTop: 5, paddingLeft: 36, fontSize: 10 }}>
               {standouts.map(function (t) {
                return (
-                <span key={t.key} style={{ color: t.status === "high" ? theme.grn : theme.red, fontWeight: 600 }}>
+                <span key={t.key} style={{ color: t.status === "high" ? theme.up : theme.down, fontWeight: 600 }}>
                  {t.key} {t.pts}
                 </span>
                );
@@ -926,6 +937,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
            borderRight: "1px solid " + rowBorderColor,
            borderBottom: isExp ? "none" : "1px solid " + rowBorderColor,
            borderLeft: "1px solid " + rowBorderColor,
+           boxShadow: shadow.sm,
            cursor: "pointer",
           }}>
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
@@ -1007,7 +1019,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        Activity from its own score_events fetch (ActivityFeed.jsx; only
        NFL/NBA/NHL/MLB/MLS write to it so far, see
        supabase/phase5_score_events.sql). An "Upcoming" card was dropped
-       from an earlier version of this mock — it only had hardcoded sample
+       from an earlier version of this — it only had hardcoded sample
        events, which would mislead real viewers once shipped; wiring it to
        real calendar_events is still a follow-up, not done here. */}
    {isWide && (

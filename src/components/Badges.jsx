@@ -13,6 +13,7 @@
 // longer re-renders every one of them too.
 import { memo } from "react";
 import { theme } from "../constants/theme";
+import { getContrastText } from "../utils/helpers";
 
 // A small tinted, bordered indicator holding a short label — used for the
 // #1 rank badge (circle) and the draft round badge (rounded square).
@@ -52,8 +53,8 @@ function AvatarBase({ name, color, size = 28 }) {
       display: "inline-flex", alignItems: "center", justifyContent: "center",
       width: size, height: size, flexShrink: 0,
       borderRadius: "50%",
-      background: c + "26", border: `1.5px solid ${c}55`,
-      color: c, fontWeight: 800, fontSize: Math.max(9, Math.round(size * 0.38)),
+      background: c,
+      color: getContrastText(c), fontWeight: 800, fontSize: Math.max(9, Math.round(size * 0.38)),
     }}>
       {initials}
     </span>
@@ -95,7 +96,7 @@ export const Dot = memo(DotBase);
 // Scoreboard and Trends.
 function CategoryPillBase({ active, onClick, children }) {
   return (
-    <button onClick={onClick} style={{
+    <button type="button" onClick={onClick} aria-pressed={active} style={{
       padding: "5px 10px", borderRadius: 20, flexShrink: 0,
       border: "1px solid " + (active ? theme.acc : theme.bdr),
       background: active ? theme.acc : theme.card,
