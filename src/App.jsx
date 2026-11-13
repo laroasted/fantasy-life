@@ -1395,7 +1395,7 @@ export default function App() {
                 padding: isMobile ? "6px 10px" : "8px 14px", color: theme.txt,
                 fontSize: isMobile ? 12 : 18, fontWeight: 600, cursor: "pointer" }}>
               {availableSeasons.map((s) => (
-                <option key={s.year} value={s.year}>{s.year}{s.isActive ? " (current)" : ""}</option>
+                <option key={s.year} value={s.year}>{s.year} Season{s.isActive ? " (Current)" : ""}</option>
               ))}
             </select>
             {!isViewingActive && (

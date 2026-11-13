@@ -306,14 +306,17 @@ export default function AppShell({
       <div style={{
         width: 220, flexShrink: 0, padding: "20px 10px",
         position: "sticky", top: "env(safe-area-inset-top, 0px)",
-        // overflowY alone makes the browser default overflowX to "auto"
-        // too (any axis set to non-visible defaults the other the same
-        // way unless it's stated explicitly) — which silently clipped the
-        // account dropdown horizontally no matter which side it was
-        // anchored to. Stating overflowX explicitly lets this scroll
-        // vertically while the dropdown still floats out over the main
-        // content to its right, the way a sidebar flyout menu should.
-        maxHeight: "100vh", overflowY: "auto", overflowX: "visible",
+        // No maxHeight/overflowY here on purpose — per the CSS overflow
+        // spec, once either axis is auto/scroll, the browser forces the
+        // OTHER axis to auto too, even if it's explicitly set to
+        // "visible" (confirmed: getComputedStyle still reported
+        // overflowX as "auto" with overflowX:"visible" stated). There's
+        // no way to keep one axis scrollable and the other genuinely
+        // unclipped on the same element — only a real fix (no overflow
+        // constraint at all here) lets the account dropdown float out
+        // over the main content instead of getting clipped. Five nav
+        // items plus the account row never come close to needing to
+        // scroll within 100vh on any real screen, so nothing is lost.
         display: "flex", flexDirection: "column", gap: 4,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px 16px", fontSize: 18, fontWeight: 800, color: "#FAFAFA" }}>
