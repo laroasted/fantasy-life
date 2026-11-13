@@ -1021,9 +1021,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        supabase/phase5_score_events.sql). An "Upcoming" card was dropped
        from an earlier version of this — it only had hardcoded sample
        events, which would mislead real viewers once shipped; wiring it to
-       real calendar_events is still a follow-up, not done here. */}
-   {isWide && (
-    <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+       real calendar_events is still a follow-up, not done here.
+       Below isWide this stacks full-width under the standings instead of
+       disappearing — same content, just single-column. */}
+   {(
+    <div style={{ width: isWide ? 300 : "100%", flexShrink: 0, marginTop: isWide ? 0 : 20,
+     display: "flex", flexDirection: "column", gap: 16 }}>
      <div style={{ ...cardStyle, padding: 16 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, marginBottom: 10,
        textTransform: "uppercase", letterSpacing: 1 }}>Category Leaders</div>
