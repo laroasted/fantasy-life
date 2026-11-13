@@ -55,14 +55,14 @@ export default function AppShell({
   function AccountMenu({ compact }) {
     if (!authReady) return null;
     return (
-      <div style={{ position: "relative", flexShrink: 0 }}>
+      <div style={{ position: "relative", flexShrink: 0, width: compact ? "auto" : "100%" }}>
         {commissionerSession ? (
           <>
             <button
               onClick={() => setShowAccountMenu((v) => !v)}
               style={{
                 display: "flex", alignItems: "center", gap: 6, minWidth: 0,
-                width: compact ? "100%" : "auto",
+                width: "100%", boxSizing: "border-box",
                 background: "none",
                 border: "1px solid " + theme.bdr,
                 borderRadius: 8,
@@ -161,7 +161,7 @@ export default function AppShell({
             onClick={() => { setAuthError(""); handleGoogleSignIn(); }}
             disabled={authLoading}
             style={{
-              width: compact ? "100%" : "auto",
+              width: "100%", boxSizing: "border-box",
               background: "none",
               border: "1px solid " + theme.bdr,
               borderRadius: 8,
@@ -306,7 +306,14 @@ export default function AppShell({
       <div style={{
         width: 220, flexShrink: 0, padding: "20px 10px",
         position: "sticky", top: "env(safe-area-inset-top, 0px)",
-        maxHeight: "100vh", overflowY: "auto",
+        // overflowY alone makes the browser default overflowX to "auto"
+        // too (any axis set to non-visible defaults the other the same
+        // way unless it's stated explicitly) — which silently clipped the
+        // account dropdown horizontally no matter which side it was
+        // anchored to. Stating overflowX explicitly lets this scroll
+        // vertically while the dropdown still floats out over the main
+        // content to its right, the way a sidebar flyout menu should.
+        maxHeight: "100vh", overflowY: "auto", overflowX: "visible",
         display: "flex", flexDirection: "column", gap: 4,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px 16px", fontSize: 18, fontWeight: 800, color: "#FAFAFA" }}>

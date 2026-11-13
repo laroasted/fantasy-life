@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, memo } from "react";
-import { Lock, ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
+import { Lock, ArrowUpRight, ChevronDown, ChevronRight, TrendingUp, TrendingDown } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, shadow } from "../constants/theme";
@@ -95,7 +95,7 @@ var LockIndicator = memo(function LockIndicator({ note }) {
  );
 });
  
-export default function Scoreboard({ seasonData, surface, onUnlockPaywall, memberId }) {
+export default function Scoreboard({ seasonData, surface, onUnlockPaywall, memberId, biggestRiser, biggestFaller }) {
  var surfaceName = surface || "scoreboard";
  // Only the primary Scoreboard tab syncs its selected category to the URL —
  // a non-"scoreboard" surface value means this instance isn't the primary
@@ -708,7 +708,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
    <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
    <div ref={pillsRef} role="group" aria-label="Category filter" style={{
     display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
-    gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
+    gap: 4, marginBottom: 16, justifyContent: "flex-start",
     overflowX: isMobile ? "auto" : "visible",
     WebkitOverflowScrolling: "touch",
     paddingBottom: isMobile ? 4 : 0,
@@ -736,22 +736,56 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
 
    {/* PROJECTED FINAL toggle — degrades to nothing if no projections data
        has loaded for this season (never shows a toggle with nothing behind it). */}
-   {hasProjections && (
-    <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-     <div role="radiogroup" aria-label="Score view" style={{ display: "flex", borderRadius: 8, border: `1px solid ${theme.bdr}`, overflow: "hidden" }}>
-      <button type="button" role="radio" aria-checked={!showProjected}
-       onClick={function () { if (showProjected) toggleProjected(); }}
-       style={{
-        padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
-        background: !showProjected ? theme.acc : "transparent", color: !showProjected ? "#1a1300" : theme.dim,
-       }}>Current</button>
-      <button type="button" role="radio" aria-checked={showProjected}
-       onClick={function () { if (!showProjected) toggleProjected(); }}
-       style={{
-        padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
-        background: showProjected ? theme.acc : "transparent", color: showProjected ? "#1a1300" : theme.dim,
-       }}>Projected Final</button>
-     </div>
+   {/* Current/Projected toggle and the weekly-movers callout share one row —
+       both are "how's the season moving" context, and this is where the
+       mockup always had the movers pill (it never actually landed here
+       until now). Each half renders independently: the toggle needs
+       hasProjections, the movers pill just needs a riser/faller for the
+       week, so either can show without the other. */}
+   {(hasProjections || biggestRiser || biggestFaller) && (
+    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap",
+     justifyContent: isMobile ? "center" : "flex-start", gap: 14, marginBottom: 12 }}>
+     {hasProjections && (
+      <div role="radiogroup" aria-label="Score view" style={{ display: "flex", flexShrink: 0,
+       borderRadius: 8, border: `1px solid ${theme.bdr}`, overflow: "hidden" }}>
+       <button type="button" role="radio" aria-checked={!showProjected}
+        onClick={function () { if (showProjected) toggleProjected(); }}
+        style={{
+         padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
+         background: !showProjected ? theme.acc : "transparent", color: !showProjected ? "#1a1300" : theme.dim,
+        }}>Current</button>
+       <button type="button" role="radio" aria-checked={showProjected}
+        onClick={function () { if (!showProjected) toggleProjected(); }}
+        style={{
+         padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
+         background: showProjected ? theme.acc : "transparent", color: showProjected ? "#1a1300" : theme.dim,
+        }}>Projected Final</button>
+      </div>
+     )}
+     {(biggestRiser || biggestFaller) && (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11 }}>
+       {hasProjections && (
+        <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
+       )}
+       {biggestRiser && (
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+         <TrendingUp size={13} color={theme.up} />
+         <b style={{ color: theme.acc }}>{biggestRiser.name}</b>
+         <span style={{ color: theme.dim }}>+{biggestRiser.delta} this week</span>
+        </span>
+       )}
+       {biggestRiser && biggestFaller && (
+        <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
+       )}
+       {biggestFaller && (
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+         <TrendingDown size={13} color={theme.down} />
+         <b style={{ color: theme.txt }}>{biggestFaller.name}</b>
+         <span style={{ color: theme.dim }}>{biggestFaller.delta} this week</span>
+        </span>
+       )}
+      </div>
+     )}
     </div>
    )}
    {hasProjections && showProjected && (
