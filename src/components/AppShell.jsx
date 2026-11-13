@@ -315,7 +315,6 @@ export default function AppShell({
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 4px 16px", minWidth: 0 }}>
           <div style={{ flex: 1, minWidth: 0 }}><AccountMenu /></div>
           {bellButton}
-          {refreshButton}
           {settingsButton}
         </div>
         <nav aria-label="Main" style={{ display: "flex", flexDirection: "column", gap: 2 }}>

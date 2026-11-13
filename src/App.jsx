@@ -1388,12 +1388,13 @@ export default function App() {
       {/* ── Tab Content ── */}
       <div key={activeTab} style={{ animation: "fadeSlideIn 0.2s ease" }}>
         {["scoreboard", "trends", "calendar", "recap"].includes(activeTab) && availableSeasons.length > 1 && (
-          <div style={{ maxWidth: 760, margin: "0 auto 14px", display: "flex", alignItems: "center",
-            justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ maxWidth: 760, margin: isMobile ? "0 auto 14px" : "0 0 14px", display: "flex", alignItems: "center",
+            justifyContent: isMobile ? "center" : "flex-start", gap: 8, flexWrap: "wrap" }}>
             <select value={viewingYear}
               onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
               style={{ background: theme.card, border: "1px solid " + theme.bdr, borderRadius: 8,
-                padding: "6px 10px", color: theme.txt, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                padding: isMobile ? "6px 10px" : "8px 14px", color: theme.txt,
+                fontSize: isMobile ? 12 : 18, fontWeight: 600, cursor: "pointer" }}>
               {availableSeasons.map((s) => (
                 <option key={s.year} value={s.year}>{s.year}{s.isActive ? " (current)" : ""}</option>
               ))}
@@ -1409,8 +1410,8 @@ export default function App() {
         )}
         {activeTab === "scoreboard" && (
           <div>
-            <div style={{ textAlign: "center", marginBottom: 20, maxWidth: 760, margin: "0 auto 20px" }}>
-              <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: 0 }}>
+            <div style={{ textAlign: "center", maxWidth: 760, margin: isMobile ? "0 auto 20px" : "0 0 20px" }}>
+              <p style={{ fontSize: isMobile ? 11 : 12, color: theme.dim, margin: 0, textAlign: isMobile ? "center" : "left" }}>
                 {draftDateStr} through {viewingYear + 1} Academy Awards
               </p>
               {/* Two different moments share this same louder chip — same
@@ -1447,7 +1448,7 @@ export default function App() {
                 // it, every transition between the two nudged everything
                 // below down and back up, a visible page jump each time.
                 <div style={{ marginTop: 6, minHeight: 29, display: "flex",
-                  alignItems: "center", justifyContent: "center" }}>
+                  alignItems: "center", justifyContent: isMobile ? "center" : "flex-start", gap: 8 }}>
                   {(initialSyncPending && syncDelayPassed) || realtimeSyncPending || refreshing ? (
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px",
                       borderRadius: 999, border: "1px solid " + theme.bdr, background: theme.srf,
@@ -1468,6 +1469,21 @@ export default function App() {
                       {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live") : dataSource === "local" ? "Cached" : "Offline"}
                       {" "}· {justSynced ? "Updated just now" : "Updated " + lastUpdated.toLocaleTimeString()}
                     </span>
+                  )}
+                  {/* Refresh lives here on desktop now, next to the status it
+                      actually affects, instead of up in the rail next to
+                      account/settings/notifications — those are app-wide
+                      chrome, this is specific to the data on this line.
+                      Mobile keeps it in the condensed header (AppShell). */}
+                  {!isMobile && (
+                    <button onClick={handleRefresh} disabled={refreshing}
+                      title={refreshing ? "Refreshing..." : "Refresh"} aria-label={refreshing ? "Refreshing..." : "Refresh"}
+                      style={{ background: "none", border: "1px solid " + theme.bdr, borderRadius: 6,
+                        width: 22, height: 22, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                        color: theme.dim, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.6 : 1 }}>
+                      <span style={{ display: "inline-block", fontSize: 12, lineHeight: 1,
+                        animation: refreshing ? "spin 1s linear infinite" : "none" }}>↻</span>
+                    </button>
                   )}
                 </div>
               )}
