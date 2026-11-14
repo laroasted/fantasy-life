@@ -65,6 +65,7 @@
  
 const { createClient } = require('@supabase/supabase-js');
 const { writeScoreEventsAndNotify } = require('../_lib/push');
+const { resolveFantasyYearEnd } = require('../_lib/fantasyYear');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -693,7 +694,8 @@ module.exports = async function handler(req, res) {
   if (!season.fy_start || !season.fy_end) return res.status(500).json({ error: 'Active season missing fy_start or fy_end' });
  
   var FY_START = season.fy_start;
-  var FY_END = season.fy_end;
+  // Ends on Oscar night, which moves every year — see api/_lib/fantasyYear.js.
+  var FY_END = await resolveFantasyYearEnd(season.year, season.fy_end, fetchWikipediaWikitext);
   var locks = season.locks || {};
  
   console.log('Fantasy Year: ' + FY_START + ' → ' + FY_END);
