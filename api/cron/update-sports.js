@@ -112,9 +112,12 @@ const ESPN_LEAGUES = {
   MLS: {
     url: 'https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings',
     metricType: 'points',
-    // Apr–Oct only: keeps Feb/Mar (new season start) frozen so end-of-year
-    // scores aren't overwritten before the commissioner locks them.
-    activeMonths: [4, 5, 6, 7, 8, 9, 10],
+    // Apr–Dec: through Decision Day (early Nov) so the final matchday counts
+    // (Oct used to be the last month, freezing base on Oct 31 standings).
+    // Standings don't move after Decision Day, and base auto-locks once MLS
+    // Cup is decided (AUTO_LOCK_RULES). Jan–Mar stay frozen so the next
+    // season's opening weeks can't overwrite end-of-year scores.
+    activeMonths: [4, 5, 6, 7, 8, 9, 10, 11, 12],
     sport: 'soccer', league: 'usa.1',
   },
 };
