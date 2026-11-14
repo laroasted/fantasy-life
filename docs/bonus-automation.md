@@ -66,9 +66,13 @@ editing of the article's own prose/tables by hours to days; Wikipedia's
 winners table gets edited live during the broadcast. Evergreen lookup:
 - **Grammy** (`resolveGrammyWikitext`): tries `"{year} Grammy Awards"` —
   this show's articles are titled by calendar year directly.
-- **Oscar** (`resolveOscarWikitext`): tries `"{year} Academy Awards"`,
-  relying on Wikipedia's own redirect to the real ordinal-numbered article
-  (e.g. "98th Academy Awards") — since the Oscars aren't titled by year.
+- **Oscar** (`resolveOscarWikitext`): looks up only `"{seasonYear + 1}
+  Academy Awards"`, relying on Wikipedia's own redirect to the real
+  ordinal-numbered article (e.g. "99th Academy Awards" for the 2026
+  season). League rule: a season scores the following year's ceremony;
+  the one on/near draft day belongs to the prior season. Not covered by
+  the "both try the current year, then the prior year" note below, which
+  now applies to the Grammys only.
 
 Both try the current year, then the prior year, and "has this ceremony
 actually happened" is answered by whether a winner can be parsed out of the

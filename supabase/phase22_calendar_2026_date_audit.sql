@@ -18,7 +18,7 @@ where season_year = 2026 and title in (
   'MLB Regular Season Ends','MLB Playoffs Begin','NHL Season Opens','MLB World Series',
   'MLS Playoffs Begin','NBA Season Opens','MLS Cup Final','College Football Playoff — First Round',
   'CFP Semifinal / NY6 Bowl Games','CFP National Championship','Australian Open',
-  'Australian Open Final','NBA All-Star Weekend','NCAA Tournament 2027')
+  'Australian Open Final','NBA All-Star Weekend','NCAA Tournament 2027','98th Academy Awards (Oscars)')
 order by event_date;
 
 -- STEP 2: corrections
@@ -64,8 +64,12 @@ update calendar_events set event_date='2027-01-31', subtitle='Men''s final · te
   where season_year=2026 and title='Australian Open Final';
 update calendar_events set event_date='2027-02-19', subtitle='Phoenix, AZ · All-Star Game Feb 21'
   where season_year=2026 and title='NBA All-Star Weekend';
-update calendar_events set event_date='2027-03-14', title='NCAA Tournament 2027 — Selection Sunday', subtitle='First 76-team field · Opening Round Mar 16–17'
+update calendar_events set event_date='2027-03-14', title='NCAA Tournament 2027 — Selection Sunday', subtitle='First 76-team field · counts for the 2027 season', is_bonus_eligible=false
   where season_year=2026 and title='NCAA Tournament 2027';
+-- League rule: a season's Oscars are the NEXT calendar year's ceremony, so
+-- the draft-day 98th Oscars belong to the 2025 season, not this one.
+update calendar_events set subtitle='Dolby Theatre, Hollywood — counts for the 2025 season (2026 season scores the 99th, Mar 2027)', is_bonus_eligible=false
+  where season_year=2026 and title='98th Academy Awards (Oscars)';
 
 -- STEP 3: missing events (skipped if a row with the same title already exists)
 insert into calendar_events (season_year, event_date, title, subtitle, category, event_type, is_bonus_eligible, sort_order)
@@ -77,7 +81,10 @@ from (values
   ('2026-11-16','Grammy Nominations','2027 Grammy nominees announced — Musician bonus pts','Musician','awards_show',true),
   ('2026-12-06','CFP Selection Day','Day after conference title games · NCAAF AP baseline freezes','NCAAF','season_end',false),
   ('2027-01-14','CFP Semifinals','College Football Playoff Semifinals (Jan 14–15)','NCAAF','championship',true),
-  ('2027-02-07','Grammy Awards','Crypto.com Arena, Los Angeles — Musician bonus pts','Musician','awards_show',true)
+  ('2027-02-07','Grammy Awards','Crypto.com Arena, Los Angeles — Musician bonus pts','Musician','awards_show',true),
+  ('2026-03-08','F1 Australian Grand Prix','Albert Park, Melbourne — featured GP (before draft day)','F1','major',true),
+  ('2027-01-21','Oscar Nominations','99th Academy Awards nominees announced — Actor/Actress bonus pts','Film','awards_show',true),
+  ('2027-03-14','99th Academy Awards (Oscars)','Dolby Theatre, Hollywood — Actor/Actress bonus pts for the 2026 season','Film','awards_show',true)
 ) as v(d,t,s,c,ty,b)
 where not exists (select 1 from calendar_events e where e.season_year=2026 and e.title=v.t);
 

@@ -29,9 +29,9 @@
  *   which stays exactly what it is: a PRE-outcome probability estimate from
  *   Kalshi/Polymarket odds for the "Projected Final" toggle, never mutating
  *   a real score. This is the POST-outcome settlement of the real thing.
- *   Evergreen: the article is looked up by trying "{year} Academy Awards"
+ *   Evergreen: the article is looked up as "{seasonYear + 1} Academy Awards"
  *   (a title Wikipedia redirects to the real ordinal-numbered article, e.g.
- *   "98th Academy Awards") for the current year then the prior year, and
+ *   "99th Academy Awards" for the 2026 season; see resolveOscarWikitext), and
  *   "has this ceremony actually happened" is answered by whether a winner
  *   can be parsed out — not a hardcoded date — so it self-corrects across
  *   the New Year boundary before a given year's ceremony has aired yet.
@@ -253,33 +253,27 @@ function extractCeremonyDate(wikitext) {
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
-// Tries "{year} Academy Awards" (a title Wikipedia redirects to the real
-// ordinal article, e.g. "98th Academy Awards") for each calendar year
-// this season's Fantasy Year window spans (newest first) — not the
-// wall-clock year, which can resolve to a real but WRONG (already-scored,
-// prior-season) ceremony. A candidate is only accepted if its own
-// ceremony date actually falls inside [fyStart, fyEnd]; "has this
-// ceremony happened yet" beyond that is answered by whether a winner can
-// actually be parsed out of it — live content state, not a hardcoded
-// date — so this still self-corrects before a given year's ceremony has
-// aired.
-async function resolveOscarWikitext(fyStart, fyEnd) {
+// League rule (confirmed by the commissioner, 2026-11): a fantasy season's
+// Oscars are the ceremony held in the FOLLOWING calendar year, e.g. the
+// 99th Academy Awards (March 2027) count for the 2026 season. The draft
+// lands on or near Oscar night, so the ceremony on/around draft day (the
+// 98th, March 15 2026, for the 2026 season) belongs to the PRIOR season.
+// The old lookup tried every calendar year the fy_start..fy_end window
+// spanned and accepted any ceremony inside it, which let draft-day's
+// ceremony score for the new season until the next one aired. Now only
+// "{seasonYear + 1} Academy Awards" is ever considered (Wikipedia
+// redirects that title to the real ordinal article). "Has it aired yet"
+// is still answered by whether a winner can be parsed out of the page.
+async function resolveOscarWikitext(seasonYear) {
   var allCategories = OSCAR_CATEGORIES.Actor.concat(OSCAR_CATEGORIES.Actress);
-  var fyStartDate = new Date(fyStart), fyEndDate = new Date(fyEnd);
-  var candidateYears = Array.from(new Set([fyEndDate.getFullYear(), fyStartDate.getFullYear()]));
-  for (var year of candidateYears) {
-    var title = year + ' Academy Awards';
-    var wikitext = await fetchWikipediaWikitext(title);
-    if (!wikitext) { console.log('  Oscar: no Wikipedia page resolved for "' + title + '"'); continue; }
-    var ceremonyDate = extractCeremonyDate(wikitext);
-    if (!ceremonyDate || ceremonyDate < fyStartDate || ceremonyDate > fyEndDate) {
-      console.log('  Oscar: "' + title + '" ceremony date (' + (ceremonyDate ? ceremonyDate.toISOString().slice(0, 10) : 'unknown') + ') is outside this season\'s Fantasy Year window (' + fyStart + ' to ' + fyEnd + ') — skipping');
-      continue;
-    }
-    var hasWinner = computeOscarCategoryResults(wikitext, allCategories).length > 0;
-    if (hasWinner) { console.log('  Oscar: using "' + title + '" (ceremony ' + ceremonyDate.toISOString().slice(0, 10) + ')'); return wikitext; }
-    console.log('  Oscar: "' + title + '" has no resolvable winners yet (ceremony likely not aired)');
-  }
+  var title = (Number(seasonYear) + 1) + ' Academy Awards';
+  var wikitext = await fetchWikipediaWikitext(title);
+  if (!wikitext) { console.log('  Oscar: no Wikipedia page resolved for "' + title + '"'); return null; }
+  var ceremonyDate = extractCeremonyDate(wikitext);
+  var dateStr = ceremonyDate ? ceremonyDate.toISOString().slice(0, 10) : 'unknown';
+  var hasWinner = computeOscarCategoryResults(wikitext, allCategories).length > 0;
+  if (hasWinner) { console.log('  Oscar: using "' + title + '" (ceremony ' + dateStr + ') for the ' + seasonYear + ' season'); return wikitext; }
+  console.log('  Oscar: "' + title + '" has no resolvable winners yet (ceremony ' + dateStr + ' likely not aired)');
   return null;
 }
 
@@ -460,7 +454,7 @@ module.exports = async function handler(req, res) {
 
   // Fetched once (same Wikipedia article serves both Actor and Actress
   // categories), not per category — see resolveOscarWikitext() above.
-  var oscarWikitext = await resolveOscarWikitext(FY_START, FY_END);
+  var oscarWikitext = await resolveOscarWikitext(seasonYear);
 
   for (var category of ['Actor', 'Actress']) {
     console.log('  Processing ' + category + '...');

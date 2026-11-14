@@ -32,7 +32,7 @@ const CAT = {
 const FALLBACK_EVENTS_YEAR = 2026;
 const FALLBACK_EVENTS = [
   { date:"2026-03-15", title:"Fantasy Life 2026 Draft", subtitle:"Annual draft day", category:"General", type:"draft" },
-  { date:"2026-03-15", title:"98th Academy Awards (Oscars)", subtitle:"Dolby Theatre, Hollywood — Actor/Actress bonus pts", category:"Film", type:"awards_show", bonus:true, result:"Best Actor: Michael B. Jordan · Best Actress: Jessie Buckley" },
+  { date:"2026-03-15", title:"98th Academy Awards (Oscars)", subtitle:"Dolby Theatre, Hollywood — counts for the 2025 season (2026 season scores the 99th, Mar 2027)", category:"Film", type:"awards_show", result:"Best Actor: Michael B. Jordan · Best Actress: Jessie Buckley" },
   { date:"2026-03-15", title:"NCAA Tournament — Selection Sunday", subtitle:"Bracket revealed · First Four Mar 17–18 · First Round Mar 19–20", category:"NCAAB", type:"playoffs_start", bonus:true },
   { date:"2026-03-15", title:"Project Hail Mary", subtitle:"Ryan Gosling (Danny · Actor) & Meryl Streep (Auzy · Actress)", category:"Film", type:"film_release" },
   { date:"2026-03-18", title:"Free Spirits", subtitle:"Jack Black (Jordan · Actor)", category:"Film", type:"film_release" },
@@ -103,7 +103,7 @@ const FALLBACK_EVENTS = [
   { date:"2027-01-31", title:"Australian Open Final", subtitle:"Men's final · tennis world ranking baseline freezes", category:"Tennis", type:"major", bonus:true },
   { date:"2027-02-14", title:"Super Bowl LXI", subtitle:"SoFi Stadium, Inglewood, CA", category:"NFL", type:"championship", bonus:true },
   { date:"2027-02-19", title:"NBA All-Star Weekend", subtitle:"Phoenix, AZ · All-Star Game Feb 21", category:"NBA", type:"other" },
-  { date:"2027-03-14", title:"NCAA Tournament 2027 — Selection Sunday", subtitle:"First 76-team field · Opening Round Mar 16–17", category:"NCAAB", type:"playoffs_start", bonus:true },
+  { date:"2027-03-14", title:"NCAA Tournament 2027 — Selection Sunday", subtitle:"First 76-team field · counts for the 2027 season", category:"NCAAB", type:"playoffs_start" },
   { date:"2026-04-12", title:"NBA Regular Season Ends", subtitle:"NBA win % baseline freezes", category:"NBA", type:"season_end" },
   { date:"2026-04-16", title:"NHL Regular Season Ends", subtitle:"NHL standings-points baseline freezes", category:"NHL", type:"season_end" },
   { date:"2026-11-07", title:"MLS Decision Day", subtitle:"Final day of MLS regular season · standings-points baseline freezes", category:"MLS", type:"season_end" },
@@ -111,6 +111,9 @@ const FALLBACK_EVENTS = [
   { date:"2026-12-06", title:"CFP Selection Day", subtitle:"Day after conference title games · NCAAF AP baseline freezes", category:"NCAAF", type:"season_end" },
   { date:"2027-01-14", title:"CFP Semifinals", subtitle:"College Football Playoff Semifinals (Jan 14–15)", category:"NCAAF", type:"championship", bonus:true },
   { date:"2027-02-07", title:"Grammy Awards", subtitle:"Crypto.com Arena, Los Angeles — Musician bonus pts", category:"Musician", type:"awards_show", bonus:true },
+  { date:"2026-03-08", title:"F1 Australian Grand Prix", subtitle:"Albert Park, Melbourne — featured GP (before draft day)", category:"F1", type:"major", bonus:true },
+  { date:"2027-01-21", title:"Oscar Nominations", subtitle:"99th Academy Awards nominees announced — Actor/Actress bonus pts", category:"Film", type:"awards_show", bonus:true },
+  { date:"2027-03-14", title:"99th Academy Awards (Oscars)", subtitle:"Dolby Theatre, Hollywood — Actor/Actress bonus pts for the 2026 season", category:"Film", type:"awards_show", bonus:true },
   { date:"2027-03-31", title:"Fantasy Life 2026 Season Ends", subtitle:"Final day of the 2026 Fantasy Year", category:"General", type:"other" },
 ];
  

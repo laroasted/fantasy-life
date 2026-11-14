@@ -156,9 +156,18 @@ async function fetchESPNTeams(sport, league) {
 // kept separate from the broader `text` classification blob — it's the
 // clean bowl-game name used for NCAAF's "Other Bowl" label when a game
 // doesn't classify as a CFP round. Never throws.
-async function fetchTeamPostseasonGames(sport, league, teamId) {
+// Pinned to ESPN's `season` = the fantasy season year, never "whatever
+// ESPN considers current". League rule (commissioner, 2026-11): the 2026
+// fantasy season's NCAAB bonus is the March 2026 tournament (ESPN season
+// 2026 = 2025-26) and its NCAAF bonus is the 2026-27 CFP (ESPN season 2026
+// = fall 2026); the March 2027 tournament belongs to the 2027 season.
+// Unpinned, a 2026 season still active in mid-March 2027 (it runs to
+// fy_end, and must still be active for the March 2027 Oscars) would have
+// the 2027 tournament overwrite the 2026 tournament bonus — NCAAB has no
+// auto-lock to stop it.
+async function fetchTeamPostseasonGames(sport, league, teamId, seasonYear) {
  try {
-  var url = 'https://site.api.espn.com/apis/site/v2/sports/' + sport + '/' + league + '/teams/' + teamId + '/schedule?seasontype=3';
+  var url = 'https://site.api.espn.com/apis/site/v2/sports/' + sport + '/' + league + '/teams/' + teamId + '/schedule?seasontype=3' + (seasonYear ? '&season=' + seasonYear : '');
   var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
   if (!res.ok) return [];
   var data = await res.json();
@@ -371,7 +380,7 @@ module.exports = async function handler(req, res) {
    for (var m of matched) {
     var teamMatch = matchTeam(m.pick, fullTeams);
     if (!teamMatch || !teamMatch.id) continue;
-    var games = await fetchTeamPostseasonGames(config.sport, config.league, teamMatch.id);
+    var games = await fetchTeamPostseasonGames(config.sport, config.league, teamMatch.id, seasonYear);
     var result = league === 'NCAAF' ? computeNCAAFTier(games) : computeNCAABTier(games);
     if (result) bonusByPickId[m.id] = result;
    }
