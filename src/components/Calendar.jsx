@@ -113,7 +113,7 @@ const FALLBACK_EVENTS = [
   { date:"2027-02-07", title:"Grammy Awards", subtitle:"Crypto.com Arena, Los Angeles — Musician bonus pts", category:"Musician", type:"awards_show", bonus:true },
   { date:"2026-03-08", title:"F1 Australian Grand Prix", subtitle:"Albert Park, Melbourne — featured GP (before draft day)", category:"F1", type:"major", bonus:true },
   { date:"2027-01-21", title:"Oscar Nominations", subtitle:"99th Academy Awards nominees announced — Actor/Actress bonus pts", category:"Film", type:"awards_show", bonus:true },
-  { date:"2027-03-14", title:"99th Academy Awards (Oscars)", subtitle:"Dolby Theatre, Hollywood — Actor/Actress bonus pts for the 2026 season", category:"Film", type:"awards_show", bonus:true },
+  { date:"2027-03-14", title:"99th Academy Awards (Oscars)", subtitle:"Dolby Theatre, Hollywood — last scored event of the 2026 fantasy year (Actor/Actress bonus)", category:"Film", type:"awards_show", bonus:true },
   { date:"2027-03-31", title:"Fantasy Life 2026 Season Ends", subtitle:"Final day of the 2026 Fantasy Year", category:"General", type:"other" },
 ];
  

@@ -84,7 +84,7 @@ from (values
   ('2027-02-07','Grammy Awards','Crypto.com Arena, Los Angeles — Musician bonus pts','Musician','awards_show',true),
   ('2026-03-08','F1 Australian Grand Prix','Albert Park, Melbourne — featured GP (before draft day)','F1','major',true),
   ('2027-01-21','Oscar Nominations','99th Academy Awards nominees announced — Actor/Actress bonus pts','Film','awards_show',true),
-  ('2027-03-14','99th Academy Awards (Oscars)','Dolby Theatre, Hollywood — Actor/Actress bonus pts for the 2026 season','Film','awards_show',true)
+  ('2027-03-14','99th Academy Awards (Oscars)','Dolby Theatre, Hollywood — last scored event of the 2026 fantasy year (Actor/Actress bonus)','Film','awards_show',true)
 ) as v(d,t,s,c,ty,b)
 where not exists (select 1 from calendar_events e where e.season_year=2026 and e.title=v.t);
 

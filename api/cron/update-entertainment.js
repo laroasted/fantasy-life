@@ -253,9 +253,10 @@ function extractCeremonyDate(wikitext) {
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
-// League rule (confirmed by the commissioner, 2026-11): a fantasy season's
-// Oscars are the ceremony held in the FOLLOWING calendar year, e.g. the
-// 99th Academy Awards (March 2027) count for the 2026 season. The draft
+// League rule (confirmed by the commissioner, 2026-11): the Oscars are
+// always the LAST scored event of a fantasy year, so a season's Oscars are
+// the ceremony held in the FOLLOWING calendar year, e.g. the 99th Academy
+// Awards (March 2027) close out the 2026 season. The draft
 // lands on or near Oscar night, so the ceremony on/around draft day (the
 // 98th, March 15 2026, for the 2026 season) belongs to the PRIOR season.
 // The old lookup tried every calendar year the fy_start..fy_end window
