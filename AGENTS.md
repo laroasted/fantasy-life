@@ -557,6 +557,8 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   The March 2027 NCAA tournament and 2027 F1 Australian GP belong to the 2027
   season. College postseason lookups pin ESPN `season=seasonYear` for this.
   Don't auto-lock NBA/NHL base on regular-season end (see `AUTO_LOCK_RULES`).
+  NBA/NHL base scores Oct–Feb plus March through Oscar night, the latter
+  only while the ending season is still active (`extendBaseToOscarNight`).
 
 ## Governance
 

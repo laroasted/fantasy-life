@@ -71,6 +71,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const { writeScoreEventsAndNotify } = require('../_lib/push');
+const { resolveOscarNight, fetchWikipediaWikitext } = require('../_lib/fantasyYear');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -88,6 +89,9 @@ const ESPN_LEAGUES = {
     // Base scoring uses the 2026-27 season (starts Oct 2026).
     // Mar–Sep excluded: 2025-26 season is bonus points only + offseason gap.
     activeMonths: [10, 11, 12, 1, 2],
+    // ...plus March up to Oscar night, for the season that's ending only
+    // (see oscarNightExtension in the handler).
+    extendBaseToOscarNight: true,
     sport: 'basketball', league: 'nba',
   },
   NHL: {
@@ -96,6 +100,7 @@ const ESPN_LEAGUES = {
     // Base scoring uses the 2026-27 season (starts Oct 2026).
     // Mar–Sep excluded: 2025-26 season is bonus points only + offseason gap.
     activeMonths: [10, 11, 12, 1, 2],
+    extendBaseToOscarNight: true,
     sport: 'hockey', league: 'nhl',
   },
   MLB: {
@@ -529,6 +534,26 @@ module.exports = async function handler(req, res) {
   // the activity feed is a nice-to-have view on top of real scoring, not
   // part of it.
   const scoreEvents = [];
+
+  // Oscar-night extension for NBA/NHL base (league rule: the fantasy year
+  // ends on Oscar night; see api/_lib/fantasyYear.js). activeMonths stops
+  // at February, which used to drop the last ~2 weeks of the year. Applies
+  // ONLY while the active season is the one ending this spring (season Y
+  // during calendar year Y+1, i.e. before the next draft switches it);
+  // once the new season is active, March stays frozen so its picks don't
+  // show the old season's standings until October. Through Oscar night +1
+  // day UTC so the run after that night's games still counts; off entirely
+  // if the ceremony date can't be resolved.
+  const todayUTC = new Date().toISOString().slice(0, 10);
+  let oscarNightExtension = false;
+  if (seasonYear === new Date().getUTCFullYear() - 1) {
+    const oscarNight = await resolveOscarNight(seasonYear, fetchWikipediaWikitext);
+    if (oscarNight) {
+      const graceEnd = new Date(Date.parse(oscarNight) + 864e5).toISOString().slice(0, 10);
+      oscarNightExtension = todayUTC <= graceEnd;
+      console.log(`Oscar night ${oscarNight}: NBA/NHL base extension ${oscarNightExtension ? 'ON' : 'off'} (today ${todayUTC})`);
+    }
+  }
  
   for (const [league, config] of Object.entries(ESPN_LEAGUES)) {
     console.log(`Processing ${league}...`);
@@ -538,7 +563,8 @@ module.exports = async function handler(req, res) {
     // the OTHER side of that gap is still live — so a frozen base no
     // longer skips the league entirely; it only skips the base/metric/
     // record writes below. Bonus resolution always runs.
-    const baseFrozen = !!(config.activeMonths && !config.activeMonths.includes(currentMonth));
+    const baseFrozen = !!(config.activeMonths && !config.activeMonths.includes(currentMonth))
+      && !(config.extendBaseToOscarNight && oscarNightExtension);
     if (baseFrozen) console.log(` ${league}: Offseason — base frozen, bonus still evaluated`);
 
     const { data: picks, error: pickErr } = await supabase

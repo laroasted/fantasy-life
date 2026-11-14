@@ -12,6 +12,19 @@
 // Underscore-prefixed directory: not a Vercel Serverless Function, so this
 // doesn't count against the Hobby plan's 12-function cap (see AGENTS.md).
 
+// Same fetcher update-entertainment.js / update-billboard.js each carry
+// their own copy of; exported here for crons that don't (update-sports.js).
+async function fetchWikipediaWikitext(title) {
+  try {
+    var url = 'https://en.wikipedia.org/w/api.php?action=parse&page=' + encodeURIComponent(title) + '&prop=wikitext&format=json&redirects=1';
+    var res = await fetch(url, { headers: { 'User-Agent': 'FantasyLifeHub/1.0 (private league scoring tool)' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    var data = await res.json();
+    if (data.error) return null;
+    return (data.parse && data.parse.wikitext && data.parse.wikitext['*']) || null;
+  } catch (err) { console.error('  Wikipedia fetch failed for "' + title + '":', err.message); return null; }
+}
+
 // Handles both infobox shapes: "| date = March 14, 2027" and
 // "| date = {{Start date|2027|03|14}}". Returns a UTC-midnight Date or null.
 function parseInfoboxDate(wikitext) {
@@ -51,4 +64,4 @@ async function resolveFantasyYearEnd(seasonYear, fyEndFallback, fetchWikitext) {
   return fyEndFallback;
 }
 
-module.exports = { parseInfoboxDate, resolveOscarNight, resolveFantasyYearEnd };
+module.exports = { fetchWikipediaWikitext, parseInfoboxDate, resolveOscarNight, resolveFantasyYearEnd };
