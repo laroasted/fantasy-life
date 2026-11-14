@@ -47,6 +47,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const { writeScoreEventsAndNotify } = require('../_lib/push');
+const { resolveFantasyYearEnd, parseInfoboxDate } = require('../_lib/fantasyYear');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -278,6 +279,56 @@ async function resolveOscarWikitext(seasonYear) {
   return null;
 }
 
+// PRIOR-SEASON OSCAR CARRY-OVER. The Oscars close each fantasy year, but
+// the active season only switches at the next draft, and the draft can be
+// on Oscar day itself (2026's was). The ceremony then airs AFTER the switch,
+// and the main pass above (active season only, looking up next year's
+// Oscars) would never score it for the season it belongs to. So this also
+// settles the {activeYear} Academy Awards (= the prior season's Oscars)
+// onto the prior season's picks, bonus only. Limited to 30 days after that
+// ceremony so it can't rewrite older, already-settled seasons later on.
+async function settlePriorSeasonOscars(supabase, activeYear, memberNameById, scoreEvents) {
+  var prevYear = Number(activeYear) - 1;
+  var wikitext = await resolveOscarWikitext(prevYear);
+  if (!wikitext) return { status: 'skipped', reason: 'no ' + activeYear + ' Academy Awards winners yet' };
+  var ceremony = parseInfoboxDate(wikitext) || extractCeremonyDate(wikitext);
+  var ageDays = ceremony ? (Date.now() - ceremony.getTime()) / 864e5 : Infinity;
+  if (!(ageDays >= -1 && ageDays <= 30)) return { status: 'skipped', reason: 'outside 30-day carry-over window' };
+
+  var { data: prevSeason } = await supabase.from('seasons').select('year, locks').eq('year', prevYear).maybeSingle();
+  if (!prevSeason) return { status: 'skipped', reason: 'no ' + prevYear + ' season row' };
+  var prevLocks = prevSeason.locks || {};
+  var updated = 0;
+
+  for (var category of ['Actor', 'Actress']) {
+    var catResults = computeOscarCategoryResults(wikitext, OSCAR_CATEGORIES[category]);
+    var { data: prevPicks } = await supabase.from('picks').select('id, member_id, pick, bonus').eq('season_year', prevYear).eq('category', category);
+    for (var pp of (prevPicks || [])) {
+      var entry = resolveOscarBonusForPick(pp.pick, catResults);
+      if (!entry) continue;
+      var own = memberNameById[pp.member_id] || pp.member_id;
+      if (isFieldLocked(prevLocks, category, own, 'bonus')) { console.log('  ' + prevYear + ' ' + own + ': Oscar bonus locked, skipping'); continue; }
+      var oldBonus = Number(pp.bonus) || 0;
+      if (oldBonus === entry.tier) continue;
+      var q = supabase.from('picks').update({ bonus: entry.tier, bonus_note: entry.label }).eq('id', pp.id);
+      q = pp.bonus === null || pp.bonus === undefined ? q.is('bonus', null) : q.eq('bonus', pp.bonus);
+      var { data: rows, error } = await q.select('id');
+      if (error || !rows || rows.length === 0) continue; // failed or a concurrent run already applied it
+      updated++;
+      scoreEvents.push({
+        season_year: prevYear,
+        member_id: pp.member_id,
+        category: category,
+        delta: Math.round((entry.tier - oldBonus) * 10) / 10,
+        cause: pp.pick + ' — ' + entry.label,
+        source: 'update-entertainment',
+      });
+    }
+  }
+  console.log('  Prior-season Oscars: ' + updated + ' ' + prevYear + ' pick(s) updated');
+  return { status: 'updated', season: prevYear, updated: updated };
+}
+
 // SUMS credit across every DISTINCT category this pick's name matches —
 // NOT a max (this file previously assumed max; corrected after Codex's
 // review on PR #55 traced the actual convention this league already
@@ -439,7 +490,8 @@ module.exports = async function handler(req, res) {
   var seasonYear = season.year;
   var locks = season.locks || {};
   var FY_START = season.fy_start;
-  var FY_END = season.fy_end;
+  // Ends on Oscar night, which moves every year — see api/_lib/fantasyYear.js.
+  var FY_END = await resolveFantasyYearEnd(seasonYear, season.fy_end, fetchWikipediaWikitext);
  
   console.log('  Fantasy Year window: ' + FY_START + ' → ' + FY_END + '\n');
  
@@ -668,6 +720,8 @@ module.exports = async function handler(req, res) {
     console.log('  ' + category + ': Updated ' + updated + '/' + picks.length + ' picks\n');
     results[category] = { status: 'updated', updated: updated, total: picks.length, rankings: rankings.map(function(r) { return { rank: r.rank, member: r.member, pick: r.pick, totalScore: r.totalScore, filmCount: r.filmCount, base: r.base, bonusDetected: r.bonusDetected, films: r.films }; }) };
   }
+
+  results.priorSeasonOscars = await settlePriorSeasonOscars(supabase, seasonYear, memberNameById, scoreEvents);
 
   await writeScoreEventsAndNotify(supabase, scoreEvents, memberNameById);
 

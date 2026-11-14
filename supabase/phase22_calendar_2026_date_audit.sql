@@ -18,7 +18,7 @@ where season_year = 2026 and title in (
   'MLB Regular Season Ends','MLB Playoffs Begin','NHL Season Opens','MLB World Series',
   'MLS Playoffs Begin','NBA Season Opens','MLS Cup Final','College Football Playoff — First Round',
   'CFP Semifinal / NY6 Bowl Games','CFP National Championship','Australian Open',
-  'Australian Open Final','NBA All-Star Weekend','NCAA Tournament 2027','98th Academy Awards (Oscars)')
+  'Australian Open Final','NBA All-Star Weekend','NCAA Tournament 2027','98th Academy Awards (Oscars)','Fantasy Life 2026 Season Ends')
 order by event_date;
 
 -- STEP 2: corrections
@@ -64,19 +64,22 @@ update calendar_events set event_date='2027-01-31', subtitle='Men''s final · te
   where season_year=2026 and title='Australian Open Final';
 update calendar_events set event_date='2027-02-19', subtitle='Phoenix, AZ · All-Star Game Feb 21'
   where season_year=2026 and title='NBA All-Star Weekend';
-update calendar_events set event_date='2027-03-14', title='NCAA Tournament 2027 — Selection Sunday', subtitle='First 76-team field · counts for the 2027 season', is_bonus_eligible=false
+update calendar_events set event_date='2027-03-14', title='NCAA Tournament 2027 — Selection Sunday', subtitle='First 76-team field · NCAAB base uses the final pre-tournament AP poll · tournament counts for 2027', is_bonus_eligible=false
   where season_year=2026 and title='NCAA Tournament 2027';
 -- League rule: a season's Oscars are the NEXT calendar year's ceremony, so
 -- the draft-day 98th Oscars belong to the 2025 season, not this one.
-update calendar_events set subtitle='Dolby Theatre, Hollywood — counts for the 2025 season (2026 season scores the 99th, Mar 2027)', is_bonus_eligible=false
+update calendar_events set subtitle='Dolby Theatre, Hollywood — Oscar night closes the 2025 fantasy year (2026 scores the 99th, Mar 2027)', is_bonus_eligible=false
   where season_year=2026 and title='98th Academy Awards (Oscars)';
+
+-- The fantasy year ends on Oscar night (the crons now resolve that date
+-- live from Wikipedia — api/_lib/fantasyYear.js — so this row is display only).
+update calendar_events set event_date='2027-03-14', subtitle='Oscar night — 2026 season stays active until the 2027 draft'
+  where season_year=2026 and title='Fantasy Life 2026 Season Ends';
 
 -- STEP 3: missing events (skipped if a row with the same title already exists)
 insert into calendar_events (season_year, event_date, title, subtitle, category, event_type, is_bonus_eligible, sort_order)
 select 2026, v.d::date, v.t, v.s, v.c, v.ty, v.b, 0
 from (values
-  ('2026-04-12','NBA Regular Season Ends','NBA win % baseline freezes','NBA','season_end',false),
-  ('2026-04-16','NHL Regular Season Ends','NHL standings-points baseline freezes','NHL','season_end',false),
   ('2026-11-07','MLS Decision Day','Final day of MLS regular season · standings-points baseline freezes','MLS','season_end',false),
   ('2026-11-16','Grammy Nominations','2027 Grammy nominees announced — Musician bonus pts','Musician','awards_show',true),
   ('2026-12-06','CFP Selection Day','Day after conference title games · NCAAF AP baseline freezes','NCAAF','season_end',false),

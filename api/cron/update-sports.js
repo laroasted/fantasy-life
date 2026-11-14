@@ -265,17 +265,22 @@ function computePlayoffTier(games, rounds) {
 // AUTO-LOCK — fields a league locks itself once a trigger condition is
 // true, instead of waiting on the commissioner to click the lock icon.
 // `onFinal`: fields to lock once the championship game is complete.
-// `onRegularSeasonEnd`: fields to lock once the regular season is over
-// (NBA/NHL `base` specifically — stays live into their own next season,
-// per FIX 4, so only the just-finished bonus-relevant postseason gets its
-// bonus locked at the Finals; base keeps updating).
+// `onRegularSeasonEnd`: fields to lock once the regular season is over.
+// NOT used for NBA/NHL base (removed 2026-11): per FIX 4 / league rule, the
+// {Y} fantasy year scores the Y-(Y+1) regular season as base and the
+// spring-Y playoffs as bonus. The playoffs that would trip this rule (e.g.
+// April 2027) arrive after the season switch at the next draft, so it
+// locked the NEW season's base months before that season's own NBA/NHL
+// games even start, and base would never update again. NBA/NHL base is
+// already frozen Mar–Sep by activeMonths, and nothing scores a season
+// after the switch, so no base lock is needed.
 // ═══════════════════════════════════════════════════════════════════════
 const AUTO_LOCK_RULES = {
   NFL: { onFinal: ['base', 'bonus'] },
   MLB: { onFinal: ['base', 'bonus'] },
   MLS: { onFinal: ['base', 'bonus'] },
-  NBA: { onFinal: ['bonus'], onRegularSeasonEnd: ['base'] },
-  NHL: { onFinal: ['bonus'], onRegularSeasonEnd: ['base'] },
+  NBA: { onFinal: ['bonus'] },
+  NHL: { onFinal: ['bonus'] },
 };
 
 // "Regular season over" reuses hasPostseason (a bracket existing at all

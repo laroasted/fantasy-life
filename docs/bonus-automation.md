@@ -405,7 +405,7 @@ Per `AUTO_LOCK_RULES` in `update-sports.js`:
 | League | Locks `base` + `bonus` on | Locks `bonus` only on | Locks `base` only on |
 | --- | --- | --- | --- |
 | NFL / MLB / MLS | championship game complete | — | — |
-| NBA / NHL | — | championship game complete | regular season ending |
+| NBA / NHL | — | championship game complete | — (removed 2026-11: base is the next regular season, see AGENTS.md) |
 
 NBA/NHL's `base` deliberately locks on a *different, earlier* trigger
 (regular season end, detected the same way the bonus gate detects it — a

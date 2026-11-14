@@ -541,6 +541,23 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   whenever there's genuinely no good match — this is additive, not a
   replacement for that escape hatch.
 
+## Fantasy-year boundaries (league rules — read before touching any cron's date logic)
+
+- **The Oscars are the last scored event of every fantasy year.** The
+  {Y} season ends on the night of the {Y+1} Academy Awards (2026 → 99th
+  Oscars, Mar 14 2027). That date moves yearly, so `api/_lib/fantasyYear.js`
+  resolves it live from Wikipedia; `seasons.fy_end` is only the fallback.
+  `update-entertainment.js` scores only the {Y+1} ceremony for season Y.
+- **The active season switches only at the next draft**, which can be on
+  Oscar day itself. `update-entertainment.js` therefore also settles the
+  prior season's Oscars for 30 days after that ceremony.
+- **Base = the season that starts during the fantasy year; bonus = the most
+  recently finished postseason.** NBA/NHL/NCAAB for 2026: base is the
+  2026-27 regular season, bonus is the spring-2026 playoffs/tournament.
+  The March 2027 NCAA tournament and 2027 F1 Australian GP belong to the 2027
+  season. College postseason lookups pin ESPN `season=seasonYear` for this.
+  Don't auto-lock NBA/NHL base on regular-season end (see `AUTO_LOCK_RULES`).
+
 ## Governance
 
 - No consent gate is implemented. This is a private ~12-person friend
