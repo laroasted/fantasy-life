@@ -7,6 +7,7 @@ import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
 import ScrollFadeEdges from "./ScrollFadeEdges";
 import { Dot, CategoryPill, Avatar, Skeleton } from "./Badges";
+import StatusCard from "./StatusCard";
 
 // ══════════════════════════════════════════════════════
 //  TRENDS — standings-over-time chart, backed by the
@@ -365,18 +366,10 @@ export default function Trends({ seasonData }) {
 
   if (error) {
     return (
-      <div style={{ maxWidth: 800, margin: "0 auto", ...cardStyle, textAlign: "center", padding: 40 }}>
-        <AlertTriangle size={28} color={s.red} style={{ marginBottom: 10 }} />
-        <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>Couldn't load trend history</h3>
-        <p style={{ color: s.dim, fontSize: 12, maxWidth: 360, margin: "0 auto 14px" }}>
-          No cached snapshot to fall back to either — this usually clears up on its own.
-        </p>
-        <button onClick={() => { track(EVENTS.TRENDS_LOAD_FAILED, { error_message: error }); load(); }}
-          style={{ background: "none", border: "1px solid " + s.bdr, borderRadius: 8,
-            padding: "7px 16px", color: s.txt, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          Try again
-        </button>
-      </div>
+      <StatusCard icon={AlertTriangle} iconColor={s.red} maxWidth={800} title="Couldn't load trend history"
+        action={{ label: "Try again", onClick: () => { track(EVENTS.TRENDS_LOAD_FAILED, { error_message: error }); load(); } }}>
+        No cached snapshot to fall back to either — this usually clears up on its own.
+      </StatusCard>
     );
   }
 

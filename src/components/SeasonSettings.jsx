@@ -8,6 +8,7 @@ import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall
 import { storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { sendTestPush } from "../utils/push";
 import ScrollFadeEdges from "./ScrollFadeEdges";
+import StatusCard from "./StatusCard";
 
 // ─── Which type of category is this? ───
 var FILM_CATS = ["Actor", "Actress"];
@@ -681,19 +682,15 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  // ═══ COMMISSIONER GATE ═══
  if (!isCommissioner) {
   return (
-   <div style={{ maxWidth: 500, margin: "0 auto", ...cardStyle, textAlign: "center" }}>
-    <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-     <Lock size={44} color={theme.dim} />
-    </div>
-    <h3 style={{ margin: "0 0 8px", fontSize: 18 }}>Commissioner Access Required</h3>
-    <p style={{ color: theme.dim, fontSize: 13, marginBottom: 16 }}>
-     Sign in with Google from the header (visible on Draft or here) using your commissioner account to unlock scoring controls, locks, and corrections.
-     </p>
-    <div style={{ ...inputStyle, marginBottom: 8, textAlign: "left", opacity: 0.7 }}>
-     {commissionerEmail ? commissionerEmail : "No commissioner session detected"}
-    </div>
-    <button disabled style={{ ...buttonStyle(theme.srf), width: "100%", opacity: 0.6, cursor: "default" }}>Awaiting Commissioner Sign-In</button>
-   </div>
+   <StatusCard icon={Lock} iconSize={44} headingLevel={3} maxWidth={500} title="Commissioner Access Required"
+    footer={<>
+     <div style={{ ...inputStyle, marginBottom: 8, opacity: 0.7 }}>
+      {commissionerEmail ? commissionerEmail : "No commissioner session detected"}
+     </div>
+     <button disabled style={{ ...buttonStyle(theme.srf), width: "100%", opacity: 0.6, cursor: "default" }}>Awaiting Commissioner Sign-In</button>
+    </>}>
+    Sign in with Google from the header (visible on Draft or here) using your commissioner account to unlock scoring controls, locks, and corrections.
+   </StatusCard>
   );
  }
 

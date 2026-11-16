@@ -19,6 +19,7 @@ import {
 import { notifyTurn } from "../utils/push";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
 import { Avatar } from "./Badges";
+import StatusCard from "./StatusCard";
 
 const TIMER_DURATION = 120;
 
@@ -884,10 +885,11 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   if (phase === "setup" && !liveSession) {
     return (
       <div style={{ maxWidth: 600, margin: "0 auto" }}>
-        <div style={{ ...cardStyle, marginBottom: 16, textAlign: "center" }}>
-          <Target size={48} style={{ marginBottom: 8 }} color={theme.acc} />
-          <h2 style={{ margin: "0 0 8px", fontSize: isMobile ? 18 : 22 }}>New Season Draft</h2>
-          <p style={{ color: theme.dim, fontSize: 13 }}>Set up members, enter guesses, and determine draft order.</p>
+        <div style={{ marginBottom: 16 }}>
+          <StatusCard icon={Target} iconSize={48} iconColor={theme.acc} headingLevel={2}
+            titleSize={isMobile ? 18 : 22} title="New Season Draft" maxWidth="100%" padding={isMobile ? 20 : 32}>
+            Set up members, enter guesses, and determine draft order.
+          </StatusCard>
         </div>
 
         {nonCommissionerBanner}

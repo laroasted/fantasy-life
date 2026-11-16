@@ -1,5 +1,5 @@
 import { Trophy, Bell, BellOff, Settings as SettingsIcon } from "lucide-react";
-import { theme } from "../constants/theme";
+import { theme, font, space } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
 import { getContrastText } from "../utils/helpers";
@@ -61,12 +61,12 @@ export default function AppShell({
             <button
               onClick={() => setShowAccountMenu((v) => !v)}
               style={{
-                display: "flex", alignItems: "center", gap: 6, minWidth: 0,
+                display: "flex", alignItems: "center", gap: space.sm, minWidth: 0,
                 width: "100%", boxSizing: "border-box",
                 background: "none",
                 border: "1px solid " + theme.bdr,
                 borderRadius: 8,
-                padding: "6px 8px",
+                padding: space.sm,
                 color: theme.txt,
                 cursor: "pointer",
                 font: "inherit",
@@ -94,29 +94,29 @@ export default function AppShell({
                 <div style={{
                   position: "absolute", top: "calc(100% + 6px)", left: 0,
                   background: theme.card, border: "1px solid " + theme.bdr,
-                  borderRadius: 10, padding: 10, minWidth: 220,
+                  borderRadius: 10, padding: space.sm, minWidth: 220,
                   zIndex: 151, boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
                 }}>
                   {isCommissioner && (
-                    <div style={{ fontSize: 11, color: "#86efac", fontWeight: 700, marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: "#86efac", fontWeight: 700, marginBottom: space.sm }}>
                       Commissioner
                     </div>
                   )}
                   {memberId ? (
-                    <div style={{ fontSize: 11, color: theme.dim, marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, color: theme.dim, marginBottom: space.sm }}>
                       Signed in as {accountDisplayName}
                     </div>
                   ) : (
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, color: theme.dim, marginBottom: 6 }}>
+                    <div style={{ marginBottom: space.sm }}>
+                      <div style={{ fontSize: 11, color: theme.dim, marginBottom: space.xs }}>
                         Which of these are you?
                       </div>
                       {claimError && (
-                        <div style={{ fontSize: 10, color: "#fca5a5", marginBottom: 6 }}>
+                        <div style={{ fontSize: 10, color: "#fca5a5", marginBottom: space.xs }}>
                           {claimError}
                         </div>
                       )}
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflowY: "auto" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: space.xs, maxHeight: 220, overflowY: "auto" }}>
                         {unclaimedMembers.map((m) => (
                           <button key={m.id}
                             onClick={() => handleClaimMember(m.id)}
@@ -124,7 +124,7 @@ export default function AppShell({
                             style={{
                               textAlign: "left",
                               background: "none", border: "1px solid " + theme.bdr,
-                              borderRadius: 6, padding: "5px 8px",
+                              borderRadius: 6, padding: `${space.xs}px ${space.sm}px`,
                               color: theme.txt, fontSize: 12,
                               cursor: claimingId ? "default" : "pointer",
                               opacity: claimingId === m.id ? 0.6 : 1,
@@ -146,7 +146,7 @@ export default function AppShell({
                     style={{
                       width: "100%",
                       background: "none", border: "1px solid " + theme.bdr,
-                      borderRadius: 8, padding: "6px 10px",
+                      borderRadius: 8, padding: space.sm,
                       color: theme.txt, fontSize: 11,
                       cursor: authLoading ? "default" : "pointer",
                     }}>
@@ -165,7 +165,7 @@ export default function AppShell({
               background: "none",
               border: "1px solid " + theme.bdr,
               borderRadius: 8,
-              padding: "6px 10px",
+              padding: space.sm,
               color: theme.txt,
               fontSize: 11,
               fontWeight: 700,
@@ -211,8 +211,8 @@ export default function AppShell({
   }
 
   const railButtonStyle = (isActive) => ({
-    display: "flex", alignItems: "center", gap: 10, width: "100%",
-    padding: "10px 14px", borderRadius: 8, margin: "0 0 2px",
+    display: "flex", alignItems: "center", gap: space.sm, width: "100%",
+    padding: `${space.sm}px ${space.md}px`, borderRadius: 8, margin: `0 0 ${space.xs}px`,
     background: isActive ? theme.accSoft : "none",
     border: "none", textAlign: "left", font: "inherit",
     color: isActive ? theme.acc : theme.dim,
@@ -245,16 +245,16 @@ export default function AppShell({
             every icon button a real 44x44px touch target. */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 8, padding: "10px 12px",
+          gap: space.sm, padding: `${space.sm}px ${space.md}px`,
           background: theme.card, borderBottom: "1px solid " + theme.bdr,
           position: "sticky", top: "env(safe-area-inset-top, 0px)", zIndex: 100,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: space.sm, minWidth: 0 }}>
             <Trophy size={20} color={theme.acc} style={{ flexShrink: 0 }} />
             <h1 style={{ fontSize: 16, fontWeight: 800, margin: 0, color: "#FAFAFA",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Fantasy Life</h1>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: space.sm, flexShrink: 0 }}>
             {bellButton}
             {refreshButton}
             <AccountMenu compact />
@@ -263,7 +263,11 @@ export default function AppShell({
           <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
         </div>
 
-        <div style={{ padding: "12px 8px 72px" }}>{children}</div>
+        {/* 72px bottom clearance is functional, not decorative — it matches
+            the fixed bottom tab bar's own height (56px minHeight) plus
+            breathing room, so it's pinned to that number rather than
+            snapped onto the spacing scale below. */}
+        <div style={{ padding: `${space.md}px ${space.sm}px 72px` }}>{children}</div>
 
         {/* New bottom tab bar — doesn't exist today (the old layout was
             top-tab-bar-only on every screen size). Needs its own
@@ -282,7 +286,7 @@ export default function AppShell({
                 aria-current={isActive ? "page" : undefined}
                 style={{
                   flex: 1, minHeight: 56, display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center", gap: 2,
+                  alignItems: "center", justifyContent: "center", gap: space.xs,
                   background: "none", border: "none", font: "inherit",
                   color: isActive ? theme.acc : theme.dim,
                   fontSize: 10, fontWeight: isActive ? 700 : 500, cursor: "pointer",
@@ -304,7 +308,7 @@ export default function AppShell({
           same order validated against the mockup earlier in this
           redesign. */}
       <div style={{
-        width: 220, flexShrink: 0, padding: "20px 10px",
+        width: 220, flexShrink: 0, padding: `${space.lg}px ${space.sm}px`,
         position: "sticky", top: "env(safe-area-inset-top, 0px)",
         // No maxHeight/overflowY here on purpose — per the CSS overflow
         // spec, once either axis is auto/scroll, the browser forces the
@@ -317,18 +321,19 @@ export default function AppShell({
         // over the main content instead of getting clipped. Five nav
         // items plus the account row never come close to needing to
         // scroll within 100vh on any real screen, so nothing is lost.
-        display: "flex", flexDirection: "column", gap: 4,
+        display: "flex", flexDirection: "column", gap: space.xs,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px 16px", fontSize: 18, fontWeight: 800, color: "#FAFAFA" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: space.sm, padding: `0 ${space.xs}px ${space.md}px`,
+          fontSize: 18, fontWeight: 800, fontFamily: font.display, color: "#FAFAFA" }}>
           <Trophy size={24} color={theme.acc} style={{ flexShrink: 0 }} />
           Fantasy Life
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 4px 16px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: space.sm, padding: `0 ${space.xs}px ${space.md}px`, minWidth: 0 }}>
           <div style={{ flex: 1, minWidth: 0 }}><AccountMenu /></div>
           {bellButton}
           {settingsButton}
         </div>
-        <nav aria-label="Main" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <nav aria-label="Main" style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
           {tabs.map((t) => {
             const isActive = activeTab === t.id;
             return (
@@ -344,7 +349,7 @@ export default function AppShell({
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       </div>
 
-      <div style={{ flex: 1, minWidth: 0, padding: "20px 16px" }}>
+      <div style={{ flex: 1, minWidth: 0, padding: `${space.lg}px ${space.md}px` }}>
         {children}
       </div>
     </div>

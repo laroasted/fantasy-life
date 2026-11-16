@@ -10,6 +10,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ClipboardList, AlertTriangle, ScrollText, IdCard, BarChart3, Gem, ChevronDown, ChevronRight } from "lucide-react";
 import { Badge, Skeleton } from "./Badges";
+import StatusCard from "./StatusCard";
 import { supabasePublic, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
 import { theme, cardStyle } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
@@ -419,26 +420,16 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
 
   if (error) {
     return (
-      <div style={{ textAlign: "center", padding: 60, ...cardStyle, maxWidth: 420, margin: "0 auto" }}>
-        <AlertTriangle size={28} color={theme.red} style={{ marginBottom: 10 }} />
-        <div style={{ fontSize: 14, marginBottom: 14 }}>Couldn't load draft data for {seasonYear}.</div>
-        <button onClick={load} style={{ background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
-          padding: "7px 16px", color: theme.txt, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          Try again
-        </button>
-      </div>
+      <StatusCard icon={AlertTriangle} iconColor={theme.red} title={`Couldn't load draft data for ${seasonYear}.`}
+        action={{ label: "Try again", onClick: load }} />
     );
   }
 
   if (!draftBoard) {
     return (
-      <div style={{ textAlign: "center", padding: 60, color: theme.dim }}>
-        <ClipboardList size={28} style={{ marginBottom: 8 }} />
-        <div style={{ fontSize: 14 }}>No draft board data available for {seasonYear}.</div>
-        <div style={{ fontSize: 12, marginTop: 4, color: theme.mut }}>
-          Draft board data is saved automatically when a draft is finalized.
-        </div>
-      </div>
+      <StatusCard icon={ClipboardList} title={`No draft board data available for ${seasonYear}.`}>
+        Draft board data is saved automatically when a draft is finalized.
+      </StatusCard>
     );
   }
  

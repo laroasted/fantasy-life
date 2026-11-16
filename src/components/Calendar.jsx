@@ -4,6 +4,7 @@ import { supabasePublic } from "../utils/storage";
 import { theme } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
 import { Skeleton } from "./Badges";
+import StatusCard from "./StatusCard";
  
 // ══════════════════════════════════════════════════════
 //  FANTASY LIFE CALENDAR
@@ -304,10 +305,7 @@ export default function Calendar({ seasonYear }) {
       </div>
 
       {events.length === 0 && (
-        <div style={{ textAlign:"center", padding:60, color:s.dim }}>
-          <CalendarDays size={24} style={{ marginBottom:8 }} />
-          <div style={{ fontSize:14, fontWeight:600 }}>No calendar data available for {yr}.</div>
-        </div>
+        <StatusCard icon={CalendarDays} title={`No calendar data available for ${yr}.`} />
       )}
 
       {/* Event list grouped by month */}
