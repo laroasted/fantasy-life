@@ -1215,13 +1215,29 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             undoing={undoing}
           />
 
+          {/* submittingPick's indicator lives here, not inside the
+              selectedCategory panel below — makePick() clears
+              selectedCategory synchronously, in the same tick as
+              setSubmittingPick(true), before its own first await. React
+              batches both, so a version of this message placed inside
+              that panel would never actually render (caught in review
+              on this PR, real): by the time submittingPick is true,
+              selectedCategory is already null and that whole branch is
+              unmounted. DraftCountdown above is the one thing that
+              stays mounted through a pick either way. */}
+          {submittingPick && (
+            <div style={{ ...cardStyle, marginBottom: space.md, textAlign: "center", fontSize: 12, color: theme.dim }}>
+              Submitting your pick…
+            </div>
+          )}
+
           {/* Category selection — commissioner, local mock, or (now)
               whoever's actually on the clock; a spectator watching
               someone else's turn has nothing to pick */}
           {canPick ? (
             <>
               {!selectedCategory && (
-                <div style={cardStyle}>
+                <div style={{ ...cardStyle, opacity: submittingPick ? 0.5 : 1, pointerEvents: submittingPick ? "none" : "auto" }}>
                   <h3 style={{ margin: `0 0 ${space.md}px`, fontSize: 16 }}>Step 1: Category ({availCats.length} left)</h3>
                   <div style={{ display: "grid",
                     gridTemplateColumns: isMobile ? "repeat(auto-fill, minmax(120px, 1fr))" : "repeat(auto-fill, minmax(150px, 1fr))",
@@ -1247,11 +1263,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                   </div>
                   <input value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)}
                     placeholder="Search..." style={{ ...inputStyle, marginBottom: space.sm }} />
-                  {submittingPick && (
-                    <div style={{ fontSize: 11, color: theme.dim, marginBottom: space.sm }}>Submitting your pick…</div>
-                  )}
-                  <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: space.xs,
-                    opacity: submittingPick ? 0.5 : 1, pointerEvents: submittingPick ? "none" : "auto" }}>
+                  <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: space.xs }}>
                     {(PICK_OPTIONS[selectedCategory.id] || ["Custom..."])
                       .filter((opt) => opt.toLowerCase().includes(searchFilter.toLowerCase()))
                       .filter((opt) => {
