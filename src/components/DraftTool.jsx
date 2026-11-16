@@ -82,7 +82,7 @@ async function reconcileAfterFailedSave(setLiveSession) {
 // genuinely needs to update every second.
 const DraftCountdown = memo(function DraftCountdown({
   liveSession, clockOffsetRef, member, isMobile, canControlTimer, currentPick,
-  pickCount, timer, timerActive, onPause, onStart, onReset, onUndo,
+  pickCount, timer, timerActive, onPause, onStart, onReset, onUndo, undoing,
 }) {
   // Local-only tick for a live session's countdown display — only runs
   // while a live timer is actually active, and never writes anything;
@@ -124,8 +124,11 @@ const DraftCountdown = memo(function DraftCountdown({
           <button onClick={onReset}
             style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↻ Reset</button>
           {pickCount > 0 && (
-            <button onClick={onUndo}
-              style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}` }}>↩ Undo</button>
+            <button onClick={onUndo} disabled={undoing}
+              style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
+                opacity: undoing ? 0.6 : 1, cursor: undoing ? "default" : "pointer" }}>
+              {undoing ? "Undoing…" : "↩ Undo"}
+            </button>
           )}
         </div>
       )}
@@ -182,6 +185,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   const [finalizeError, setFinalizeError] = useState("");
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [submittingPick, setSubmittingPick] = useState(false);
+  const [startingDraft, setStartingDraft] = useState(false);
+  const [undoing, setUndoing] = useState(false);
 
   // Mobile: toggle panels instead of always showing
   const [mobilePanel, setMobilePanel] = useState("draft"); // "draft" | "rosters" | "history"
@@ -404,34 +410,39 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // safe to fall through to the local-only mock draft — a confirmed
   // absence, not just "this one request didn't work."
   const startDraft = async () => {
-    if (draftOrder.length < 2) return;
-    const so = generateSnakeOrder(draftOrder, DRAFT_CATEGORIES.length);
-    track(EVENTS.DRAFT_STARTED, {
-      member_count: draftOrder.length,
-      round_count: DRAFT_CATEGORIES.length,
-      total_picks: draftOrder.length * DRAFT_CATEGORIES.length,
-    });
-    timeEvent(EVENTS.DRAFT_FINALIZED);
-    if (isCommissioner) {
-      const row = await startDraftSession({ seasonName, draftOrder, snakeOrder: so, timerDuration: TIMER_DURATION });
-      if (row) {
-        setLiveSession(row);
-        // The only turn assignment that doesn't flow through a
-        // submit_draft_pick success (see makePick's own notifyTurn()
-        // call) — the first pick of the draft needs the same push.
-        // The "existing" resume path just below is deliberately NOT
-        // included: resuming an already-live draft isn't a new turn
-        // transition, the on-clock member was already on the clock.
-        notifyTurn();
-        return;
+    if (draftOrder.length < 2 || startingDraft) return;
+    setStartingDraft(true);
+    try {
+      const so = generateSnakeOrder(draftOrder, DRAFT_CATEGORIES.length);
+      track(EVENTS.DRAFT_STARTED, {
+        member_count: draftOrder.length,
+        round_count: DRAFT_CATEGORIES.length,
+        total_picks: draftOrder.length * DRAFT_CATEGORIES.length,
+      });
+      timeEvent(EVENTS.DRAFT_FINALIZED);
+      if (isCommissioner) {
+        const row = await startDraftSession({ seasonName, draftOrder, snakeOrder: so, timerDuration: TIMER_DURATION });
+        if (row) {
+          setLiveSession(row);
+          // The only turn assignment that doesn't flow through a
+          // submit_draft_pick success (see makePick's own notifyTurn()
+          // call) — the first pick of the draft needs the same push.
+          // The "existing" resume path just below is deliberately NOT
+          // included: resuming an already-live draft isn't a new turn
+          // transition, the on-clock member was already on the clock.
+          notifyTurn();
+          return;
+        }
+        const existing = await fetchDraftSession();
+        if (existing) { setLiveSession(existing); return; }
       }
-      const existing = await fetchDraftSession();
-      if (existing) { setLiveSession(existing); return; }
+      setSnakeOrder(so);
+      setPhase("draft");
+      setCurrentPick(0);
+      setTimer(TIMER_DURATION);
+    } finally {
+      setStartingDraft(false);
     }
-    setSnakeOrder(so);
-    setPhase("draft");
-    setCurrentPick(0);
-    setTimer(TIMER_DURATION);
   };
 
   // ── Unified state: whichever source applies right now ──
@@ -539,6 +550,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     if (!member || makingPickRef.current) return;
     if (liveSession && !canPick) return;
     makingPickRef.current = true;
+    setSubmittingPick(true);
     const key = member.id + "-" + catId;
     const expectedPick = effective.currentPick;
     // Computed fresh here, not from render-time state — the countdown
@@ -610,11 +622,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       }
     } finally {
       makingPickRef.current = false;
+      setSubmittingPick(false);
     }
   };
 
   const undoPick = async () => {
-    if (effective.pickHistory.length === 0) return;
+    if (effective.pickHistory.length === 0 || undoing) return;
+    setUndoing(true);
+    try {
     track(EVENTS.DRAFT_PICK_UNDONE, { pick_number: effective.pickHistory.length });
     if (liveSession) {
       // Commissioner-only (gated by canControlTimer in the render below),
@@ -638,6 +653,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       setCurrentPick((c) => c - 1);
     }
     setSelectedCategory(null);
+    } finally {
+      setUndoing(false);
+    }
   };
 
   const handleTimerStart = async () => {
@@ -1009,10 +1027,11 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                   display: "flex", alignItems: "center", justifyContent: "center", gap: space.sm }}>
                 <Pencil size={14} /> Edit
               </button>
-              <button onClick={startDraft}
+              <button onClick={startDraft} disabled={startingDraft}
                 style={{ ...buttonStyle(theme.grn), flex: 2, padding: space.md, fontSize: 16,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: space.sm }}>
-                <Rocket size={16} /> Start Draft!
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: space.sm,
+                  opacity: startingDraft ? 0.7 : 1, cursor: startingDraft ? "default" : "pointer" }}>
+                <Rocket size={16} /> {startingDraft ? "Starting…" : "Start Draft!"}
               </button>
             </div>
           </div>
@@ -1193,6 +1212,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             onStart={handleTimerStart}
             onReset={handleTimerReset}
             onUndo={undoPick}
+            undoing={undoing}
           />
 
           {/* Category selection — commissioner, local mock, or (now)
@@ -1227,7 +1247,11 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                   </div>
                   <input value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)}
                     placeholder="Search..." style={{ ...inputStyle, marginBottom: space.sm }} />
-                  <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: space.xs }}>
+                  {submittingPick && (
+                    <div style={{ fontSize: 11, color: theme.dim, marginBottom: space.sm }}>Submitting your pick…</div>
+                  )}
+                  <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: space.xs,
+                    opacity: submittingPick ? 0.5 : 1, pointerEvents: submittingPick ? "none" : "auto" }}>
                     {(PICK_OPTIONS[selectedCategory.id] || ["Custom..."])
                       .filter((opt) => opt.toLowerCase().includes(searchFilter.toLowerCase()))
                       .filter((opt) => {

@@ -352,6 +352,7 @@ export default function App() {
   const [nextEvent, setNextEvent] = useState(null);
   const [pushSupported, setPushSupported] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushToggling, setPushToggling] = useState(false);
 
   useEffect(() => {
     if (!isPushSupported()) return;
@@ -360,17 +361,28 @@ export default function App() {
   }, []);
 
   const handlePushToggle = useCallback(async () => {
-    if (pushEnabled) {
-      await unsubscribeFromPush();
-      setPushEnabled(false);
-      track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, { is_enabled: false });
-    } else {
-      const result = await subscribeToPush(memberId);
-      setPushEnabled(result.ok);
-      track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, {
-        is_enabled: result.ok,
-        ...(!result.ok && { reason: result.reason }),
-      });
+    // No optimistic flip here, unlike Settings' save actions — this one
+    // genuinely can't be: the browser's own permission prompt is part of
+    // the await (the user might sit on it for seconds, or dismiss it),
+    // and the outcome isn't knowable until subscribeToPush/unsubscribeFromPush
+    // actually resolves. pushToggling exists so the bell can show that,
+    // rather than sitting inert through a real wait.
+    setPushToggling(true);
+    try {
+      if (pushEnabled) {
+        await unsubscribeFromPush();
+        setPushEnabled(false);
+        track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, { is_enabled: false });
+      } else {
+        const result = await subscribeToPush(memberId);
+        setPushEnabled(result.ok);
+        track(EVENTS.PUSH_NOTIFICATIONS_TOGGLED, {
+          is_enabled: result.ok,
+          ...(!result.ok && { reason: result.reason }),
+        });
+      }
+    } finally {
+      setPushToggling(false);
     }
   }, [pushEnabled, memberId]);
 
@@ -1359,6 +1371,7 @@ export default function App() {
         pushSupported={pushSupported}
         pushEnabled={pushEnabled}
         handlePushToggle={handlePushToggle}
+        pushToggling={pushToggling}
         authReady={authReady}
         commissionerSession={commissionerSession}
         showAccountMenu={showAccountMenu}

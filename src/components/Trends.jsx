@@ -342,7 +342,15 @@ export default function Trends({ seasonData }) {
 
   const tableDates = useMemo(() => [...dates].reverse().slice(0, showTable === "all" ? dates.length : 21), [dates, showTable]);
 
-  if (loading) {
+  // Only the true cold start (nothing cached or fetched yet) gets the full
+  // skeleton. A retry while stale/cached rows are already on screen
+  // (isStale banner below, or load() re-running after a year switch finds
+  // nothing new) must NOT hit this branch — tearing down an already-
+  // rendered chart to show generic placeholder bars for what's meant to
+  // be a quiet background refresh is worse than the lag it's "fixing."
+  // The Retry button itself (in the isStale banner) carries loading's
+  // pending state instead.
+  if (loading && rows.length === 0) {
     return (
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
         <div style={{ display: "flex", gap: space.sm, justifyContent: "center", marginBottom: space.md, flexWrap: "wrap" }}>
@@ -454,9 +462,10 @@ export default function Trends({ seasonData }) {
           <span style={{ fontSize: 11, color: s.dim }}>
             Showing a cached snapshot — couldn't reach the live data just now.
           </span>
-          <button onClick={load} style={{ marginLeft: "auto", background: "none", border: "none",
-            color: s.acc, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
-            Retry
+          <button onClick={load} disabled={loading} style={{ marginLeft: "auto", background: "none", border: "none",
+            color: s.acc, fontSize: 11, fontWeight: 700, cursor: loading ? "default" : "pointer", flexShrink: 0,
+            opacity: loading ? 0.6 : 1 }}>
+            {loading ? "Retrying…" : "Retry"}
           </button>
         </div>
       )}
