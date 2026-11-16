@@ -251,7 +251,7 @@ export default function AppShell({
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: space.sm, minWidth: 0 }}>
             <Trophy size={20} color={theme.acc} style={{ flexShrink: 0 }} />
-            <h1 style={{ fontSize: 16, fontWeight: 800, margin: 0, color: "#FAFAFA",
+            <h1 style={{ fontSize: 14, fontWeight: 800, margin: 0, color: "#FAFAFA",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Fantasy Life</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: space.sm, flexShrink: 0 }}>
