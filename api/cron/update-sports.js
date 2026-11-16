@@ -71,6 +71,7 @@
 
 const { createClient } = require('@supabase/supabase-js');
 const { writeScoreEventsAndNotify } = require('../_lib/push');
+const { resolveOscarNight, fetchWikipediaWikitext } = require('../_lib/fantasyYear');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -88,6 +89,9 @@ const ESPN_LEAGUES = {
     // Base scoring uses the 2026-27 season (starts Oct 2026).
     // Mar–Sep excluded: 2025-26 season is bonus points only + offseason gap.
     activeMonths: [10, 11, 12, 1, 2],
+    // ...plus March up to Oscar night, for the season that's ending only
+    // (see oscarNightExtension in the handler).
+    extendBaseToOscarNight: true,
     sport: 'basketball', league: 'nba',
   },
   NHL: {
@@ -96,6 +100,7 @@ const ESPN_LEAGUES = {
     // Base scoring uses the 2026-27 season (starts Oct 2026).
     // Mar–Sep excluded: 2025-26 season is bonus points only + offseason gap.
     activeMonths: [10, 11, 12, 1, 2],
+    extendBaseToOscarNight: true,
     sport: 'hockey', league: 'nhl',
   },
   MLB: {
@@ -107,9 +112,12 @@ const ESPN_LEAGUES = {
   MLS: {
     url: 'https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings',
     metricType: 'points',
-    // Apr–Oct only: keeps Feb/Mar (new season start) frozen so end-of-year
-    // scores aren't overwritten before the commissioner locks them.
-    activeMonths: [4, 5, 6, 7, 8, 9, 10],
+    // Apr–Dec: through Decision Day (early Nov) so the final matchday counts
+    // (Oct used to be the last month, freezing base on Oct 31 standings).
+    // Standings don't move after Decision Day, and base auto-locks once MLS
+    // Cup is decided (AUTO_LOCK_RULES). Jan–Mar stay frozen so the next
+    // season's opening weeks can't overwrite end-of-year scores.
+    activeMonths: [4, 5, 6, 7, 8, 9, 10, 11, 12],
     sport: 'soccer', league: 'usa.1',
   },
 };
@@ -265,17 +273,22 @@ function computePlayoffTier(games, rounds) {
 // AUTO-LOCK — fields a league locks itself once a trigger condition is
 // true, instead of waiting on the commissioner to click the lock icon.
 // `onFinal`: fields to lock once the championship game is complete.
-// `onRegularSeasonEnd`: fields to lock once the regular season is over
-// (NBA/NHL `base` specifically — stays live into their own next season,
-// per FIX 4, so only the just-finished bonus-relevant postseason gets its
-// bonus locked at the Finals; base keeps updating).
+// `onRegularSeasonEnd`: fields to lock once the regular season is over.
+// NOT used for NBA/NHL base (removed 2026-11): per FIX 4 / league rule, the
+// {Y} fantasy year scores the Y-(Y+1) regular season as base and the
+// spring-Y playoffs as bonus. The playoffs that would trip this rule (e.g.
+// April 2027) arrive after the season switch at the next draft, so it
+// locked the NEW season's base months before that season's own NBA/NHL
+// games even start, and base would never update again. NBA/NHL base is
+// already frozen Mar–Sep by activeMonths, and nothing scores a season
+// after the switch, so no base lock is needed.
 // ═══════════════════════════════════════════════════════════════════════
 const AUTO_LOCK_RULES = {
   NFL: { onFinal: ['base', 'bonus'] },
   MLB: { onFinal: ['base', 'bonus'] },
   MLS: { onFinal: ['base', 'bonus'] },
-  NBA: { onFinal: ['bonus'], onRegularSeasonEnd: ['base'] },
-  NHL: { onFinal: ['bonus'], onRegularSeasonEnd: ['base'] },
+  NBA: { onFinal: ['bonus'] },
+  NHL: { onFinal: ['bonus'] },
 };
 
 // "Regular season over" reuses hasPostseason (a bracket existing at all
@@ -524,6 +537,26 @@ module.exports = async function handler(req, res) {
   // the activity feed is a nice-to-have view on top of real scoring, not
   // part of it.
   const scoreEvents = [];
+
+  // Oscar-night extension for NBA/NHL base (league rule: the fantasy year
+  // ends on Oscar night; see api/_lib/fantasyYear.js). activeMonths stops
+  // at February, which used to drop the last ~2 weeks of the year. Applies
+  // ONLY while the active season is the one ending this spring (season Y
+  // during calendar year Y+1, i.e. before the next draft switches it);
+  // once the new season is active, March stays frozen so its picks don't
+  // show the old season's standings until October. Through Oscar night +1
+  // day UTC so the run after that night's games still counts; off entirely
+  // if the ceremony date can't be resolved.
+  const todayUTC = new Date().toISOString().slice(0, 10);
+  let oscarNightExtension = false;
+  if (seasonYear === new Date().getUTCFullYear() - 1) {
+    const oscarNight = await resolveOscarNight(seasonYear, fetchWikipediaWikitext);
+    if (oscarNight) {
+      const graceEnd = new Date(Date.parse(oscarNight) + 864e5).toISOString().slice(0, 10);
+      oscarNightExtension = todayUTC <= graceEnd;
+      console.log(`Oscar night ${oscarNight}: NBA/NHL base extension ${oscarNightExtension ? 'ON' : 'off'} (today ${todayUTC})`);
+    }
+  }
  
   for (const [league, config] of Object.entries(ESPN_LEAGUES)) {
     console.log(`Processing ${league}...`);
@@ -533,7 +566,8 @@ module.exports = async function handler(req, res) {
     // the OTHER side of that gap is still live — so a frozen base no
     // longer skips the league entirely; it only skips the base/metric/
     // record writes below. Bonus resolution always runs.
-    const baseFrozen = !!(config.activeMonths && !config.activeMonths.includes(currentMonth));
+    const baseFrozen = !!(config.activeMonths && !config.activeMonths.includes(currentMonth))
+      && !(config.extendBaseToOscarNight && oscarNightExtension);
     if (baseFrozen) console.log(` ${league}: Offseason — base frozen, bonus still evaluated`);
 
     const { data: picks, error: pickErr } = await supabase
