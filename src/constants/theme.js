@@ -36,7 +36,7 @@ export const theme = {
 // totals, the AppShell wordmark). Everything else inherits `font.body`
 // from the <body> rule and never needs to set fontFamily at all.
 export const font = {
-  display: "'Space Grotesk', system-ui, sans-serif",
+  display: "'Sora', system-ui, sans-serif",
   body: "'Public Sans', system-ui, -apple-system, sans-serif",
 };
 
