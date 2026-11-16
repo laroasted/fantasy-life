@@ -1001,14 +1001,33 @@ function combinedAwardTierBonus(models, winProbs, winTier, winLabel, nomProbs, n
  * tiers in CATEGORY_BONUS_RULES) isn't covered; not verified live, not
  * guessed at blind. Oscar's Best Actor/Actress field is always exactly
  * 5 nominees, hence nomineeCount=5.
+ *
+ * SECOND, BIGGER cross-match found live (user flagged Jon Bernthal
+ * projected to win Best Actor, which made no sense): excluding
+ * "Supporting" wasn't enough on its own. A "Best Actor Winner" search
+ * also returns six unrelated Golden Globes events (Drama, Limited
+ * Series, Musical/Comedy, Television Drama, plus their Supporting
+ * variants) — none of which say "supporting" in a way the old filter
+ * would catch for the lead ones, so they sailed through. Bernthal isn't
+ * in the real Oscars 2027: Best Actor Winner market at all (confirmed
+ * live — 22 real nominees, no Bernthal), but he IS 41.55% to win
+ * "Golden Globes 2027: Best Actor – Limited Series Winner", and
+ * findMarketProbabilitiesForPicks took that as his match since it scans
+ * every surviving event for a name hit. Confirmed the same leak exists
+ * for "Best Actress Winner" (6 Golden Globes events) but NOT for either
+ * "Nominations" search (Golden Globes runs no nomination markets, so
+ * that search already came back Oscars-only). Fixed by requiring the
+ * event title actually say "Oscar" in addition to excluding
+ * "Supporting" — every real Oscars event here is literally titled
+ * "Oscars 2027: ...", so this is a precise match, not a broadened guess.
  */
 async function applyOscarBonus(models, pastDeadline, awardLabel) {
-  const excludeSupporting = (ev) => !/supporting/i.test(ev.title || '');
+  const oscarEventOnly = (ev) => /oscar/i.test(ev.title || '') && !/supporting/i.test(ev.title || '');
   let winProbs = {}, winReason = 'skipped:time_budget_exceeded';
   if (!pastDeadline()) {
     const picksWithVariants = models.map((m) => ({ id: m.id, nameVariants: [m.pickName] }));
     try {
-      const lookup = await findMarketProbabilitiesForPicks(awardLabel + ' Winner', picksWithVariants, excludeSupporting);
+      const lookup = await findMarketProbabilitiesForPicks(awardLabel + ' Winner', picksWithVariants, oscarEventOnly);
       winProbs = lookup.probs; winReason = lookup.reason || 'matched';
     } catch (e) { winReason = 'exception:' + e.message; }
     await delay(150);
@@ -1018,7 +1037,7 @@ async function applyOscarBonus(models, pastDeadline, awardLabel) {
   if (!pastDeadline()) {
     const picksWithVariants2 = models.map((m) => ({ id: m.id, nameVariants: [m.pickName] }));
     try {
-      const lookup = await findMarketProbabilitiesForPicks(awardLabel + ' Nominations', picksWithVariants2, excludeSupporting);
+      const lookup = await findMarketProbabilitiesForPicks(awardLabel + ' Nominations', picksWithVariants2, oscarEventOnly);
       nomProbs = lookup.probs; nomReason = lookup.reason || 'matched';
     } catch (e) { nomReason = 'exception:' + e.message; }
   }
