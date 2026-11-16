@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Clock, CalendarDays } from "lucide-react";
 import { supabasePublic } from "../utils/storage";
-import { theme } from "../constants/theme";
+import { theme, space, type } from "../constants/theme";
 import { CATEGORY_COLORS } from "../constants/categories";
 import { track, EVENTS } from "../utils/analytics";
 import { Skeleton } from "./Badges";
@@ -266,14 +266,14 @@ export default function Calendar({ seasonYear }) {
   if (loading) {
     return (
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 18, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: space.sm, justifyContent: "center", marginBottom: space.md, flexWrap: "wrap" }}>
           {[52, 64, 58, 70].map((w, i) => <Skeleton key={i} width={w} height={26} radius={20} />)}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: space.sm }}>
               <Skeleton width={34} height={34} radius={10} />
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: space.sm }}>
                 <Skeleton width="55%" height={13} />
                 <Skeleton width="30%" height={10} />
               </div>
@@ -287,12 +287,12 @@ export default function Calendar({ seasonYear }) {
   return (
     <div style={{ maxWidth:760, margin:"0 auto" }}>
       {/* Filter pills */}
-      <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:16, justifyContent:"center" }}>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:space.xs, marginBottom:space.md, justifyContent:"center" }}>
         {FILTERS.map(f => {
           const on = filter === f.id;
           return (
             <button key={f.id} onClick={() => { track(EVENTS.CALENDAR_FILTER_CHANGED, { filter: f.id }); setFilter(f.id); }}
-              style={{ padding:"5px 10px", borderRadius:20,
+              style={{ padding:`${space.xs}px ${space.sm}px`, borderRadius:20,
                 border:"1px solid " + (on ? s.acc : "#334155"),
                 background: on ? s.acc : "#1e293b",
                 color:"#f1f5f9", fontSize:11, fontWeight: on ? 700 : 500,
@@ -302,7 +302,7 @@ export default function Calendar({ seasonYear }) {
           );
         })}
         {source !== "none" && (
-          <span style={{ fontSize:9, color:s.dim, alignSelf:"center", marginLeft:4, display:"flex", alignItems:"center", gap:4 }}>
+          <span style={{ fontSize:9, color:s.dim, alignSelf:"center", marginLeft:space.xs, display:"flex", alignItems:"center", gap:space.xs }}>
             <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%",
               background: source === "supabase" ? "#22c55e" : "#eab308" }} />
             {source === "supabase" ? "Live" : "Cached"}
@@ -321,8 +321,8 @@ export default function Calendar({ seasonYear }) {
           <div key={month}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline",
               borderBottom:"2px solid " + (allDone ? "#334155" : s.acc),
-              paddingBottom:5, marginTop:20, marginBottom:6 }}>
-              <span style={{ fontSize:13, fontWeight:800, letterSpacing:2,
+              paddingBottom:space.xs, marginTop:space.lg, marginBottom:space.sm }}>
+              <span style={{ fontSize:type.base, fontWeight:800, letterSpacing:2,
                 color: allDone ? "#475569" : "#f8fafc" }}>{month}</span>
               <span style={{ fontSize:10, color:"#64748b" }}>
                 {evts.length} event{evts.length !== 1 ? "s" : ""}
@@ -342,7 +342,7 @@ export default function Calendar({ seasonYear }) {
               return (
                 <div key={eid}>
                 {isFirst && (
-                  <div style={{ display:"flex", alignItems:"center", gap:8, margin:"14px 0 6px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:space.sm, margin:`${space.md}px 0 ${space.sm}px` }}>
                     <div style={{ flex:1, height:1, background:s.acc, opacity:0.4 }} />
                     <span style={{ fontSize:10, fontWeight:800, letterSpacing:1.5, color:s.acc }}>UP NEXT</span>
                     <div style={{ flex:1, height:1, background:s.acc, opacity:0.4 }} />
@@ -360,8 +360,8 @@ export default function Calendar({ seasonYear }) {
                     setExpId(isExp ? null : eid);
                   }}
                   style={{
-                    display:"grid", gridTemplateColumns:"52px 36px 1fr", gap:8, alignItems:"start",
-                    padding:"10px 8px", margin:"1px 0", borderRadius:10, cursor:"pointer",
+                    display:"grid", gridTemplateColumns:"52px 36px 1fr", gap:space.sm, alignItems:"start",
+                    padding:`${space.sm}px ${space.sm}px`, margin:`${space.xs}px 0`, borderRadius:10, cursor:"pointer",
                     background: isNow ? "rgba(59,130,246,0.06)" : isExp ? "rgba(30,41,59,0.4)" : "transparent",
                     borderLeft: isNow ? "3px solid " + s.grn
                       : isFirst && !isNow ? "3px solid " + s.acc : "3px solid transparent",
@@ -371,7 +371,7 @@ export default function Calendar({ seasonYear }) {
                   onMouseLeave={e => { e.currentTarget.style.background = isNow ? "rgba(59,130,246,0.06)" : "transparent"; }}
                 >
                   {/* Date */}
-                  <div style={{ textAlign:"right", paddingTop:1 }}>
+                  <div style={{ textAlign:"right", paddingTop:space.xs }}>
                     <div style={{ fontSize:10, fontWeight:600, color: isPast ? "#475569" : isNow ? s.grn : s.dim, lineHeight:1.3 }}>
                       {fmtD(ev.date).split(" ")[0]}
                     </div>
@@ -385,39 +385,39 @@ export default function Calendar({ seasonYear }) {
                     width:32, height:32, borderRadius:8,
                     background: isPast ? "#1e293b" : cat.color + "15",
                     border:"1px solid " + (isPast ? "#334155" : cat.color + "33"),
-                    display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, marginTop:2,
+                    display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, marginTop:space.xs,
                   }}>{cat.icon}</div>
  
                   {/* Content */}
                   <div style={{ minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"flex-start", gap:5, flexWrap:"wrap" }}>
-                      <span style={{ fontSize:13, fontWeight:700, lineHeight:1.3, flex:1,
+                    <div style={{ display:"flex", alignItems:"flex-start", gap:space.xs, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:type.base, fontWeight:700, lineHeight:1.3, flex:1,
                         color: isPast ? "#64748b" : isNow ? "#f8fafc" : "#e2e8f0" }}>{ev.title}</span>
-                      <div style={{ display:"flex", gap:3, flexShrink:0, marginTop:1 }}>
-                        {ev.bonus && <span style={{ fontSize:8, fontWeight:700, padding:"2px 4px", borderRadius:3,
+                      <div style={{ display:"flex", gap:space.xs, flexShrink:0, marginTop:space.xs }}>
+                        {ev.bonus && <span style={{ fontSize:8, fontWeight:700, padding:`${space.xs}px`, borderRadius:3,
                           background: isPast ? "#1e293b" : "rgba(234,179,8,0.12)",
                           color: isPast ? "#475569" : s.yel,
                           border:"1px solid " + (isPast ? "#334155" : "rgba(234,179,8,0.2)") }}>★ BONUS</span>}
-                        <span style={{ fontSize:8, fontWeight:700, padding:"2px 4px", borderRadius:3,
+                        <span style={{ fontSize:8, fontWeight:700, padding:`${space.xs}px`, borderRadius:3,
                           background: isPast ? "#1e293b" : tb.bg,
                           color: isPast ? "#64748b" : tb.color,
                           border:"1px solid " + (isPast ? "#334155" : tb.color + "33") }}>{tb.label}</span>
                       </div>
                     </div>
-                    <div style={{ fontSize:11, color: isPast ? "#475569" : "#94a3b8", marginTop:2, lineHeight:1.4 }}>{ev.subtitle}</div>
-                    {isPast && ev.result && <div style={{ marginTop:4, fontSize:10, fontWeight:600, color:s.grn, opacity:0.8,
-                      padding:"2px 6px", background:"rgba(34,197,94,0.08)", borderRadius:4, display:"inline-block" }}>{ev.result}</div>}
-                    <div style={{ marginTop:4, display:"flex", gap:5, alignItems:"center" }}>
-                      <span style={{ fontSize:9, fontWeight:600, padding:"1px 6px", borderRadius:10,
+                    <div style={{ fontSize:type.sm, color: isPast ? "#475569" : "#94a3b8", marginTop:space.xs, lineHeight:1.4 }}>{ev.subtitle}</div>
+                    {isPast && ev.result && <div style={{ marginTop:space.xs, fontSize:10, fontWeight:600, color:s.grn, opacity:0.8,
+                      padding:`${space.xs}px ${space.sm}px`, background:"rgba(34,197,94,0.08)", borderRadius:4, display:"inline-block" }}>{ev.result}</div>}
+                    <div style={{ marginTop:space.xs, display:"flex", gap:space.xs, alignItems:"center" }}>
+                      <span style={{ fontSize:9, fontWeight:600, padding:`${space.xs}px ${space.sm}px`, borderRadius:10,
                         background: isPast ? "#1e293b" : cat.color + "12",
                         color: isPast ? "#475569" : cat.color }}>{ev.category}</span>
-                      {isNow && <span style={{ fontSize:9, fontWeight:700, color:s.grn, display:"flex", alignItems:"center", gap:3 }}>
+                      {isNow && <span style={{ fontSize:9, fontWeight:700, color:s.grn, display:"flex", alignItems:"center", gap:space.xs }}>
                         <span style={{ width:5, height:5, borderRadius:"50%", background:s.grn, display:"inline-block", animation:"calPulse 2s infinite" }}/>THIS WEEK
                       </span>}
                     </div>
-                    {isExp && <div style={{ marginTop:8, padding:"10px", borderRadius:10,
-                      background:s.card, border:"1px solid " + s.bdr, fontSize:11, color:s.mut, lineHeight:1.6 }}>
-                      <div style={{ display:"grid", gridTemplateColumns:"auto 1fr", gap:"3px 12px" }}>
+                    {isExp && <div style={{ marginTop:space.sm, padding:`${space.sm}px`, borderRadius:10,
+                      background:s.card, border:"1px solid " + s.bdr, fontSize:type.sm, color:s.mut, lineHeight:1.6 }}>
+                      <div style={{ display:"grid", gridTemplateColumns:"auto 1fr", gap:`${space.xs}px ${space.md}px` }}>
                         <span style={{ color:s.dim, fontWeight:600 }}>Date</span>
                         <span>{pD(ev.date).toLocaleDateString("en-US",{ weekday:"long", month:"long", day:"numeric", year:"numeric" })}</span>
                         <span style={{ color:s.dim, fontWeight:600 }}>Category</span>
@@ -444,10 +444,10 @@ export default function Calendar({ seasonYear }) {
         <button
           onClick={() => activeRef.current?.scrollIntoView({ behavior:"smooth", block:"center" })}
           style={{
-            position:"fixed", bottom:20, right:20, zIndex:50,
-            display:"flex", alignItems:"center", gap:6,
+            position:"fixed", bottom:space.lg, right:space.lg, zIndex:50,
+            display:"flex", alignItems:"center", gap:space.sm,
             background:s.card, border:"1px solid " + s.acc, borderRadius:999,
-            padding:"8px 14px", color:s.acc, fontSize:12, fontWeight:700,
+            padding:`${space.sm}px ${space.md}px`, color:s.acc, fontSize:12, fontWeight:700,
             cursor:"pointer", boxShadow:"0 8px 20px rgba(0,0,0,0.4)",
           }}>
           <Clock size={13} /> This Week

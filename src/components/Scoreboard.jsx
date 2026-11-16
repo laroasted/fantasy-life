@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, memo } from "react";
 import { Lock, ArrowUpRight, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Trophy } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
-import { theme, cardStyle, shadow, font } from "../constants/theme";
+import { theme, cardStyle, shadow, font, space, type } from "../constants/theme";
 import { rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
 import { track, EVENTS } from "../utils/analytics";
 import { useViewport } from "../utils/useViewport";
@@ -70,7 +70,7 @@ var YouBadge = memo(function YouBadge({ color }) {
   <span style={{
    fontSize: 9, fontWeight: 800, color: color, flexShrink: 0,
    background: color + "22", border: "1px solid " + color + "55",
-   borderRadius: 4, padding: "1px 5px", letterSpacing: 0.3,
+   borderRadius: 4, padding: space.xs, letterSpacing: 0.3,
   }}>YOU</span>
  );
 });
@@ -79,14 +79,14 @@ var YouBadge = memo(function YouBadge({ color }) {
 var LockIndicator = memo(function LockIndicator({ note }) {
  var _h = useState(false), hover = _h[0], setHover = _h[1];
  return (
-  <span style={{ position: "relative", display: "inline-flex", alignItems: "center", marginLeft: 4 }}
+  <span style={{ position: "relative", display: "inline-flex", alignItems: "center", marginLeft: space.xs }}
    onMouseEnter={function () { setHover(true); }} onMouseLeave={function () { setHover(false); }}>
    <Lock size={10} color={theme.yel} style={{ cursor: "help" }} />
    {hover && (
     <span style={{
      position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)",
      background: theme.card, border: "1px solid #eab308", borderRadius: 6,
-     padding: "6px 10px", fontSize: 10, color: "#fef9c3", whiteSpace: "nowrap",
+     padding: space.sm, fontSize: 10, color: "#fef9c3", whiteSpace: "nowrap",
      zIndex: 999, pointerEvents: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
     }}>
      {note || "Commissioner locked this value"}
@@ -163,15 +163,15 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
  function renderPaywallPanel(owner, memberId) {
   var message = getPaywallMessage(seasonData, memberId) || "Paywalled by the commissioner.";
   return (
-   <div style={{ padding: isMobile ? "10px 8px" : "12px 12px" }}>
-    <div style={{ textAlign: "center", marginBottom: 10 }}>
-     <div style={{ marginBottom: 4, display: "flex", justifyContent: "center" }}><Lock size={22} color={theme.yel} /></div>
+   <div style={{ padding: isMobile ? space.sm : space.md }}>
+    <div style={{ textAlign: "center", marginBottom: space.sm }}>
+     <div style={{ marginBottom: space.xs, display: "flex", justifyContent: "center" }}><Lock size={22} color={theme.yel} /></div>
      <div style={{ fontSize: 12, color: "#fef9c3", fontWeight: 700 }}>{message}</div>
     </div>
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)", gap: 4, marginBottom: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)", gap: space.xs, marginBottom: space.md }}>
      {CATEGORY_ORDER.map(function (k) {
       return (
-       <div key={k} style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", background: "rgba(255,255,255,0.06)" }}>
+       <div key={k} style={{ padding: `${space.xs}px ${space.sm}px`, borderRadius: 6, textAlign: "center", background: "rgba(255,255,255,0.06)" }}>
         <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
         <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700, color: "#e2e8f0" }}>{"██"}</div>
        </div>
@@ -185,7 +185,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
         description={"Fantasy Life paywall toll — " + owner}
         onApprove={function () { handlePaywallPayment(owner, memberId); }} />
       </div>
-      <div style={{ textAlign: "center", fontSize: 9, color: "#64748b", marginTop: 6 }}>
+      <div style={{ textAlign: "center", fontSize: 9, color: "#64748b", marginTop: space.sm }}>
        ${PAYWALL_TOLL_AMOUNT} {PAYWALL_TOLL_CURRENCY} to lift the paywall
       </div>
      </>
@@ -292,7 +292,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
  function bonusNoteDisplay(d) {
   if (!d || !d.bonusNote) return null;
   return (
-   <div style={{ marginTop: 4, fontSize: 10, color: "#22c55e", fontStyle: "italic" }}>
+   <div style={{ marginTop: space.xs, fontSize: 10, color: "#22c55e", fontStyle: "italic" }}>
     {d.bonusNote}
    </div>
   );
@@ -327,13 +327,13 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
     )}
     {bonusNoteDisplay(d)}
     {typeof m.projectedTotal === "number" && (
-     <div style={{ marginTop: 4, fontSize: 10, color: theme.dim }}>
+     <div style={{ marginTop: space.xs, fontSize: 10, color: theme.dim }}>
       Projected final: <b style={{ color: "#f8fafc" }}>{Math.round(m.projectedTotal)} pts</b>
       {m.projectionConfidence ? " (" + m.projectionConfidence.replace(/_/g, " ") + " confidence)" : ""}
      </div>
     )}
     {m.projectionNote && (
-     <div style={{ marginTop: 2, fontSize: 10, color: "#38bdf8", fontStyle: "italic" }}>
+     <div style={{ marginTop: space.xs, fontSize: 10, color: "#38bdf8", fontStyle: "italic" }}>
       {m.projectionNote}
      </div>
     )}
@@ -342,7 +342,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
  
   if (!d) {
    return (
-    <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: theme.card,
+    <div style={{ padding: `${space.sm}px ${space.md}px`, borderRadius: "0 0 10px 10px", background: theme.card,
      border: "1px solid " + rowBorder(rank), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
      Base: {m.base} + Bonus: {m.bonus} = <b style={{ color: "#f8fafc" }}>{m.total} pts</b>
      {bonusNoteDisplay(d)}
@@ -360,24 +360,24 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
       {" \u2192 " + m.base + " base pts"}
      </div>
      {d.rounds && d.rounds.length > 0 ? (
-      <div style={{ padding: "4px 12px" }}>
+      <div style={{ padding: `${space.xs}px ${space.md}px` }}>
        {d.rounds.map(function (r, ri) {
         return (
          <div key={ri} style={{
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr 50px 40px" : "1fr 80px 70px 40px",
-          gap: 4, alignItems: "center", padding: "4px 0",
+          gap: space.xs, alignItems: "center", padding: `${space.xs}px 0`,
           borderBottom: ri === d.rounds.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11,
          }}>
           <div>
-           <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{r.round}</span>
+           <span style={{ color: "#e2e8f0", fontWeight: 600, fontSize: type.base }}>{r.round}</span>
            {r.note && <div style={{ fontSize: 10, color: "#22c55e" }}>{r.note}</div>}
            {isMobile && <div style={{ fontSize: 10, color: "#64748b" }}>{r.opponent}</div>}
            {rowLockIcon(selCat, m.owner, ri)}
           </div>
           {!isMobile && <span style={{ color: "#94a3b8", fontSize: 10 }}>{r.opponent}</span>}
           <div style={{ textAlign: "center" }}>
-           <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700,
+           <span style={{ padding: `${space.xs}px ${space.sm}px`, borderRadius: 4, fontSize: 9, fontWeight: 700,
             background: r.result === "Won" ? "rgba(34,197,94,0.2)" : r.result === "Lost" ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
             color: r.result === "Won" ? "#22c55e" : r.result === "Lost" ? "#ef4444" : "#64748b" }}>
             {r.result === "\u2014" ? "\u2014" : r.result + (isMobile ? "" : " " + r.series)}
@@ -391,7 +391,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        })}
       </div>
      ) : (
-      <div style={{ padding: "8px 12px", fontSize: 11, color: "#475569" }}>Missed Playoffs</div>
+      <div style={{ padding: `${space.sm}px ${space.md}px`, fontSize: 11, color: "#475569" }}>Missed Playoffs</div>
      )}
      {totalLine}
     </div>
@@ -405,26 +405,26 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
      <div style={{
       display: "grid",
       gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
-      gap: 6, padding: "6px 12px", background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b",
+      gap: space.sm, padding: `${space.sm}px ${space.md}px`, background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b",
      }}>
       <span>Film</span>
       {!isMobile && <span style={{ textAlign: "right" }}>Box Office</span>}
       <span style={{ textAlign: isMobile ? "right" : "center" }}>{isMobile ? "BO/RT" : "RT"}</span>
       <span style={{ textAlign: "right" }}>Score</span>
      </div>
-     <div style={{ padding: "4px 12px" }}>
+     <div style={{ padding: `${space.xs}px ${space.md}px` }}>
       {d.films.map(function (f, fi) {
        return (
         <div key={fi} style={{
          display: "grid",
          gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
-         gap: 6, alignItems: "center", padding: "5px 0",
+         gap: space.sm, alignItems: "center", padding: `${space.xs}px 0`,
          borderBottom: fi === d.films.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11,
         }}>
          <div>
-          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{f.title}</span>
-          {!isMobile && <span style={{ color: "#64748b", marginLeft: 6 }}>{f.date}</span>}
-          {f.note && <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 1 }}> {f.note}</div>}
+          <span style={{ color: "#e2e8f0", fontWeight: 600, fontSize: type.base }}>{f.title}</span>
+          {!isMobile && <span style={{ color: "#64748b", marginLeft: space.sm }}>{f.date}</span>}
+          {f.note && <div style={{ fontSize: 10, color: "#f59e0b", marginTop: space.xs }}> {f.note}</div>}
           {rowLockIcon(selCat, m.owner, fi)}
          </div>
          {!isMobile && (
@@ -455,7 +455,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
      {/* Totals row for films */}
      <div style={{ display: "grid",
       gridTemplateColumns: isMobile ? "1fr 50px 55px" : "1fr 62px 38px 70px",
-      gap: 6, padding: "6px 12px", background: "rgba(242,184,74,0.08)",
+      gap: space.sm, padding: `${space.sm}px ${space.md}px`, background: "rgba(242,184,74,0.08)",
       borderTop: `1px solid ${theme.bdr}`, fontSize: 11, fontWeight: 700 }}>
       <span style={{ color: "#94a3b8" }}>Total ({d.films.length} film{d.films.length !== 1 ? "s" : ""})</span>
       {!isMobile && <div style={{ textAlign: "right", color: "#94a3b8" }}>${d.films.reduce(function(s,f){return s+f.bo;},0).toFixed(1)}M</div>}
@@ -476,13 +476,13 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
       )}
       {bonusNoteDisplay(d)}
       {typeof m.projectedTotal === "number" && (
-       <div style={{ marginTop: 4, fontSize: 10, color: theme.dim }}>
+       <div style={{ marginTop: space.xs, fontSize: 10, color: theme.dim }}>
         Projected final: <b style={{ color: "#f8fafc" }}>{Math.round(m.projectedTotal)} pts</b>
         {m.projectionConfidence ? " (" + m.projectionConfidence.replace(/_/g, " ") + " confidence)" : ""}
        </div>
       )}
       {m.projectionNote && (
-       <div style={{ marginTop: 2, fontSize: 10, color: "#38bdf8", fontStyle: "italic" }}>
+       <div style={{ marginTop: space.xs, fontSize: 10, color: "#38bdf8", fontStyle: "italic" }}>
         {m.projectionNote}
        </div>
       )}
@@ -497,18 +497,18 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
     <div style={wp}>
      {d.songs.length > 0 ? (
       <div>
-       <div style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
-        padding: "6px 12px", background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b" }}>
+       <div style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: space.sm,
+        padding: `${space.sm}px ${space.md}px`, background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b" }}>
         <span>Song</span>
         <span style={{ textAlign: "right" }}>Weeks</span>
         <span style={{ textAlign: "right" }}>#1 Wks</span>
        </div>
-       <div style={{ padding: "4px 12px" }}>
+       <div style={{ padding: `${space.xs}px ${space.md}px` }}>
         {d.songs.map(function (sg, si) {
          return (
-          <div key={si} style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
-           padding: "4px 0", borderBottom: si === d.songs.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11 }}>
-           <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sg.title}</span>
+          <div key={si} style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: space.sm,
+           padding: `${space.xs}px 0`, borderBottom: si === d.songs.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11 }}>
+           <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: type.base }}>{sg.title}</span>
            <div style={{ textAlign: "right", color: "#94a3b8" }}>{sg.weeks}</div>
            <div style={{ textAlign: "right", color: sg.numOneWeeks > 0 ? "#22c55e" : "#475569", fontWeight: 700 }}>
             {sg.numOneWeeks > 0 ? sg.numOneWeeks : "\u2014"}
@@ -518,8 +518,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
         })}
        </div>
        {/* Totals row for songs */}
-       <div style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: 6,
-        padding: "6px 12px", background: "rgba(242,184,74,0.08)",
+       <div style={{ display: "grid", gridTemplateColumns: "1fr 55px 55px", gap: space.sm,
+        padding: `${space.sm}px ${space.md}px`, background: "rgba(242,184,74,0.08)",
         borderTop: `1px solid ${theme.bdr}`, fontSize: 11, fontWeight: 700 }}>
         <span style={{ color: "#94a3b8" }}>Total ({d.songs.length} song{d.songs.length !== 1 ? "s" : ""})</span>
         <div style={{ textAlign: "right", color: "#f8fafc", fontWeight: 800 }}>
@@ -531,23 +531,23 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        </div>
       </div>
      ) : (
-      <div style={{ padding: "8px 12px", fontSize: 11, color: "#475569" }}>No Billboard Hot 100 data</div>
+      <div style={{ padding: `${space.sm}px ${space.md}px`, fontSize: 11, color: "#475569" }}>No Billboard Hot 100 data</div>
      )}
      {d.grammys.length > 0 && (
       <div>
-       <div style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: 6,
-        padding: "6px 12px", background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b" }}>
+       <div style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: space.sm,
+        padding: `${space.sm}px ${space.md}px`, background: theme.bg, fontSize: 10, fontWeight: 700, color: "#64748b" }}>
         <span>Grammy Category</span>
         <span style={{ textAlign: "center" }}>Result</span>
         <span style={{ textAlign: "right" }}>Pts</span>
        </div>
-       <div style={{ padding: "4px 12px" }}>
+       <div style={{ padding: `${space.xs}px ${space.md}px` }}>
         {d.grammys.map(function (g, gi) {
          return (
-          <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: 6,
-           alignItems: "center", padding: "5px 0",
+          <div key={gi} style={{ display: "grid", gridTemplateColumns: "1fr 50px 50px", gap: space.sm,
+           alignItems: "center", padding: `${space.xs}px 0`,
            borderBottom: gi === d.grammys.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11 }}>
-           <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.category}</span>
+           <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: type.base }}>{g.category}</span>
            <span style={{ textAlign: "center", fontSize: 10,
             color: g.result === "win" ? "#22c55e" : "#eab308" }}>
             {g.result === "win" ? " Won" : "Nom"}
@@ -580,18 +580,18 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
       {" \u2192 " + m.base + " base pts"}
      </div>
      {d.majors && d.majors.length > 0 && (
-      <div style={{ padding: "4px 12px" }}>
+      <div style={{ padding: `${space.xs}px ${space.md}px` }}>
        {d.majors.map(function (mj, mi) {
         return (
          <div key={mi} style={{
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr 60px 40px" : "1fr 90px 50px",
-          gap: 4, alignItems: "center", padding: "5px 0",
+          gap: space.xs, alignItems: "center", padding: `${space.xs}px 0`,
           borderBottom: mi === d.majors.length - 1 ? "none" : `1px solid ${theme.card}`, fontSize: 11,
          }}>
           <div>
-           <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{mj.event}</span>
-           {!isMobile && mj.opponent !== "\u2014" && <span style={{ color: "#64748b", marginLeft: 6 }}>{mj.opponent}</span>}
+           <span style={{ color: "#e2e8f0", fontWeight: 600, fontSize: type.base }}>{mj.event}</span>
+           {!isMobile && mj.opponent !== "\u2014" && <span style={{ color: "#64748b", marginLeft: space.sm }}>{mj.opponent}</span>}
            {isMobile && mj.opponent !== "\u2014" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.opponent}</div>}
            {mj.score && mj.score !== "\u2014" && <div style={{ fontSize: 10, color: "#64748b" }}>{mj.score}</div>}
            {rowLockIcon(selCat, m.owner, mi)}
@@ -610,7 +610,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
       <div style={{
        display: "grid",
        gridTemplateColumns: isMobile ? "1fr 60px 40px" : "1fr 90px 50px",
-       gap: 4, padding: "6px 12px", background: "rgba(242,184,74,0.08)",
+       gap: space.xs, padding: `${space.sm}px ${space.md}px`, background: "rgba(242,184,74,0.08)",
        borderTop: `1px solid ${theme.bdr}`, fontSize: 11, fontWeight: 700,
       }}>
        <span style={{ color: "#94a3b8" }}>Total ({d.majors.length} event{d.majors.length !== 1 ? "s" : ""})</span>
@@ -635,8 +635,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
       {" \u2192 " + m.base + " base pts"}
      </div>
      {d.olympics && d.olympics.total > 0 ? (
-      <div style={{ padding: "8px 12px" }}>
-       <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", gap: isMobile ? 8 : 12, flexWrap: "wrap" }}>
+      <div style={{ padding: `${space.sm}px ${space.md}px` }}>
+       <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", gap: isMobile ? space.sm : space.md, flexWrap: "wrap" }}>
         <span> {d.olympics.gold}</span>
         <span> {d.olympics.silver}</span>
         <span> {d.olympics.bronze}</span>
@@ -644,11 +644,11 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
         <span style={{ color: d.olympics.pts > 0 ? "#22c55e" : "#94a3b8" }}>Rank #{d.olympics.rank}</span>
        </div>
        {d.olympics.note && (
-        <div style={{ fontSize: 10, color: d.olympics.pts > 0 ? "#22c55e" : "#64748b", marginTop: 4 }}>{d.olympics.note}</div>
+        <div style={{ fontSize: 10, color: d.olympics.pts > 0 ? "#22c55e" : "#64748b", marginTop: space.xs }}>{d.olympics.note}</div>
        )}
       </div>
      ) : (
-      <div style={{ padding: "8px 12px", fontSize: 11, color: "#475569" }}>
+      <div style={{ padding: `${space.sm}px ${space.md}px`, fontSize: 11, color: "#475569" }}>
        {d.olympics && d.olympics.note ? d.olympics.note : "Did not win any medals"}
       </div>
      )}
@@ -661,8 +661,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
   if (isStock) {
    return (
     <div style={wp}>
-     <div style={{ padding: "8px 12px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#94a3b8", marginBottom: 4, flexWrap: "wrap", gap: 4 }}>
+     <div style={{ padding: `${space.sm}px ${space.md}px` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#94a3b8", marginBottom: space.xs, flexWrap: "wrap", gap: space.xs }}>
        <span>Open: ${d.openPrice}</span>
        <span>Close: ${d.closePrice}</span>
        <span style={{ color: d.pctChange >= 0 ? "#22c55e" : "#ef4444", fontWeight: 700 }}>
@@ -674,7 +674,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
         width: Math.min(100, Math.abs(d.pctChange || 0) + 5) + "%",
         background: d.pctChange >= 0 ? theme.grn : theme.red }} />
       </div>
-      {d.note && <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>{d.note}</div>}
+      {d.note && <div style={{ fontSize: 10, color: "#64748b", marginTop: space.xs }}>{d.note}</div>}
      </div>
      <div style={ft}>
       Total: <b style={{ color: "#f8fafc", fontSize: 13 }}>{m.total} pts</b> (no bonus for Stock)
@@ -689,7 +689,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
  
   // Fallback
   return (
-   <div style={{ padding: "10px 14px", borderRadius: "0 0 10px 10px", background: theme.card,
+   <div style={{ padding: `${space.sm}px ${space.md}px`, borderRadius: "0 0 10px 10px", background: theme.card,
     border: "1px solid " + rowBorder(rank), borderTop: `1px solid ${theme.bdr}`, fontSize: 12, color: "#cbd5e1" }}>
     Base: {m.base} + Bonus: {m.bonus} = {m.total} pts
     {bonusNoteDisplay(d)}
@@ -703,16 +703,16 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
    {/* Two-column layout: sidebar (Category Leaders + Activity) alongside
        the standings below 1024px/isWide, single column with the sidebar
        hidden above it. */}
-   <div style={{ display: isWide ? "flex" : "block", gap: isWide ? 28 : 0, alignItems: "flex-start" }}>
+   <div style={{ display: isWide ? "flex" : "block", gap: isWide ? space.lg : 0, alignItems: "flex-start" }}>
    <div style={{ flex: 1, minWidth: 0 }}>
    {/* Category pills */}
    <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
    <div ref={pillsRef} role="group" aria-label="Category filter" style={{
     display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
-    gap: 4, marginBottom: 16, justifyContent: "flex-start",
+    gap: space.xs, marginBottom: space.md, justifyContent: "flex-start",
     overflowX: isMobile ? "auto" : "visible",
     WebkitOverflowScrolling: "touch",
-    paddingBottom: isMobile ? 4 : 0,
+    paddingBottom: isMobile ? space.xs : 0,
     msOverflowStyle: "none", scrollbarWidth: "none",
    }}>
     <CategoryPill active={!selCat} onClick={function () {
@@ -745,31 +745,31 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        week, so either can show without the other. */}
    {(hasProjections || biggestRiser || biggestFaller) && (
     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap",
-     justifyContent: isMobile ? "center" : "flex-start", gap: 14, marginBottom: 12 }}>
+     justifyContent: isMobile ? "center" : "flex-start", gap: space.md, marginBottom: space.md }}>
      {hasProjections && (
       <div role="radiogroup" aria-label="Score view" style={{ display: "flex", flexShrink: 0,
        borderRadius: 8, border: `1px solid ${theme.bdr}`, overflow: "hidden" }}>
        <button type="button" role="radio" aria-checked={!showProjected}
         onClick={function () { if (showProjected) toggleProjected(); }}
         style={{
-         padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
+         padding: `${space.xs}px ${space.md}px`, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
          background: !showProjected ? theme.acc : "transparent", color: !showProjected ? "#1a1300" : theme.dim,
         }}>Current</button>
        <button type="button" role="radio" aria-checked={showProjected}
         onClick={function () { if (!showProjected) toggleProjected(); }}
         style={{
-         padding: "5px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
+         padding: `${space.xs}px ${space.md}px`, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none",
          background: showProjected ? theme.acc : "transparent", color: showProjected ? "#1a1300" : theme.dim,
         }}>Projected Final</button>
       </div>
      )}
      {(biggestRiser || biggestFaller) && (
-      <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: space.sm, fontSize: 11 }}>
        {hasProjections && (
         <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
        )}
        {biggestRiser && (
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: space.xs }}>
          <TrendingUp size={13} color={theme.up} />
          <b style={{ color: theme.acc }}>{biggestRiser.name}</b>
          <span style={{ color: theme.dim }}>+{biggestRiser.delta} this week</span>
@@ -779,7 +779,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
         <span style={{ width: 1, height: 13, background: theme.bdr, flexShrink: 0 }} />
        )}
        {biggestFaller && (
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: space.xs }}>
          <TrendingDown size={13} color={theme.down} />
          <b style={{ color: theme.txt }}>{biggestFaller.name}</b>
          <span style={{ color: theme.dim }}>{biggestFaller.delta} this week</span>
@@ -790,7 +790,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
     </div>
    )}
    {hasProjections && showProjected && (
-    <div style={{ textAlign: "center", fontSize: 10, color: theme.dim, marginBottom: 10, marginTop: -4 }}>
+    <div style={{ textAlign: "center", fontSize: 10, color: theme.dim, marginBottom: space.sm, marginTop: -space.xs }}>
      Monte Carlo simulation of where the season could land. Based on current Vegas, Kalshi, Polymarket, etc.
      odds, where available. If future odds aren't available, current scores are shown instead.
      Categories carry different confidence: sports are medium confidence given the data available on them,
@@ -801,7 +801,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
 
    {/* OVERALL VIEW */}
    {!selCat && (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
      {(showProjected ? overallStandings.projected : overallStandings.actual).map(function (m) {
       var isExp = expRow === m.owner;
       var memberPaywalled = isPaywalled(seasonData, m.id);
@@ -834,18 +834,18 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           borderLeft: "1px solid " + rowBorderColor,
           boxShadow: shadow.sm,
           cursor: "pointer",
-          padding: isMobile ? "8px 10px" : "10px 12px" }}>
+          padding: isMobile ? space.sm : `${space.sm}px ${space.md}px` }}>
          <div style={{ display: "grid",
           gridTemplateColumns: isMobile ? "28px 1fr 50px 16px" : "32px 1fr 60px 20px",
-          alignItems: "center", gap: 4 }}>
+          alignItems: "center", gap: space.xs }}>
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
-          <span style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 8, minWidth: 0 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: space.sm, minWidth: 0 }}>
            <Avatar name={m.owner} color={MEMBER_COLORS[m.id]} size={isMobile ? 20 : 24} />
            <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
            {isMine && <YouBadge color={theme.you} />}
           </span>
-          <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
+          <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: space.xs }}>
            {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
            <span style={Object.assign({ fontSize: isMobile ? 19 : 22, fontWeight: 800, fontFamily: font.display,
             color: "#f8fafc", textAlign: "right" },
@@ -871,7 +871,13 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           var standouts = ticks.filter(function (t) { return t.status === "high" || t.status === "low"; });
           return (
            <div>
-            <div style={{ display: "flex", gap: 2, marginTop: 7, paddingLeft: 36 }}>
+            <div style={{ display: "flex", gap: space.xs, marginTop: space.sm,
+             // paddingLeft: 36 is functional, not decorative — it aligns
+             // this strip with the name column, which starts after the
+             // rank badge's 32px column + this row's own 4px gap (desktop
+             // only; this strip is hidden on mobile, see the !isMobile
+             // guard above).
+             paddingLeft: 36 }}>
              {ticks.map(function (t) {
               return (
                <div key={t.key} title={t.key + ": " + (t.hasEntry ? t.pts + " pts" : "no pick")}
@@ -886,7 +892,8 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
              })}
             </div>
             {standouts.length > 0 && (
-             <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", marginTop: 5, paddingLeft: 36, fontSize: 10 }}>
+             <div style={{ display: "flex", flexWrap: "wrap", gap: `${space.xs}px ${space.sm}px`, marginTop: space.xs,
+              paddingLeft: 36 /* aligns with the strip above — see its own comment */, fontSize: 10 }}>
               {standouts.map(function (t) {
                return (
                 <span key={t.key} style={{ color: t.status === "high" ? theme.up : theme.down, fontWeight: 600 }}>
@@ -901,12 +908,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
          })()}
         </div>
         {isExp && (
-         <div style={{ padding: isMobile ? "8px 8px" : "10px 12px", borderRadius: "0 0 10px 10px",
+         <div style={{ padding: isMobile ? space.sm : `${space.sm}px ${space.md}px`, borderRadius: "0 0 10px 10px",
           background: theme.card, border: "1px solid " + rowBorder(m.rank), borderTop: `1px solid ${theme.bdr}` }}>
           {memberPaywalled ? renderPaywallPanel(m.owner, m.id) : (
            <div style={{ display: "grid",
             gridTemplateColumns: isMobile ? "repeat(3, 1fr)" : "repeat(5, 1fr)",
-            gap: 4 }}>
+            gap: space.xs }}>
             {CATEGORY_ORDER.map(function (k) {
              var pts = (showProjected ? m.catScoresProjected : m.catScores)[k] || 0;
              var pickEntry = (cats[k] || []).find(function (x) { return x.owner === m.owner; });
@@ -918,10 +925,10 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
                  track(EVENTS.OVERALL_CATEGORY_TILE_CLICKED, { category: k });
                  setSelCat(k); setExpRow(null);
                 }}
-               style={{ padding: "4px 6px", borderRadius: 6, textAlign: "center", cursor: "pointer",
+               style={{ padding: `${space.xs}px ${space.sm}px`, borderRadius: 6, textAlign: "center", cursor: "pointer",
                 background: pts >= 15 ? "rgba(34,197,94,0.15)" : pts <= 3 ? "rgba(239,68,68,0.1)" : "rgba(255,255,255,0.06)" }}>
                <div style={{ fontSize: isMobile ? 8 : 9, color: "#64748b", lineHeight: 1.2 }}>{CATEGORY_LABELS[k]}</div>
-               <div style={{ fontSize: isMobile ? 7 : 8, color: "#94a3b8", lineHeight: 1.2, marginTop: 1,
+               <div style={{ fontSize: isMobile ? 7 : 8, color: "#94a3b8", lineHeight: 1.2, marginTop: space.xs,
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pickName}</div>
                <div style={{ fontSize: isMobile ? 12 : 14, fontWeight: 700,
                 color: pts >= 15 ? "#22c55e" : pts <= 3 ? "#ef4444" : "#e2e8f0" }}>{pts}</div>
@@ -941,10 +948,10 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
    {/* CATEGORY VIEW */}
    {selCat && catMembers && (
     <div>
-     <div style={{ marginBottom: 12 }}>
+     <div style={{ marginBottom: space.md }}>
       <h2 style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, color: "#f8fafc", margin: 0 }}>{CATEGORY_LABELS[selCat]}</h2>
      </div>
-     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+     <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
       {catMembers.map(function (m) {
        var isExp = expRow === m.owner;
        var mid = (members.find(function (x) { return x.name === m.owner; }) || {}).id;
@@ -966,7 +973,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           style={{
            display: "grid",
            gridTemplateColumns: isMobile ? "28px 1fr auto" : "32px 1fr auto",
-           alignItems: "center", padding: isMobile ? "8px 10px" : "10px 12px", gap: 8,
+           alignItems: "center", padding: isMobile ? space.sm : `${space.sm}px ${space.md}px`, gap: space.sm,
            borderRadius: isExp ? "10px 10px 0 0" : 10,
            background: isMine ? theme.you + "40" : rowBackground(m.rank),
            borderTop: "1px solid " + rowBorderColor,
@@ -978,15 +985,15 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           }}>
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
           <div style={{ minWidth: 0 }}>
-           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+           <div style={{ display: "flex", alignItems: "center", gap: space.sm, minWidth: 0 }}>
             <Avatar name={m.owner} color={MEMBER_COLORS[mid]} size={isMobile ? 18 : 20} />
-            <span style={{ fontSize: isMobile ? 13 : 14, fontWeight: 700, color: MEMBER_COLORS[mid] || "#f1f5f9",
+            <span style={{ fontSize: type.base, fontWeight: 700, color: MEMBER_COLORS[mid] || "#f1f5f9",
              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
              {m.owner}
             </span>
             {isMine && <YouBadge color={theme.you} />}
             {memberHasLocks && <LockIndicator note="Commissioner has locked some values for this entry" />}
-            {memberPaywalled && <Lock size={10} color={theme.yel} style={{ marginLeft: 4, flexShrink: 0 }} />}
+            {memberPaywalled && <Lock size={10} color={theme.yel} style={{ marginLeft: space.xs, flexShrink: 0 }} />}
             <button
              onClick={function (e) {
                e.stopPropagation();
@@ -1014,7 +1021,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
               </div>
              </div>
             ) : (
-             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+             <div style={{ display: "flex", gap: space.md, alignItems: "center" }}>
               <div style={{ textAlign: "center" }}>
                <div style={{ fontSize: 9, color: "#64748b" }}>{showProjected ? "Proj. Base" : "Base"}</div>
                <div style={Object.assign({ fontSize: 13, fontWeight: 700, color: "#94a3b8" }, memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{dispBase}</div>
@@ -1038,7 +1045,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        );
       })}
      </div>
-     <div style={{ marginTop: 12, padding: 12, borderRadius: 10,
+     <div style={{ marginTop: space.md, padding: space.md, borderRadius: 10,
       background: "rgba(255,255,255,0.06)", border: `1px solid ${theme.bdr}` }}>
       <div style={{ fontSize: 11, color: "#94a3b8" }}>
        <b style={{ color: "#f1f5f9" }}>Bonus Rules: </b>
@@ -1061,12 +1068,12 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
        Below isWide this stacks full-width under the standings instead of
        disappearing — same content, just single-column. */}
    {(
-    <div style={{ width: isWide ? 300 : "100%", flexShrink: 0, marginTop: isWide ? 0 : 20,
-     display: "flex", flexDirection: "column", gap: 16 }}>
-     <div style={{ ...cardStyle, padding: 16 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, marginBottom: 10,
+    <div style={{ width: isWide ? 300 : "100%", flexShrink: 0, marginTop: isWide ? 0 : space.lg,
+     display: "flex", flexDirection: "column", gap: space.md }}>
+     <div style={{ ...cardStyle, padding: space.md }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, marginBottom: space.sm,
        textTransform: "uppercase", letterSpacing: 1 }}>Category Leaders</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
        {categoryLeaders.map(function (cl) {
         var isTied = cl.owners.length > 1;
         var singleId = (!isTied && cl.owners[0])
@@ -1087,14 +1094,14 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
             setSelCat(cl.key); setExpRow(null);
            }}
           style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-           gap: 6, cursor: "pointer", padding: "2px 0" }}>
+           gap: space.sm, cursor: "pointer", padding: `${space.xs}px 0` }}>
           <span style={{ fontSize: 11, color: theme.dim, flexShrink: 0, width: 92,
            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{CATEGORY_LABELS[cl.key]}</span>
           <span title={isTied ? "Tied: " + cl.owners.join(", ") : undefined}
            style={{ fontSize: 12, fontWeight: 700, flex: 1, textAlign: "right",
            color: singleId ? (MEMBER_COLORS[singleId] || theme.txt) : (cl.owners.length === 0 ? theme.dim : theme.txt),
            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex",
-           alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
+           alignItems: "center", justifyContent: "flex-end", gap: space.xs }}>
            {leaderPaywalled && <Lock size={10} color={theme.yel} style={{ flexShrink: 0 }} />}
            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameText}</span>
           </span>
@@ -1117,7 +1124,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
     <div style={{
      position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
      background: theme.card, border: "1px solid #eab308", borderRadius: 10,
-     padding: "10px 18px", fontSize: 13, fontWeight: 700, color: "#fef9c3",
+     padding: `${space.sm}px ${space.md}px`, fontSize: 13, fontWeight: 700, color: "#fef9c3",
      boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 1000, whiteSpace: "nowrap",
     }}>
      {toast}

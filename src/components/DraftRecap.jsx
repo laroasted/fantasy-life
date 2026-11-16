@@ -12,7 +12,7 @@ import { ClipboardList, AlertTriangle, ScrollText, IdCard, BarChart3, Gem, Chevr
 import { Badge, Skeleton } from "./Badges";
 import StatusCard from "./StatusCard";
 import { supabasePublic, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
-import { theme, cardStyle } from "../constants/theme";
+import { theme, cardStyle, space, type } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
 
@@ -382,16 +382,16 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
  
   // ── Styles ──
   const pill = (active) => ({
-    padding: "8px 16px", borderRadius: 20, border: "none", cursor: "pointer",
-    fontSize: 13, fontWeight: active ? 700 : 500,
+    padding: `${space.sm}px ${space.md}px`, borderRadius: 20, border: "none", cursor: "pointer",
+    fontSize: type.base, fontWeight: active ? 700 : 500,
     background: active ? theme.acc : theme.card,
     color: active ? "#fff" : theme.mut,
     transition: "all 0.15s",
   });
- 
+
   const memberBtn = (mid, selected) => ({
-    padding: "6px 12px", borderRadius: 8, cursor: "pointer",
-    fontSize: 12, fontWeight: selected ? 700 : 500, border: "none",
+    padding: `${space.sm}px ${space.md}px`, borderRadius: 8, cursor: "pointer",
+    fontSize: type.base, fontWeight: selected ? 700 : 500, border: "none",
     background: selected ? `${memberColorMap[mid]}20` : theme.card,
     color: selected ? memberColorMap[mid] : theme.mut,
     outline: selected ? `2px solid ${memberColorMap[mid]}50` : "none",
@@ -402,12 +402,12 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   if (loading) {
     return (
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: space.sm, justifyContent: "center", marginBottom: space.lg, flexWrap: "wrap" }}>
           {[110, 100, 120, 90].map((w, i) => <Skeleton key={i} width={w} height={30} radius={20} />)}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: space.sm }}>
           {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} style={{ ...cardStyle, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div key={i} style={{ ...cardStyle, padding: space.sm, display: "flex", flexDirection: "column", gap: space.sm }}>
               <Skeleton width="60%" height={11} />
               <Skeleton width="85%" height={15} />
               <Skeleton width="40%" height={10} />
@@ -440,18 +440,18 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
   return (
     <div style={{ maxWidth: 860, margin: "0 auto" }}>
       {/* ── Header ── */}
-      <div style={{ textAlign: "center", marginBottom: 24 }}>
+      <div style={{ textAlign: "center", marginBottom: space.lg }}>
         <h2 style={{ fontSize: 26, fontWeight: 800, margin: 0, color: "#f8fafc" }}>
           {seasonYear} Draft Recap
         </h2>
-        <p style={{ fontSize: 12, color: theme.dim, margin: "4px 0 0" }}>
+        <p style={{ fontSize: 12, color: theme.dim, margin: `${space.xs}px 0 0` }}>
           {numMembers} members · {numRounds} rounds · {totalPicks} picks · snake format
         </p>
       </div>
 
       {isStale && (
-        <div style={{ ...cardStyle, marginBottom: 16, padding: "8px 12px", display: "flex",
-          alignItems: "center", gap: 8, border: "1px solid " + theme.yel }}>
+        <div style={{ ...cardStyle, marginBottom: space.md, padding: `${space.sm}px ${space.md}px`, display: "flex",
+          alignItems: "center", gap: space.sm, border: "1px solid " + theme.yel }}>
           <AlertTriangle size={13} color={theme.yel} style={{ flexShrink: 0 }} />
           <span style={{ fontSize: 11, color: theme.dim }}>
             Showing cached data — couldn't reach the live picks/members just now.
@@ -464,24 +464,24 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
       )}
 
       {/* ── View Tabs ── */}
-      <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "draft" }); setView("draft"); }} style={{ ...pill(view === "draft"), display: "inline-flex", alignItems: "center", gap: 6 }}><ScrollText size={14} /> Draft Order</button>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "member" }); setView("member"); }} style={{ ...pill(view === "member"), display: "inline-flex", alignItems: "center", gap: 6 }}><IdCard size={14} /> By Team</button>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "category" }); setView("category"); }} style={{ ...pill(view === "category"), display: "inline-flex", alignItems: "center", gap: 6 }}><BarChart3 size={14} /> By Category</button>
-        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "value" }); setView("value"); }} style={{ ...pill(view === "value"), display: "inline-flex", alignItems: "center", gap: 6 }}><Gem size={14} /> Value</button>
+      <div style={{ display: "flex", gap: space.sm, justifyContent: "center", marginBottom: space.lg, flexWrap: "wrap" }}>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "draft" }); setView("draft"); }} style={{ ...pill(view === "draft"), display: "inline-flex", alignItems: "center", gap: space.sm }}><ScrollText size={14} /> Draft Order</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "member" }); setView("member"); }} style={{ ...pill(view === "member"), display: "inline-flex", alignItems: "center", gap: space.sm }}><IdCard size={14} /> By Team</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "category" }); setView("category"); }} style={{ ...pill(view === "category"), display: "inline-flex", alignItems: "center", gap: space.sm }}><BarChart3 size={14} /> By Category</button>
+        <button onClick={() => { track(EVENTS.DRAFT_RECAP_VIEW_CHANGED, { view: "value" }); setView("value"); }} style={{ ...pill(view === "value"), display: "inline-flex", alignItems: "center", gap: space.sm }}><Gem size={14} /> Value</button>
       </div>
 
       {/* ═══════════ DRAFT ORDER ═══════════ */}
       {view === "draft" && (
         <div>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: space.md }}>
             <select value={filterRound} onChange={e => { track(EVENTS.DRAFT_RECAP_ROUND_FILTERED, { round: e.target.value }); setFilterRound(e.target.value); }}
-              style={{ ...cardStyle, padding: "8px 14px", fontSize: 13, color: theme.txt, cursor: "pointer", outline: "none" }}>
+              style={{ ...cardStyle, padding: `${space.sm}px ${space.md}px`, fontSize: 13, color: theme.txt, cursor: "pointer", outline: "none" }}>
               <option value="All">All Rounds</option>
               {Array.from({ length: numRounds }, (_, i) => <option key={i} value={i + 1}>Round {i + 1}</option>)}
             </select>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: filterRound === "All" ? 6 : 2 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: filterRound === "All" ? space.sm : space.xs }}>
             {draftRoundGroups.map(([round, roundPicks]) => {
               const isExpanded = filterRound !== "All" || expandedRounds.has(round);
               const scored = roundPicks.filter(p => p.total !== null).length;
@@ -489,10 +489,10 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                 <div key={round}>
                   {filterRound === "All" && (
                     <button onClick={() => toggleRound(round)} style={{
-                      width: "100%", display: "flex", alignItems: "center", gap: 10,
-                      padding: "10px 10px", borderRadius: 8, cursor: "pointer",
+                      width: "100%", display: "flex", alignItems: "center", gap: space.sm,
+                      padding: `${space.sm}px ${space.sm}px`, borderRadius: 8, cursor: "pointer",
                       background: theme.card, border: `1px solid ${theme.bdr}`,
-                      color: theme.txt, textAlign: "left", marginBottom: isExpanded ? 4 : 0,
+                      color: theme.txt, textAlign: "left", marginBottom: isExpanded ? space.xs : 0,
                     }}>
                       {isExpanded ? <ChevronDown size={14} color={theme.dim} /> : <ChevronRight size={14} color={theme.dim} />}
                       <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 3, color: theme.mut }}>ROUND {round}</span>
@@ -503,29 +503,29 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                     </button>
                   )}
                   {isExpanded && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
                       {roundPicks.map((p, idx) => {
                         const ptsColor = getPointsColor(p.total);
                         return (
                           <div key={p.pickNum} style={{
                             display: "grid", gridTemplateColumns: "38px 72px 1fr 68px 54px",
-                            alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8,
+                            alignItems: "center", gap: space.sm, padding: `${space.sm}px ${space.sm}px`, borderRadius: 8,
                             background: idx % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent",
                           }}>
                             <span style={{ fontSize: 11, fontWeight: 700, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
                               {String(p.pickNum).padStart(3, "0")}
                             </span>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] || theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span style={{ fontSize: type.base, fontWeight: 700, color: memberColorMap[p.memberId] || theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {p.member}
                             </span>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span style={{ fontSize: type.base, fontWeight: 600, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {p.pick}
                             </span>
                             <span style={{ fontSize: 10, color: theme.mut, whiteSpace: "nowrap" }}>
                               {CAT_ICONS[p.category]} {p.category}
                             </span>
                             <div style={{ textAlign: "right" }}>
-                              <span style={{ fontSize: 13, fontWeight: 800, color: ptsColor, fontVariantNumeric: "tabular-nums" }}>
+                              <span style={{ fontSize: type.base, fontWeight: 800, color: ptsColor, fontVariantNumeric: "tabular-nums" }}>
                                 {p.total !== null ? p.total : "—"}
                               </span>
                             </div>
@@ -544,7 +544,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
       {/* ═══════════ MEMBER REPORT CARD ═══════════ */}
       {view === "member" && (
         <div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 20 }}>
+          <div style={{ display: "flex", gap: space.sm, flexWrap: "wrap", justifyContent: "center", marginBottom: space.lg }}>
             {draftBoard.memberOrder.map(mid => (
               <button key={mid} onClick={() => {
                   track(EVENTS.DRAFT_RECAP_MEMBER_SELECTED, { member_name: memberNameMap[mid] || mid });
@@ -555,11 +555,11 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
             ))}
           </div>
           {selMember && (
-            <div style={{ textAlign: "center", marginBottom: 16 }}>
+            <div style={{ textAlign: "center", marginBottom: space.md }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: memberColorMap[selMember] }}>
                 {memberNameMap[selMember]}'s Draft
               </div>
-              <div style={{ fontSize: 12, color: theme.dim, marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: theme.dim, marginTop: space.xs }}>
                 #{draftBoard.memberOrder.indexOf(selMember) + 1} overall pick · sorted by pick order
               </div>
             </div>
@@ -567,7 +567,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
           <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
             <div style={{
               display: "grid", gridTemplateColumns: "34px 40px 72px 1fr 54px",
-              padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+              padding: `${space.sm}px ${space.md}px`, fontSize: 10, fontWeight: 700, color: theme.mut,
               letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
             }}>
               <span>RD</span><span>PICK</span><span>Category</span><span>Pick</span><span style={{ textAlign: "right" }}>PTS</span>
@@ -577,7 +577,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
               return (
                 <div key={row.category} style={{
                   display: "grid", gridTemplateColumns: "34px 40px 72px 1fr 54px",
-                  alignItems: "center", padding: "9px 14px",
+                  alignItems: "center", padding: `${space.sm}px ${space.md}px`,
                   background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                   borderTop: `1px solid ${theme.bdr}22`,
                 }}>
@@ -586,7 +586,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                     #{row.pickNum}
                   </span>
                   <span style={{ fontSize: 11, color: theme.dim }}>{CAT_ICONS[row.category]} {row.category}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: theme.txt }}>{row.pick}</span>
+                  <span style={{ fontSize: type.base, fontWeight: 600, color: theme.txt }}>{row.pick}</span>
                   <div style={{ textAlign: "right" }}>
                     <span style={{ fontSize: 15, fontWeight: 800, color: ptsColor, fontVariantNumeric: "tabular-nums" }}>
                       {row.total !== null ? row.total : "—"}
@@ -597,7 +597,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
             })}
             <div style={{
               display: "flex", justifyContent: "space-between", alignItems: "center",
-              padding: "12px 14px", borderTop: `1px solid ${theme.bdr}`, background: "rgba(0,0,0,0.15)",
+              padding: `${space.md}px ${space.md}px`, borderTop: `1px solid ${theme.bdr}`, background: "rgba(0,0,0,0.15)",
             }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: theme.dim }}>
                 Total ({memberCard.filter(r => r.total !== null).length}/{numRounds} scored)
@@ -613,7 +613,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
       {/* ═══════════ CATEGORY BREAKDOWN ═══════════ */}
       {view === "category" && (
         <div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 20 }}>
+          <div style={{ display: "flex", gap: space.sm, flexWrap: "wrap", justifyContent: "center", marginBottom: space.lg }}>
             {ALL_CATS.map(cat => (
               <button key={cat} onClick={() => {
                   track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "recap", category: cat, previous_category: selCat });
@@ -623,16 +623,16 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
               </button>
             ))}
           </div>
-          <div style={{ textAlign: "center", marginBottom: 16 }}>
+          <div style={{ textAlign: "center", marginBottom: space.md }}>
             <div style={{ fontSize: 24, fontWeight: 800 }}>{CAT_ICONS[selCat]} {selCat}</div>
-            <div style={{ fontSize: 12, color: theme.dim, marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: theme.dim, marginTop: space.xs }}>
               Sorted by draft pick order — who reached and who found late value?
             </div>
           </div>
           <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
             <div style={{
               display: "grid", gridTemplateColumns: "34px 40px 76px 1fr 54px",
-              padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+              padding: `${space.sm}px ${space.md}px`, fontSize: 10, fontWeight: 700, color: theme.mut,
               letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
             }}>
               <span>RD</span><span>PICK</span><span>Member</span><span>Pick</span><span style={{ textAlign: "right" }}>PTS</span>
@@ -642,7 +642,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
               return (
                 <div key={row.memberId} style={{
                   display: "grid", gridTemplateColumns: "34px 40px 76px 1fr 54px",
-                  alignItems: "center", padding: "9px 14px",
+                  alignItems: "center", padding: `${space.sm}px ${space.md}px`,
                   background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                   borderTop: `1px solid ${theme.bdr}22`,
                 }}>
@@ -650,8 +650,8 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                   <span style={{ fontSize: 11, fontWeight: 600, color: theme.dim, fontVariantNumeric: "tabular-nums" }}>
                     #{row.pickNum}
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[row.memberId] }}>{row.member}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: theme.txt }}>{row.pick}</span>
+                  <span style={{ fontSize: type.base, fontWeight: 700, color: memberColorMap[row.memberId] }}>{row.member}</span>
+                  <span style={{ fontSize: type.base, fontWeight: 600, color: theme.txt }}>{row.pick}</span>
                   <div style={{ textAlign: "right" }}>
                     <span style={{ fontSize: 15, fontWeight: 800, color: ptsColor, fontVariantNumeric: "tabular-nums" }}>
                       {row.total !== null ? row.total : "—"}
@@ -667,26 +667,26 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
       {/* ═══════════ DRAFT VALUE (STEALS & BUSTS) ═══════════ */}
       {view === "value" && (
         <div>
-          <div style={{ textAlign: "center", marginBottom: 16 }}>
+          <div style={{ textAlign: "center", marginBottom: space.md }}>
             <div style={{ fontSize: 24, fontWeight: 800 }}>💎 Steals & Busts</div>
           </div>
 
           {valueBoard.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 40, color: theme.dim, fontSize: 13 }}>
+            <div style={{ textAlign: "center", padding: space.xl, color: theme.dim, fontSize: type.base }}>
               No scored picks yet — value shows up once points start coming in.
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: space.lg }}>
               {/* Steals */}
               {topSteals.length > 0 && (
               <div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: "#4ade80", marginBottom: 8, letterSpacing: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#4ade80", marginBottom: space.sm, letterSpacing: 1 }}>
                   🚀 BIGGEST STEALS
                 </div>
                 <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
                   <div style={{
                     display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
-                    padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+                    padding: `${space.sm}px ${space.md}px`, fontSize: 10, fontWeight: 700, color: theme.mut,
                     letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
                   }}>
                     <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Draft Rank</span>
@@ -695,18 +695,18 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                   {topSteals.map((p, i) => (
                     <div key={p.pickNum} style={{
                       display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
-                      alignItems: "center", padding: "9px 14px",
+                      alignItems: "center", padding: `${space.sm}px ${space.md}px`,
                       background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                       borderTop: `1px solid ${theme.bdr}22`,
                     }}>
                       <span style={{ fontSize: 11, color: theme.dim }}>{i + 1}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
-                      <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <span style={{ fontSize: type.base, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
+                      <span style={{ fontSize: type.base, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {CAT_ICONS[p.category]} {p.pick}
                       </span>
                       <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.draftRank}</span>
                       <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
-                      <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#4ade80" }}>+{p.value}</span>
+                      <span style={{ fontSize: type.base, textAlign: "right", fontWeight: 800, color: "#4ade80" }}>+{p.value}</span>
                     </div>
                   ))}
                 </div>
@@ -716,13 +716,13 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
               {/* Busts */}
               {topBusts.length > 0 && (
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#f87171", marginBottom: 8, letterSpacing: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#f87171", marginBottom: space.sm, letterSpacing: 1 }}>
                     📉 BIGGEST BUSTS
                   </div>
                   <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
                     <div style={{
                       display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
-                      padding: "10px 14px", fontSize: 10, fontWeight: 700, color: theme.mut,
+                      padding: `${space.sm}px ${space.md}px`, fontSize: 10, fontWeight: 700, color: theme.mut,
                       letterSpacing: 1, textTransform: "uppercase", background: "rgba(0,0,0,0.2)",
                     }}>
                       <span>#</span><span>Member</span><span>Pick</span><span style={{ textAlign: "center" }}>Draft Rank</span>
@@ -731,18 +731,18 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
                     {topBusts.map((p, i) => (
                       <div key={p.pickNum} style={{
                         display: "grid", gridTemplateColumns: "40px 76px 1fr 60px 54px 54px",
-                        alignItems: "center", padding: "9px 14px",
+                        alignItems: "center", padding: `${space.sm}px ${space.md}px`,
                         background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
                         borderTop: `1px solid ${theme.bdr}22`,
                       }}>
                         <span style={{ fontSize: 11, color: theme.dim }}>{i + 1}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
-                        <span style={{ fontSize: 12, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ fontSize: type.base, fontWeight: 700, color: memberColorMap[p.memberId] }}>{p.member}</span>
+                        <span style={{ fontSize: type.base, color: theme.txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {CAT_ICONS[p.category]} {p.pick}
                         </span>
                         <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.draftRank}</span>
                         <span style={{ fontSize: 11, textAlign: "center", color: theme.dim }}>#{p.finishRank}</span>
-                        <span style={{ fontSize: 13, textAlign: "right", fontWeight: 800, color: "#f87171" }}>{p.value}</span>
+                        <span style={{ fontSize: type.base, textAlign: "right", fontWeight: 800, color: "#f87171" }}>{p.value}</span>
                       </div>
                     ))}
                   </div>
@@ -750,7 +750,7 @@ export default function DraftRecap({ seasonYear = new Date().getFullYear() }) {
               )}
 
               {topSteals.length === 0 && topBusts.length === 0 && (
-                <div style={{ textAlign: "center", padding: 40, color: theme.dim, fontSize: 13 }}>
+                <div style={{ textAlign: "center", padding: space.xl, color: theme.dim, fontSize: type.base }}>
                   Every scored pick finished right where it was drafted — no steals or busts yet.
                 </div>
               )}

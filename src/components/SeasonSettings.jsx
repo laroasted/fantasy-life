@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Lock, Trophy } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
-import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
+import { theme, cardStyle, inputStyle, buttonStyle, space, type as typeScale } from "../constants/theme";
 import { track, EVENTS } from "../utils/analytics";
 import { PAYWALL_TOLL_AMOUNT, PAYWALL_TOLL_CURRENCY } from "../constants/paywall";
 import { storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
@@ -684,7 +684,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   return (
    <StatusCard icon={Lock} iconSize={44} headingLevel={3} maxWidth={500} title="Commissioner Access Required"
     footer={<>
-     <div style={{ ...inputStyle, marginBottom: 8, opacity: 0.7 }}>
+     <div style={{ ...inputStyle, marginBottom: space.sm, opacity: 0.7 }}>
       {commissionerEmail ? commissionerEmail : "No commissioner session detected"}
      </div>
      <button disabled style={{ ...buttonStyle(theme.srf), width: "100%", opacity: 0.6, cursor: "default" }}>Awaiting Commissioner Sign-In</button>
@@ -731,8 +731,8 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  function renderArrayEditor(entry, arr, fields, addLabel, subArray) {
   var owner = entry.owner;
   return (
-   <div style={{ padding: "8px 0" }}>
-    {arr.length === 0 && <div style={{ padding: 8, color: theme.dim, fontSize: 11 }}>No entries yet.</div>}
+   <div style={{ padding: `${space.sm}px 0` }}>
+    {arr.length === 0 && <div style={{ padding: space.sm, color: theme.dim, fontSize: typeScale.sm }}>No entries yet.</div>}
     {arr.map(function (row, idx) {
      var rKey = subArray
       ? editCat + "|" + owner + "|" + subArray + "|row" + idx
@@ -743,36 +743,36 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
       : editCat + "|" + owner + "|" + idx;
      return (
       <div key={idx} style={{
-       padding: "8px 10px", marginBottom: 4, borderRadius: 8,
+       padding: `${space.sm}px ${space.sm}px`, marginBottom: space.xs, borderRadius: 8,
        background: rowLocked ? "rgba(234,179,8,0.06)" : "rgba(51,65,85,0.2)",
        border: "1px solid " + (rowLocked ? "rgba(234,179,8,0.3)" : theme.bdr),
       }}>
-       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: theme.txt }}>
+       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space.sm }}>
+        <span style={{ fontSize: typeScale.sm, fontWeight: 700, color: theme.txt }}>
          {row.round || row.title || row.event || row.category || "Row " + (idx + 1)}
         </span>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: space.xs, alignItems: "center" }}>
          <LockBtn locked={rowLocked} onToggle={function () { toggleLock(rKey); }} size={10} />
          <button onClick={function () { setConfirmDelete(deleteKey); }}
           style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-           borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#ef4444", cursor: "pointer" }}>
+           borderRadius: 4, padding: `${space.xs}px ${space.sm}px`, fontSize: 10, color: "#ef4444", cursor: "pointer" }}>
           {"\u2715"} Delete
          </button>
         </div>
        </div>
        {confirmDelete === deleteKey && (
-        <div style={{ padding: "6px 8px", marginBottom: 6, borderRadius: 6,
+        <div style={{ padding: `${space.sm}px ${space.sm}px`, marginBottom: space.sm, borderRadius: 6,
          background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-         display: "flex", gap: 8, alignItems: "center", fontSize: 11 }}>
+         display: "flex", gap: space.sm, alignItems: "center", fontSize: typeScale.sm }}>
          <span style={{ color: "#fca5a5" }}>Delete this row?</span>
          <button onClick={function () { deleteDetailRow(editCat, owner, idx, subArray); }}
           style={{ background: "#ef4444", border: "none", borderRadius: 4,
-           padding: "3px 8px", fontSize: 10, color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+           padding: `${space.xs}px ${space.sm}px`, fontSize: 10, color: "#fff", cursor: "pointer", fontWeight: 700 }}>
           Yes, delete
          </button>
          <button onClick={function () { setConfirmDelete(null); }}
           style={{ background: theme.srf, border: "1px solid " + theme.bdr, borderRadius: 4,
-           padding: "3px 8px", fontSize: 10, color: theme.txt, cursor: "pointer" }}>
+           padding: `${space.xs}px ${space.sm}px`, fontSize: 10, color: theme.txt, cursor: "pointer" }}>
           Cancel
          </button>
         </div>
@@ -780,7 +780,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        <div style={{
         display: "grid",
         gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(" + Math.min(fields.length, 4) + ", 1fr)",
-        gap: 6,
+        gap: space.sm,
        }}>
         {fields.map(function (f) {
          var fKey = editCat + "|" + owner + "|d" + idx + "|" + f.key;
@@ -788,21 +788,21 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          var val = getDetailEdit(editCat, owner, idx, f.key, subArray);
          return (
           <div key={f.key}>
-           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space.xs }}>
             <label style={{ fontSize: 9, color: theme.dim }}>{f.label}</label>
             <LockBtn locked={fLocked} onToggle={function () { toggleLock(fKey); }} size={9} />
            </div>
            {f.type === "select" ? (
             <select value={val}
              onChange={function (e) { setDetailEditVal(editCat, owner, idx, f.key, e.target.value, subArray); }}
-             style={{ ...inputStyle, padding: "4px 6px", fontSize: 11 }}>
+             style={{ ...inputStyle, padding: `${space.xs}px ${space.sm}px`, fontSize: typeScale.sm }}>
              {f.options.map(function (o) { return <option key={o} value={o}>{o}</option>; })}
             </select>
            ) : (
             <input type={f.type === "number" ? "number" : "text"}
              value={val}
              onChange={function (e) { setDetailEditVal(editCat, owner, idx, f.key, e.target.value, subArray); }}
-             style={{ ...inputStyle, padding: "4px 6px", fontSize: 11 }} />
+             style={{ ...inputStyle, padding: `${space.xs}px ${space.sm}px`, fontSize: typeScale.sm }} />
            )}
           </div>
          );
@@ -812,7 +812,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
      );
     })}
     <button onClick={function () { addDetailRow(editCat, entry.owner, subArray); }}
-     style={{ ...buttonStyle(theme.srf), width: "100%", marginTop: 6, padding: 8, fontSize: 11,
+     style={{ ...buttonStyle(theme.srf), width: "100%", marginTop: space.sm, padding: space.sm, fontSize: typeScale.sm,
       border: "1px dashed " + theme.bdr }}>
      + Add {addLabel}
     </button>
@@ -824,7 +824,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  function renderDetailEditor(entry) {
   var owner = entry.owner;
   var d = (detail[editCat] || []).find(function (x) { return x.owner === owner; });
-  if (!d) return <div style={{ padding: 8, color: theme.dim, fontSize: 11 }}>No detail data available.</div>;
+  if (!d) return <div style={{ padding: space.sm, color: theme.dim, fontSize: typeScale.sm }}>No detail data available.</div>;
 
   if (ct === "sport") return renderArrayEditor(entry, d.rounds || [], getDetailFields(), "Round");
   if (ct === "film") return renderArrayEditor(entry, d.films || [], getDetailFields(), "Film");
@@ -834,10 +834,10 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    var songFields = SONG_FIELDS;
    var grammyFields = GRAMMY_FIELDS;
    return (
-    <div style={{ padding: "8px 0" }}>
-     <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4 }}>Billboard Songs</div>
+    <div style={{ padding: `${space.sm}px 0` }}>
+     <div style={{ fontSize: typeScale.sm, fontWeight: 700, color: theme.dim, marginBottom: space.xs }}>Billboard Songs</div>
      {renderArrayEditor(entry, d.songs || [], songFields, "Song", "songs")}
-     <div style={{ fontSize: 11, fontWeight: 700, color: theme.dim, marginBottom: 4, marginTop: 12 }}>Grammy Events</div>
+     <div style={{ fontSize: typeScale.sm, fontWeight: 700, color: theme.dim, marginBottom: space.xs, marginTop: space.md }}>Grammy Events</div>
      {renderArrayEditor(entry, d.grammys || [], grammyFields, "Grammy Event", "grammys")}
     </div>
    );
@@ -846,35 +846,35 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   if (ct === "country") {
    var gdpKey = editCat + "|" + owner + "|gdp";
    return (
-    <div style={{ padding: "8px 0" }}>
-     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
+    <div style={{ padding: `${space.sm}px 0` }}>
+     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: space.sm, marginBottom: space.sm }}>
       <div>
-       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: space.xs }}>
         <label style={{ fontSize: 9, color: theme.dim }}>GDP %</label>
         <LockBtn locked={isLocked(gdpKey)} onToggle={function () { toggleLock(gdpKey); }} size={9} />
        </div>
        <input type="number" step="0.1"
         value={getDetailEdit(editCat, owner, 0, "gdp") || d.gdp || 0}
         onChange={function (e) { setDetailEditVal(editCat, owner, 0, "gdp", e.target.value); }}
-        style={{ ...inputStyle, padding: "4px 6px", fontSize: 11 }} />
+        style={{ ...inputStyle, padding: `${space.xs}px ${space.sm}px`, fontSize: typeScale.sm }} />
       </div>
      </div>
      {d.olympics && (
-      <div style={{ padding: 8, borderRadius: 6, background: "rgba(51,65,85,0.2)", border: "1px solid " + theme.bdr }}>
-       <div style={{ fontSize: 10, fontWeight: 700, color: theme.dim, marginBottom: 4 }}>Olympic Medals</div>
-       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
+      <div style={{ padding: space.sm, borderRadius: 6, background: "rgba(51,65,85,0.2)", border: "1px solid " + theme.bdr }}>
+       <div style={{ fontSize: typeScale.xs, fontWeight: 700, color: theme.dim, marginBottom: space.xs }}>Olympic Medals</div>
+       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: space.xs }}>
         {["gold", "silver", "bronze", "rank"].map(function (f) {
          var oKey = editCat + "|" + owner + "|olympics." + f;
          return (
           <div key={f}>
-           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
+           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: space.xs }}>
             <label style={{ fontSize: 8, color: theme.dim }}>{f}</label>
             <LockBtn locked={isLocked(oKey)} onToggle={function () { toggleLock(oKey); }} size={8} />
            </div>
            <input type="number"
             value={getDetailEdit(editCat, owner, 0, f) || (d.olympics ? d.olympics[f] : 0) || 0}
             onChange={function (e) { setDetailEditVal(editCat, owner, 0, f, e.target.value); }}
-            style={{ ...inputStyle, padding: "3px 4px", fontSize: 10 }} />
+            style={{ ...inputStyle, padding: `${space.xs}px`, fontSize: typeScale.xs }} />
           </div>
          );
         })}
@@ -887,13 +887,13 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
 
   if (ct === "stock") {
    return (
-    <div style={{ padding: "8px 0" }}>
-     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+    <div style={{ padding: `${space.sm}px 0` }}>
+     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: space.sm }}>
       {["openPrice", "closePrice", "pctChange"].map(function (f) {
        var sKey = editCat + "|" + owner + "|" + f;
        return (
         <div key={f}>
-         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: space.xs }}>
           <label style={{ fontSize: 9, color: theme.dim }}>
            {f === "openPrice" ? "Open $" : f === "closePrice" ? "Close $" : "% Change"}
           </label>
@@ -902,7 +902,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          <input type="number" step="0.01"
           value={getDetailEdit(editCat, owner, 0, f) || d[f] || 0}
           onChange={function (e) { setDetailEditVal(editCat, owner, 0, f, e.target.value); }}
-          style={{ ...inputStyle, padding: "4px 6px", fontSize: 11 }} />
+          style={{ ...inputStyle, padding: `${space.xs}px ${space.sm}px`, fontSize: typeScale.sm }} />
         </div>
        );
       })}
@@ -920,7 +920,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  return (
   <div style={{ maxWidth: 800, margin: "0 auto" }}>
    {/* ─── Mode tabs ─── */}
-   <div style={{ display: "flex", gap: isMobile ? 3 : 8, marginBottom: 16 }}>
+   <div style={{ display: "flex", gap: isMobile ? space.xs : space.sm, marginBottom: space.md }}>
     {[
      { id: "scores", label: isMobile ? "Scores" : "Scores & Bonus", pending: Object.keys(edits).length + Object.keys(bonusNotes).length },
      { id: "details", label: isMobile ? "Details" : "Detail Lines", pending: Object.keys(detailEdits).length },
@@ -935,7 +935,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        title={tab.pending > 0 ? tab.pending + " unsaved change" + (tab.pending === 1 ? "" : "s") : undefined}
        style={{ ...buttonStyle(mode === tab.id ? theme.acc : theme.srf), flex: 1, position: "relative",
         border: mode === tab.id ? "none" : "1px solid " + theme.bdr,
-        fontSize: isMobile ? 11 : 12, padding: isMobile ? "8px 4px" : "10px 12px" }}>
+        fontSize: isMobile ? 11 : 12, padding: isMobile ? `${space.sm}px ${space.xs}px` : `${space.sm}px ${space.md}px` }}>
        {tab.label}
        {tab.pending > 0 && (
         <span style={{ position: "absolute", top: -4, right: -4, width: 9, height: 9, borderRadius: "50%",
@@ -946,7 +946,10 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
     })}
    </div>
    {(Object.keys(edits).length + Object.keys(bonusNotes).length + Object.keys(detailEdits).length + Object.keys(swaps).length + Object.keys(paywallEdits).length) > 0 && (
-    <div style={{ fontSize: 11, color: theme.dim, marginTop: -10, marginBottom: 16, textAlign: "center" }}>
+    // -10px marginTop is a deliberate pull-up to sit this warning tight
+    // under the mode tabs rather than a decorative gap — not on the
+    // spacing scale on purpose.
+    <div style={{ fontSize: typeScale.sm, color: theme.dim, marginTop: -10, marginBottom: space.md, textAlign: "center" }}>
      You have unsaved changes — leaving Settings without hitting Save loses them.
     </div>
    )}
@@ -956,8 +959,8 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        completely invisible here. */}
    {saveError && (
     <div style={{ fontSize: 12, color: "#fca5a5", background: "rgba(239,68,68,0.1)",
-     border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: "8px 10px",
-     marginBottom: 16, textAlign: "center" }}>
+     border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: `${space.sm}px ${space.sm}px`,
+     marginBottom: space.md, textAlign: "center" }}>
      {saveError}
     </div>
    )}
@@ -967,9 +970,9 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
     <ScrollFadeEdges scrollRef={pillsRef} fadeColor={theme.bg}>
     <div ref={pillsRef} style={{
      display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
-     gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
+     gap: space.xs, marginBottom: space.md, justifyContent: isMobile ? "flex-start" : "center",
      overflowX: isMobile ? "auto" : "visible",
-     WebkitOverflowScrolling: "touch", paddingBottom: isMobile ? 4 : 0,
+     WebkitOverflowScrolling: "touch", paddingBottom: isMobile ? space.xs : 0,
      msOverflowStyle: "none", scrollbarWidth: "none",
     }}>
      {CATEGORY_ORDER.map(function (k) {
@@ -980,7 +983,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
           track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "settings", category: k, previous_category: editCat });
           setEditCat(k); setExpandedMember(null);
          }}
-        style={{ padding: "5px 10px", borderRadius: 20, flexShrink: 0,
+        style={{ padding: `${space.xs}px ${space.sm}px`, borderRadius: 20, flexShrink: 0,
          border: "1px solid " + (isSel ? theme.acc : theme.bdr),
          background: isSel ? theme.acc : theme.card,
          color: isSel ? "#1A1200" : theme.txt, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
@@ -1002,11 +1005,11 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ SCORES & BONUS MODE ═══ */}
    {mode === "scores" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Scores & Bonus Notes</h3>
-     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
+     <h3 style={{ margin: `0 0 ${space.xs}px`, fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Scores & Bonus Notes</h3>
+     <p style={{ color: theme.dim, fontSize: typeScale.sm, margin: `0 0 ${space.md}px` }}>
       Edit base/bonus points and add a note explaining the bonus. Notes show in the scoreboard breakdown.
      </p>
-     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+     <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
       {catEntries.map(function (entry) {
        var mid = (members.find(function (x) { return x.name === entry.owner; }) || {}).id;
        var baseVal = getEditVal(editCat, entry.owner, "base");
@@ -1026,7 +1029,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
            <div>
-            <div style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[mid] || theme.txt }}>{entry.owner}</div>
+            <div style={{ fontWeight: 700, fontSize: typeScale.base, color: MEMBER_COLORS[mid] || theme.txt }}>{entry.owner}</div>
             <div style={{ fontSize: 10, color: theme.dim, overflow: "hidden",
              textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: isMobile ? 180 : 90 }}>{entry.pick}</div>
            </div>
@@ -1037,24 +1040,24 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
             </div>
            )}
           </div>
-          <div style={{ display: isMobile ? "flex" : "contents", gap: 8 }}>
+          <div style={{ display: isMobile ? "flex" : "contents", gap: space.sm }}>
            <div style={{ flex: 1 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space.xs }}>
              <label style={{ fontSize: 10, color: theme.dim }}>Base</label>
              <LockBtn locked={isLocked(bKey)} onToggle={function () { toggleLock(bKey); }} size={9} />
             </div>
             <input type="number" value={baseVal}
              onChange={function (e) { setEditVal(editCat, entry.owner, "base", e.target.value); }}
-             style={{ ...inputStyle, padding: "6px 8px", fontSize: 13 }} />
+             style={{ ...inputStyle, padding: `${space.sm}px ${space.sm}px`, fontSize: typeScale.base }} />
            </div>
            <div style={{ flex: 1 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space.xs }}>
              <label style={{ fontSize: 10, color: theme.dim }}>Bonus</label>
              <LockBtn locked={isLocked(bnKey)} onToggle={function () { toggleLock(bnKey); }} size={9} />
             </div>
             <input type="number" value={bonusVal}
              onChange={function (e) { setEditVal(editCat, entry.owner, "bonus", e.target.value); }}
-             style={{ ...inputStyle, padding: "6px 8px", fontSize: 13 }} />
+             style={{ ...inputStyle, padding: `${space.sm}px ${space.sm}px`, fontSize: typeScale.base }} />
            </div>
           </div>
           {!isMobile && (
@@ -1064,28 +1067,28 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
            </div>
           )}
          </div>
-         <div style={{ marginTop: 8 }}>
-          <label style={{ fontSize: 10, color: theme.dim, marginBottom: 2, display: "block" }}>
+         <div style={{ marginTop: space.sm }}>
+          <label style={{ fontSize: 10, color: theme.dim, marginBottom: space.xs, display: "block" }}>
            Bonus Note <span style={{ color: "#64748b" }}>{"\u2014"} visible to all players in scoreboard</span>
           </label>
           <input value={getBonusNote(editCat, entry.owner)}
            onChange={function (e) { setBonusNoteVal(editCat, entry.owner, e.target.value); }}
            placeholder="e.g. +10 Won Super Bowl, +2 Wild Card bye"
-           style={{ ...inputStyle, padding: "5px 8px", fontSize: 11 }} />
+           style={{ ...inputStyle, padding: `${space.xs}px ${space.sm}px`, fontSize: typeScale.sm }} />
          </div>
         </div>
        );
       })}
      </div>
-     <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-      <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
+     <div style={{ marginTop: space.md, display: "flex", gap: space.sm }}>
+      <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: space.md, fontSize: 15 }}>
        Save Changes
       </button>
       <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "scores" }); setEdits({}); setBonusNotes({}); setSaved(false); }}
        style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
-      <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
+      <div style={{ marginTop: space.sm, padding: space.sm, borderRadius: 8,
        background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)",
        textAlign: "center", fontSize: 12, color: theme.grn }}>
        Changes saved and synced to scoreboard.
@@ -1097,14 +1100,14 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ DETAIL LINES MODE ═══ */}
    {mode === "details" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Detail Lines</h3>
-     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
+     <h3 style={{ margin: `0 0 ${space.xs}px`, fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Detail Lines</h3>
+     <p style={{ color: theme.dim, fontSize: typeScale.sm, margin: `0 0 ${space.md}px` }}>
       Add, edit, or delete individual rows (films, playoff rounds, songs, etc.). Click a member to expand.
       {(FILM_CATS.includes(editCat) || MUSIC_CATS.includes(editCat) || STOCK_CATS.includes(editCat)) && (
        <span style={{ color: "#3b82f6" }}> Base rankings auto-recalculate when you save.</span>
       )}
      </p>
-     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+     <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
       {catEntries.map(function (entry) {
        var mid = (members.find(function (x) { return x.name === entry.owner; }) || {}).id;
        var isExp = expandedMember === entry.owner;
@@ -1116,14 +1119,14 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
         }}>
          <div className="interactive" onClick={function () { setExpandedMember(isExp ? null : entry.owner); }}
           style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-           padding: "10px 14px", cursor: "pointer" }}>
+           padding: `${space.sm}px ${space.md}px`, cursor: "pointer" }}>
           <div>
-           <span style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[mid] || theme.txt }}>
+           <span style={{ fontWeight: 700, fontSize: typeScale.base, color: MEMBER_COLORS[mid] || theme.txt }}>
             {entry.owner}
            </span>
-           <span style={{ fontSize: 11, color: theme.dim, marginLeft: 8 }}>{entry.pick}</span>
+           <span style={{ fontSize: 11, color: theme.dim, marginLeft: space.sm }}>{entry.pick}</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: space.sm }}>
            <span style={{ fontSize: 11, color: theme.dim }}>
             {(function () {
              var d = (detail[editCat] || []).find(function (x) { return x.owner === entry.owner; });
@@ -1139,7 +1142,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
           </div>
          </div>
          {isExp && (
-          <div style={{ padding: "0 14px 12px", borderTop: "1px solid " + theme.bdr }}>
+          <div style={{ padding: `0 ${space.md}px ${space.md}px`, borderTop: "1px solid " + theme.bdr }}>
            {renderDetailEditor(entry)}
           </div>
          )}
@@ -1147,15 +1150,15 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        );
       })}
      </div>
-     <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-      <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
+     <div style={{ marginTop: space.md, display: "flex", gap: space.sm }}>
+      <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: space.md, fontSize: 15 }}>
        Save All Detail Edits
       </button>
       <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "details" }); setDetailEdits({}); setSaved(false); }}
        style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
-      <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
+      <div style={{ marginTop: space.sm, padding: space.sm, borderRadius: 8,
        background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)",
        textAlign: "center", fontSize: 12, color: theme.grn }}>
        Detail edits saved.{(FILM_CATS.includes(editCat) || MUSIC_CATS.includes(editCat) || STOCK_CATS.includes(editCat)) ? " Base rankings recalculated." : ""}
@@ -1167,11 +1170,11 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ PICK SWAPS MODE ═══ */}
    {mode === "swaps" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Swap Picks</h3>
-     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
+     <h3 style={{ margin: `0 0 ${space.xs}px`, fontSize: 16 }}>{CATEGORY_LABELS[editCat]} {"\u2014"} Swap Picks</h3>
+     <p style={{ color: theme.dim, fontSize: typeScale.sm, margin: `0 0 ${space.md}px` }}>
       Change a member's selection mid-season.
      </p>
-     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+     <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
       {catEntries.map(function (entry) {
        var mid = (members.find(function (x) { return x.name === entry.owner; }) || {}).id;
        var swapVal = getSwapVal(editCat, entry.owner);
@@ -1182,17 +1185,17 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          display: "grid",
          gridTemplateColumns: isMobile ? "1fr" : "100px 1fr",
          gap: isMobile ? 4 : 12, alignItems: isMobile ? "stretch" : "center",
-         padding: "10px 12px", borderRadius: 8,
+         padding: `${space.sm}px ${space.md}px`, borderRadius: 8,
          background: changed ? "rgba(59,130,246,0.08)" : "rgba(51,65,85,0.2)",
          border: "1px solid " + (changed ? theme.acc : theme.bdr),
         }}>
-         <div style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[mid] || theme.txt }}>
+         <div style={{ fontWeight: 700, fontSize: typeScale.base, color: MEMBER_COLORS[mid] || theme.txt }}>
           {entry.owner}
          </div>
-         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+         <div style={{ display: "flex", gap: space.sm, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" }}>
           <input value={swapVal}
            onChange={function (e) { setSwapVal(editCat, entry.owner, e.target.value); }}
-           style={{ ...inputStyle, padding: "6px 8px", fontSize: 13, flex: 1 }}
+           style={{ ...inputStyle, padding: `${space.sm}px ${space.sm}px`, fontSize: typeScale.base, flex: 1 }}
            placeholder="Enter new pick..." />
           {changed && <span style={{ fontSize: 10, color: theme.acc, whiteSpace: "nowrap" }}>{"\u2190"} was: {entry.pick}</span>}
          </div>
@@ -1200,15 +1203,15 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        );
       })}
      </div>
-     <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-      <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
+     <div style={{ marginTop: space.md, display: "flex", gap: space.sm }}>
+      <button onClick={applyChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: space.md, fontSize: 15 }}>
        Save Swaps
       </button>
       <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "swaps" }); setSwaps({}); setSaved(false); }}
        style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {saved && (
-      <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
+      <div style={{ marginTop: space.sm, padding: space.sm, borderRadius: 8,
        background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)",
        textAlign: "center", fontSize: 12, color: theme.grn }}>
        Pick swaps saved.
@@ -1220,22 +1223,22 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ LOCKS OVERVIEW MODE ═══ */}
    {mode === "locks" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+     <h3 style={{ margin: `0 0 ${space.xs}px`, fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
       <Lock size={15} /> Lock Manager {"\u2014"} {CATEGORY_LABELS[editCat]}
      </h3>
-     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 12px" }}>
+     <p style={{ color: theme.dim, fontSize: typeScale.sm, margin: `0 0 ${space.md}px` }}>
       Locked fields won't be overwritten by cron jobs. Other players see a lock icon with a hover tooltip.
       New seasons always start with zero locks.
      </p>
      {(function () {
       var catLocks = Object.entries(locks).filter(function (pair) { return pair[0].startsWith(editCat + "|"); });
       if (catLocks.length === 0) {
-       return <p style={{ color: theme.dim, fontSize: 12, textAlign: "center", padding: 20 }}>
+       return <p style={{ color: theme.dim, fontSize: 12, textAlign: "center", padding: space.lg }}>
         No locks in {CATEGORY_LABELS[editCat]}. Use the Scores or Details tabs to lock fields.
        </p>;
       }
       return (
-       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+       <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
         {catLocks.map(function (pair) {
          var key = pair[0];
          var info = pair[1];
@@ -1246,23 +1249,23 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          return (
           <div key={key} style={{
            display: "flex", justifyContent: "space-between", alignItems: "center",
-           padding: "8px 12px", borderRadius: 8,
+           padding: `${space.sm}px ${space.md}px`, borderRadius: 8,
            background: "rgba(234,179,8,0.06)", border: "1px solid rgba(234,179,8,0.2)",
           }}>
            <div>
             <span style={{ fontWeight: 700, fontSize: 12, color: MEMBER_COLORS[mid] || theme.txt }}>
              {owner}
             </span>
-            <span style={{ fontSize: 11, color: theme.dim, marginLeft: 8 }}>{field}</span>
+            <span style={{ fontSize: 11, color: theme.dim, marginLeft: space.sm }}>{field}</span>
             {info.at && (
-             <span style={{ fontSize: 9, color: "#64748b", marginLeft: 8 }}>
+             <span style={{ fontSize: 9, color: "#64748b", marginLeft: space.sm }}>
               {new Date(info.at).toLocaleDateString()}
              </span>
             )}
            </div>
            <button onClick={function () { toggleLock(key); }}
             style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-             borderRadius: 4, padding: "4px 8px", fontSize: 10, color: "#ef4444",
+             borderRadius: 4, padding: `${space.xs}px ${space.sm}px`, fontSize: 10, color: "#ef4444",
              cursor: "pointer", fontWeight: 600 }}>
             Unlock
            </button>
@@ -1272,9 +1275,9 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        </div>
       );
      })()}
-     <div style={{ marginTop: 16, padding: 10, borderRadius: 8,
+     <div style={{ marginTop: space.md, padding: space.sm, borderRadius: 8,
       background: "rgba(234,179,8,0.06)", border: "1px solid rgba(234,179,8,0.2)" }}>
-      <div style={{ fontSize: 11, color: "#eab308" }}>
+      <div style={{ fontSize: typeScale.sm, color: "#eab308" }}>
        <b>How locks work:</b> Your cron job checks the locks column in Supabase before overwriting any data.
        If a field is locked, the cron skips it and logs what it skipped.
       </div>
@@ -1285,13 +1288,13 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ PAYWALL MODE ═══ */}
    {mode === "paywall" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{"💰"} Paywall</h3>
-     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
+     <h3 style={{ margin: `0 0 ${space.xs}px`, fontSize: 16 }}>{"💰"} Paywall</h3>
+     <p style={{ color: theme.dim, fontSize: typeScale.sm, margin: `0 0 ${space.md}px` }}>
       Turn a member's scoreboard row into a toll booth. When on, their total and
       category breakdown are blurred out until they pay ${PAYWALL_TOLL_AMOUNT} {PAYWALL_TOLL_CURRENCY} via
       PayPal (or you flip this back off). Off = no change from normal.
      </p>
-     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+     <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
       {members.map(function (m) {
        var enabled = getPaywallVal(m.id, "enabled");
        var message = getPaywallVal(m.id, "message");
@@ -1299,18 +1302,18 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
        var isLive = !!(liveEntry && liveEntry.enabled);
        return (
         <div key={m.id} style={{
-         padding: "10px 12px", borderRadius: 8,
+         padding: `${space.sm}px ${space.md}px`, borderRadius: 8,
          background: enabled ? "rgba(234,179,8,0.08)" : "rgba(51,65,85,0.2)",
          border: "1px solid " + (enabled ? "rgba(234,179,8,0.35)" : theme.bdr),
         }}>
-         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-           <span style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[m.id] || theme.txt }}>
+         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: space.sm }}>
+          <div style={{ display: "flex", alignItems: "center", gap: space.sm }}>
+           <span style={{ fontWeight: 700, fontSize: typeScale.base, color: MEMBER_COLORS[m.id] || theme.txt }}>
             {m.name}
            </span>
-           {isLive && <span style={{ fontSize: 9, color: "#eab308", display: "inline-flex", alignItems: "center", gap: 3 }}><Lock size={9} /> currently live</span>}
+           {isLive && <span style={{ fontSize: 9, color: "#eab308", display: "inline-flex", alignItems: "center", gap: space.xs }}><Lock size={9} /> currently live</span>}
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 11, color: theme.dim }}>
+          <label style={{ display: "flex", alignItems: "center", gap: space.sm, cursor: "pointer", fontSize: 11, color: theme.dim }}>
            <input type="checkbox" checked={enabled}
             onChange={function (e) { setPaywallVal(m.id, "enabled", e.target.checked); }} />
            {enabled ? "On" : "Off"}
@@ -1319,20 +1322,20 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          <input value={message}
           onChange={function (e) { setPaywallVal(m.id, "message", e.target.value); }}
           placeholder="e.g. Paywalled until you pick our next location"
-          style={{ ...inputStyle, padding: "6px 8px", fontSize: 11, marginTop: 8 }} />
+          style={{ ...inputStyle, padding: `${space.sm}px ${space.sm}px`, fontSize: typeScale.sm, marginTop: space.sm }} />
         </div>
        );
       })}
      </div>
-     <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-      <button onClick={applyPaywallChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 15 }}>
+     <div style={{ marginTop: space.md, display: "flex", gap: space.sm }}>
+      <button onClick={applyPaywallChanges} style={{ ...buttonStyle(theme.grn), flex: 2, padding: space.md, fontSize: 15 }}>
        Save Changes
       </button>
       <button onClick={function () { track(EVENTS.SETTINGS_CHANGES_RESET, { mode: "paywall" }); setPaywallEdits({}); setSavedPaywall(false); }}
        style={{ ...buttonStyle(theme.srf), flex: 1, border: "1px solid " + theme.bdr }}>Reset</button>
      </div>
      {savedPaywall && (
-      <div style={{ marginTop: 8, padding: 8, borderRadius: 8,
+      <div style={{ marginTop: space.sm, padding: space.sm, borderRadius: 8,
        background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)",
        textAlign: "center", fontSize: 12, color: theme.grn }}>
        Paywall settings saved and synced to scoreboard.
@@ -1344,24 +1347,24 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ PUSH TEST ═══ */}
    {mode === "push" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{"🔔"} Push Test</h3>
-     <p style={{ color: theme.dim, fontSize: 11, margin: "0 0 16px" }}>
+     <h3 style={{ margin: `0 0 ${space.xs}px`, fontSize: 16 }}>{"🔔"} Push Test</h3>
+     <p style={{ color: theme.dim, fontSize: typeScale.sm, margin: `0 0 ${space.md}px` }}>
       Send a one-off test notification straight to a member's own device(s) — useful for
       confirming push actually reaches someone before relying on it during a live draft or a
       real score update. "No active subscription" means that member hasn't enabled push (or
       enabled it on a different device than the one you're checking).
      </p>
-     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+     <div style={{ display: "flex", flexDirection: "column", gap: space.sm }}>
       {members.map(function (m) {
        var status = testPushStatus[m.id];
        return (
         <div key={m.id} style={{
-         padding: "10px 12px", borderRadius: 8, background: "rgba(51,65,85,0.2)",
+         padding: `${space.sm}px ${space.md}px`, borderRadius: 8, background: "rgba(51,65,85,0.2)",
          border: "1px solid " + theme.bdr,
-         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+         display: "flex", justifyContent: "space-between", alignItems: "center", gap: space.sm,
         }}>
-         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <span style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[m.id] || theme.txt }}>
+         <div style={{ display: "flex", alignItems: "center", gap: space.sm, minWidth: 0 }}>
+          <span style={{ fontWeight: 700, fontSize: typeScale.base, color: MEMBER_COLORS[m.id] || theme.txt }}>
            {m.name}
           </span>
           {status && status !== "sending" && (
@@ -1372,7 +1375,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
          </div>
          <button onClick={function () { handleSendTestPush(m.id); }} disabled={status === "sending"}
           style={{ ...buttonStyle(theme.srf), border: "1px solid " + theme.bdr, fontSize: 11,
-           padding: "6px 10px", flexShrink: 0, opacity: status === "sending" ? 0.6 : 1,
+           padding: `${space.sm}px ${space.sm}px`, flexShrink: 0, opacity: status === "sending" ? 0.6 : 1,
            cursor: status === "sending" ? "default" : "pointer" }}>
           {status === "sending" ? "Sending…" : "Send test push"}
          </button>
@@ -1386,17 +1389,17 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    {/* ═══ CHANGE LOG ═══ */}
    {mode === "log" && (
     <div style={cardStyle}>
-     <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Change Log</h3>
+     <h3 style={{ margin: `0 0 ${space.md}px`, fontSize: 16 }}>Change Log</h3>
      {changelog.length === 0 ? (
       <p style={{ color: theme.dim, fontSize: 13 }}>No changes recorded this session.</p>
      ) : (
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: space.xs }}>
        {changelog.map(function (entry, i) {
         return (
-         <div key={i} style={{ padding: "8px 12px", borderRadius: 8,
+         <div key={i} style={{ padding: `${space.sm}px ${space.md}px`, borderRadius: 8,
           background: "rgba(51,65,85,0.3)", border: "1px solid " + theme.bdr,
           fontSize: 12, color: theme.txt, wordBreak: "break-word" }}>
-          <span style={{ color: theme.dim, marginRight: 8 }}>#{changelog.length - i}</span>
+          <span style={{ color: theme.dim, marginRight: space.sm }}>#{changelog.length - i}</span>
           {entry}
          </div>
         );
