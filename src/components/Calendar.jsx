@@ -2,26 +2,32 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { Clock, CalendarDays } from "lucide-react";
 import { supabasePublic } from "../utils/storage";
 import { theme } from "../constants/theme";
+import { CATEGORY_COLORS } from "../constants/categories";
 import { track, EVENTS } from "../utils/analytics";
 import { Skeleton } from "./Badges";
 import StatusCard from "./StatusCard";
- 
+
 // ══════════════════════════════════════════════════════
 //  FANTASY LIFE CALENDAR
 //  Fetches from Supabase calendar_events table
 //  Falls back to hardcoded FALLBACK_EVENTS if fetch fails
 //  Renders as a tab inside the Hub shell
 // ══════════════════════════════════════════════════════
- 
+
 const s = theme;
- 
+
+// Colors come from CATEGORY_COLORS (constants/categories.js) — the one
+// generated, documented source for category color-coding, not a second
+// copy of hand-picked hex values living in this file. Icons stay inline
+// here rather than also being centralized: this is a display-only map,
+// and the icons already match DRAFT_CATEGORIES/CATEGORY_LABELS elsewhere.
 const CAT = {
-  NFL:{icon:"🏈",color:"#22c55e"}, MLB:{icon:"⚾",color:"#ef4444"}, NBA:{icon:"🏀",color:"#f97316"},
-  NHL:{icon:"🏒",color:"#06b6d4"}, NCAAF:{icon:"🏟️",color:"#eab308"}, NCAAB:{icon:"🎓",color:"#eab308"},
-  MLS:{icon:"⚽",color:"#14b8a6"}, Tennis:{icon:"🎾",color:"#a3e635"}, Golf:{icon:"⛳",color:"#34d399"},
-  F1:{icon:"🏎️",color:"#ef4444"}, Actor:{icon:"🎬",color:"#8b5cf6"}, Actress:{icon:"💫",color:"#d946ef"},
-  Musician:{icon:"🎵",color:"#ec4899"}, Country:{icon:"🌍",color:"#3b82f6"}, Stock:{icon:"📈",color:"#10b981"},
-  General:{icon:"⭐",color:"#fbbf24"}, Film:{icon:"🎬",color:"#c084fc"},
+  NFL:{icon:"🏈",color:CATEGORY_COLORS.NFL}, MLB:{icon:"⚾",color:CATEGORY_COLORS.MLB}, NBA:{icon:"🏀",color:CATEGORY_COLORS.NBA},
+  NHL:{icon:"🏒",color:CATEGORY_COLORS.NHL}, NCAAF:{icon:"🏟️",color:CATEGORY_COLORS.NCAAF}, NCAAB:{icon:"🎓",color:CATEGORY_COLORS.NCAAB},
+  MLS:{icon:"⚽",color:CATEGORY_COLORS.MLS}, Tennis:{icon:"🎾",color:CATEGORY_COLORS.Tennis}, Golf:{icon:"⛳",color:CATEGORY_COLORS.Golf},
+  F1:{icon:"🏎️",color:CATEGORY_COLORS.F1}, Actor:{icon:"🎬",color:CATEGORY_COLORS.Actor}, Actress:{icon:"💫",color:CATEGORY_COLORS.Actress},
+  Musician:{icon:"🎵",color:CATEGORY_COLORS.Musician}, Country:{icon:"🌍",color:CATEGORY_COLORS.Country}, Stock:{icon:"📈",color:CATEGORY_COLORS.Stock},
+  General:{icon:"⭐",color:theme.acc}, Film:{icon:"🎬",color:CATEGORY_COLORS.Film},
 };
  
 // ── Fallback events (used if Supabase fetch fails) ──

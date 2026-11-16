@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Lock } from "lucide-react";
+import { Lock, Trophy } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
@@ -167,7 +167,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  }, [changelog, seasonYearForLog]);
 
  if (!seasonData) {
-  return <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>No active season to edit.</div>;
+  return <StatusCard icon={Trophy} title="No active season to edit." />;
  }
 
  var cats = seasonData.categories || {};

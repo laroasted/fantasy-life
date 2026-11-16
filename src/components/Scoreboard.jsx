@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, memo } from "react";
-import { Lock, ArrowUpRight, ChevronDown, ChevronRight, TrendingUp, TrendingDown } from "lucide-react";
+import { Lock, ArrowUpRight, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Trophy } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { theme, cardStyle, shadow, font } from "../constants/theme";
@@ -11,6 +11,7 @@ import PayPalButton from "./PayPalButton";
 import ScrollFadeEdges from "./ScrollFadeEdges";
 import { Badge, CategoryPill, Avatar } from "./Badges";
 import ActivityFeed from "./ActivityFeed";
+import StatusCard from "./StatusCard";
 
 var PAYWALL_BLUR_STYLE = { filter: "blur(5px)", userSelect: "none" };
 
@@ -123,7 +124,7 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
  }, [selCat, surfaceName]);
 
  if (!seasonData) {
-  return <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>No active season.</div>;
+  return <StatusCard icon={Trophy} title="No active season." />;
  }
  
  var members = seasonData.members || [];

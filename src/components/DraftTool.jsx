@@ -18,7 +18,7 @@ import {
 } from "../utils/storage";
 import { notifyTurn } from "../utils/push";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
-import { Avatar } from "./Badges";
+import { Avatar, Skeleton } from "./Badges";
 import StatusCard from "./StatusCard";
 
 const TIMER_DURATION = 120;
@@ -873,10 +873,18 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   };
 
   // ===== Still checking whether a live draft exists =====
+  // Shaped like the "New Season Draft" intro card it's about to become
+  // (or the live draft board, whichever this check resolves to) rather
+  // than bare text — same "this is already loading" reasoning as every
+  // other tab's skeleton, see Badges.jsx's Skeleton comment.
   if (liveSession === undefined) {
     return (
-      <div style={{ maxWidth: 600, margin: "40px auto", textAlign: "center", color: theme.dim, fontSize: 13 }}>
-        Checking for a live draft...
+      <div style={{ maxWidth: 600, margin: "0 auto" }}>
+        <div style={{ ...cardStyle, textAlign: "center", padding: 32 }}>
+          <Skeleton width={48} height={48} radius="50%" style={{ margin: "0 auto 12px" }} />
+          <Skeleton width={180} height={20} style={{ margin: "0 auto 8px" }} />
+          <Skeleton width={260} height={13} style={{ margin: "0 auto" }} />
+        </div>
       </div>
     );
   }
