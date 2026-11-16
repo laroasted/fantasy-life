@@ -24,14 +24,23 @@
          pattern, the standard fix for this) fetches it at high priority
          without blocking rendering: media="print" makes the browser treat
          it as a non-blocking resource, and the onload handler flips it to
-         "all" the moment it's actually loaded, applying Inter then — with
-         a <noscript> fallback for the (rare) case JS is unavailable. -->
+         "all" the moment it's actually loaded, applying the real fonts
+         then — with a <noscript> fallback for the (rare) case JS is
+         unavailable.
+
+         Two families, one job each (see theme.js's `font` export, the
+         single source of truth both this file and every component read
+         from): Space Grotesk is the display face — headings (h1/h2/h3
+         below) and the Scoreboard's big score numerals, nowhere else, so
+         it stays a distinct "headline" register instead of bleeding into
+         body copy. Public Sans is body text everywhere else — replacing
+         Inter, which every other AI-default UI also reaches for first. -->
     <link rel="preload" as="style"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700;800&family=Public+Sans:wght@400;500;600;700;800&display=swap" />
     <link rel="stylesheet" media="print" onload="this.media='all'; this.onload=null;"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700;800&family=Public+Sans:wght@400;500;600;700;800&display=swap" />
     <noscript>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700;800&family=Public+Sans:wght@400;500;600;700;800&display=swap" />
     </noscript>
     <!-- Pinterest Tag -->
     <script>
@@ -57,7 +66,7 @@
         padding: 0;
       }
       body {
-        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
         background: #0B0E14;
         color: #F2F3F5;
         -webkit-font-smoothing: antialiased;
@@ -75,6 +84,12 @@
       /* Remove default button styles */
       button {
         font-family: inherit;
+      }
+      /* Display face — section/page headings only. See the font-loading
+         comment in <head> above for why this is scoped to these three
+         tags rather than applied as a second global body font. */
+      h1, h2, h3 {
+        font-family: 'Space Grotesk', system-ui, sans-serif;
       }
       /* One shared motion language for every clickable control (tabs,
          pills, icon buttons, settings/draft actions) instead of each

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, memo } from "react";
 import { Lock, ArrowUpRight, ChevronDown, ChevronRight, TrendingUp, TrendingDown } from "lucide-react";
 import { CATEGORY_ORDER, CATEGORY_LABELS, CATEGORY_BONUS_RULES, SPORT_CATEGORIES } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
-import { theme, cardStyle, shadow } from "../constants/theme";
+import { theme, cardStyle, shadow, font } from "../constants/theme";
 import { rowBackground, rowBorder, expandedWrapperStyle, expandedHeaderStyle, expandedFooterStyle, hasAnyLock, isPaywalled, getPaywallMessage } from "../utils/helpers";
 import { track, EVENTS } from "../utils/analytics";
 import { useViewport } from "../utils/useViewport";
@@ -840,13 +840,14 @@ export default function Scoreboard({ seasonData, surface, onUnlockPaywall, membe
           <RankBadge rank={m.rank} size={isMobile ? 13 : 15} />
           <span style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 8, minWidth: 0 }}>
            <Avatar name={m.owner} color={MEMBER_COLORS[m.id]} size={isMobile ? 20 : 24} />
-           <span style={{ fontSize: isMobile ? 13 : 15, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
+           <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 700, color: MEMBER_COLORS[m.id] || "#f1f5f9",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.owner}</span>
            {isMine && <YouBadge color={theme.you} />}
           </span>
           <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3 }}>
            {memberPaywalled && <Lock size={isMobile ? 11 : 13} color={theme.yel} />}
-           <span style={Object.assign({ fontSize: isMobile ? 17 : 20, fontWeight: 800, color: "#f8fafc", textAlign: "right" },
+           <span style={Object.assign({ fontSize: isMobile ? 19 : 22, fontWeight: 800, fontFamily: font.display,
+            color: "#f8fafc", textAlign: "right" },
             memberPaywalled ? PAYWALL_BLUR_STYLE : {})}>{showProjected ? Math.round(m.totalPtsProjected) : m.totalPts}</span>
           </span>
           {isExp ? <ChevronDown size={14} color={theme.dim} /> : <ChevronRight size={14} color={theme.dim} />}
