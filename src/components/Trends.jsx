@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { supabasePublic, storageGet, storageSet, STORAGE_KEYS } from "../utils/storage";
-import { theme, cardStyle, radius } from "../constants/theme";
+import { theme, cardStyle, radius, space, type } from "../constants/theme";
 import { CATEGORY_ORDER, CATEGORY_LABELS } from "../constants/categories";
 import { MEMBER_COLORS } from "../constants/members";
 import { track, EVENTS } from "../utils/analytics";
@@ -56,16 +56,16 @@ function SparkTile({ sr, firstDateLabel, isMobile, onClick }) {
 
   return (
     <button onClick={onClick} style={{
-      display: "flex", flexDirection: "column", gap: 6, textAlign: "left",
+      display: "flex", flexDirection: "column", gap: space.sm, textAlign: "left",
       background: s.srf, border: "1px solid " + s.bdr, borderRadius: radius.sm,
-      padding: 10, cursor: "pointer", minWidth: 0,
+      padding: space.sm, cursor: "pointer", minWidth: 0,
     }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: sr.color, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: space.sm, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: space.sm, fontSize: type.base, fontWeight: 700, color: sr.color, minWidth: 0 }}>
           <Avatar name={sr.name} color={sr.color} size={18} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sr.name}</span>
         </span>
-        <span style={{ fontSize: 13, fontWeight: 800, color: s.txt, flexShrink: 0 }}>{last}</span>
+        <span style={{ fontSize: type.base, fontWeight: 800, color: s.txt, flexShrink: 0 }}>{last}</span>
       </div>
       <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
         style={{ width: "100%", height: isMobile ? 36 : 42, display: "block" }}>
@@ -73,7 +73,7 @@ function SparkTile({ sr, firstDateLabel, isMobile, onClick }) {
         <path d={path} fill="none" stroke={sr.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
         <circle cx={xFor(n - 1)} cy={yFor(last)} r={2.5} fill={sr.color} />
       </svg>
-      <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontWeight: 600,
+      <span style={{ display: "flex", alignItems: "center", gap: space.xs, fontSize: 10.5, fontWeight: 600,
         color: isUp ? theme.grn : theme.red }}>
         {isUp ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
         {isUp && delta > 0 ? "+" : ""}{delta} since {firstDateLabel}
@@ -345,13 +345,13 @@ export default function Trends({ seasonData }) {
   if (loading) {
     return (
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
-        <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: space.sm, justifyContent: "center", marginBottom: space.md, flexWrap: "wrap" }}>
           {[48, 60, 56, 64, 52].map((w, i) => <Skeleton key={i} width={w} height={24} radius={20} />)}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: space.sm }}>
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} style={{ background: s.srf, border: "1px solid " + s.bdr, borderRadius: radius.sm,
-              padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              padding: space.sm, display: "flex", flexDirection: "column", gap: space.sm }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <Skeleton width={60} height={12} />
                 <Skeleton width={24} height={12} />
@@ -375,10 +375,10 @@ export default function Trends({ seasonData }) {
 
   if (n < 2) {
     return (
-      <div style={{ maxWidth: 800, margin: "0 auto", ...cardStyle, textAlign: "center", padding: 40 }}>
-        <TrendingUp size={32} color={s.dim} style={{ marginBottom: 10 }} />
-        <h3 style={{ margin: "0 0 8px", fontSize: 17 }}>Not enough history yet</h3>
-        <p style={{ color: s.dim, fontSize: 13, maxWidth: 420, margin: "0 auto" }}>
+      <div style={{ maxWidth: 800, margin: "0 auto", ...cardStyle, textAlign: "center", padding: space.xl }}>
+        <TrendingUp size={32} color={s.dim} style={{ marginBottom: space.sm }} />
+        <h3 style={{ margin: `0 0 ${space.sm}px`, fontSize: 17 }}>Not enough history yet</h3>
+        <p style={{ color: s.dim, fontSize: type.base, maxWidth: 420, margin: "0 auto" }}>
           Trends build from a daily snapshot of every score. This tab needs at least
           two days of snapshots before a line means anything — check back tomorrow.
         </p>
@@ -426,9 +426,9 @@ export default function Trends({ seasonData }) {
       <ScrollFadeEdges scrollRef={pillsRef} fadeColor={s.bg}>
       <div ref={pillsRef} style={{
         display: "flex", flexWrap: isMobile ? "nowrap" : "wrap",
-        gap: 4, marginBottom: 16, justifyContent: isMobile ? "flex-start" : "center",
+        gap: space.xs, marginBottom: space.md, justifyContent: isMobile ? "flex-start" : "center",
         overflowX: isMobile ? "auto" : "visible", WebkitOverflowScrolling: "touch",
-        paddingBottom: isMobile ? 4 : 0, msOverflowStyle: "none", scrollbarWidth: "none",
+        paddingBottom: isMobile ? space.xs : 0, msOverflowStyle: "none", scrollbarWidth: "none",
       }}>
         <CategoryPill active={viewCat === "ALL"} onClick={() => {
             track(EVENTS.CATEGORY_FILTER_CHANGED, { surface: "trends", category: "overall", previous_category: viewCat });
@@ -448,8 +448,8 @@ export default function Trends({ seasonData }) {
       </ScrollFadeEdges>
 
       {isStale && (
-        <div style={{ ...cardStyle, marginBottom: 12, padding: "8px 12px", display: "flex",
-          alignItems: "center", gap: 8, border: "1px solid " + s.yel }}>
+        <div style={{ ...cardStyle, marginBottom: space.md, padding: `${space.sm}px ${space.md}px`, display: "flex",
+          alignItems: "center", gap: space.sm, border: "1px solid " + s.yel }}>
           <AlertTriangle size={13} color={s.yel} style={{ flexShrink: 0 }} />
           <span style={{ fontSize: 11, color: s.dim }}>
             Showing a cached snapshot — couldn't reach the live data just now.
@@ -462,7 +462,7 @@ export default function Trends({ seasonData }) {
       )}
 
       <div style={cardStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4, flexWrap: "wrap", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: space.xs, flexWrap: "wrap", gap: space.sm }}>
           <h3 style={{ margin: 0, fontSize: 16 }}>
             {viewCat === "ALL" ? "Overall Standings" : CATEGORY_LABELS[viewCat]} Over Time
           </h3>
@@ -474,7 +474,7 @@ export default function Trends({ seasonData }) {
         {/* Lines vs. grid: the combined chart is best for "who was ahead of
             whom on date X"; the grid is best for scanning everyone's shape
             (rising/falling/flat) at once without untangling crossing lines. */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        <div style={{ display: "flex", gap: space.sm, marginBottom: space.sm }}>
           {[{ key: "lines", label: "Compare" }, { key: "grid", label: "By Member" }].map((opt) => (
             <button key={opt.key} onClick={() => {
                 if (chartMode !== opt.key) {
@@ -485,7 +485,7 @@ export default function Trends({ seasonData }) {
               style={{
                 background: chartMode === opt.key ? s.accSoft : "none",
                 border: "1px solid " + (chartMode === opt.key ? s.acc : s.bdr),
-                borderRadius: 8, padding: "5px 12px", fontSize: 11, fontWeight: 700,
+                borderRadius: 8, padding: `${space.xs}px ${space.md}px`, fontSize: 11, fontWeight: 700,
                 color: chartMode === opt.key ? s.acc : s.mut, cursor: "pointer",
               }}>
               {opt.label}
@@ -494,7 +494,7 @@ export default function Trends({ seasonData }) {
         </div>
 
         {chartMode === "lines" && (focusId ? (
-          <div style={{ marginBottom: 8, fontSize: 11, color: s.dim }}>
+          <div style={{ marginBottom: space.sm, fontSize: 11, color: s.dim }}>
             Spotlighting <strong style={{ color: MEMBER_COLORS[focusId] || FALLBACK_COLOR }}>
               {memberMeta[focusId]?.name || focusId}
             </strong> —{" "}
@@ -504,7 +504,7 @@ export default function Trends({ seasonData }) {
             </button>
           </div>
         ) : (
-          <div style={{ marginBottom: 8, fontSize: 10.5, color: s.dim }}>
+          <div style={{ marginBottom: space.sm, fontSize: 10.5, color: s.dim }}>
             Tap a name to spotlight that line.
           </div>
         ))}
@@ -516,7 +516,7 @@ export default function Trends({ seasonData }) {
           <div style={{
             display: "grid",
             gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(auto-fill, minmax(180px, 1fr))",
-            gap: 10,
+            gap: space.sm,
           }}>
             {visibleSeries.map((sr) => (
               <SparkTile key={sr.id} sr={sr} firstDateLabel={fmtShort(dates[0])} isMobile={isMobile}
@@ -615,19 +615,23 @@ export default function Trends({ seasonData }) {
           {/* Tooltip */}
           {hoverDate && (
             <div style={{
-              position: "absolute", top: 8,
+              position: "absolute", top: space.sm,
               left: hoverX > W / 2 ? undefined : Math.min(70, (hoverX / W) * 100) + "%",
               right: hoverX > W / 2 ? Math.min(70, ((W - hoverX) / W) * 100) + "%" : undefined,
               background: "#0f172a", border: "1px solid " + s.bdr, borderRadius: 8,
-              padding: "8px 10px", fontSize: 11, minWidth: 130, maxHeight: 220, overflowY: "auto",
+              padding: space.sm, fontSize: 11, minWidth: 130, maxHeight: 220, overflowY: "auto",
               boxShadow: "0 8px 20px rgba(0,0,0,0.4)", pointerEvents: "none", zIndex: 5,
             }}>
-              <div style={{ fontWeight: 700, color: "#f1f5f9", marginBottom: 4, fontSize: 10 }}>
+              <div style={{ fontWeight: 700, color: "#f1f5f9", marginBottom: space.xs, fontSize: 10 }}>
                 {fmtLong(hoverDate)}
               </div>
               {hoverRows.map((r) => (
-                <div key={r.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "1px 0" }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 5, color: "#cbd5e1" }}>
+                // 1px row padding is intentionally tighter than the spacing
+                // scale's floor — this list is meant to read as one dense
+                // block inside a small hover tooltip; snapping it to space.xs
+                // (4px) would visibly loosen it for no real benefit.
+                <div key={r.id} style={{ display: "flex", justifyContent: "space-between", gap: space.sm, padding: "1px 0" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: space.xs, color: "#cbd5e1" }}>
                     <Dot color={r.color} />
                     {r.name}
                   </span>
@@ -640,13 +644,13 @@ export default function Trends({ seasonData }) {
         )}
 
         {/* Legend (toggleable) */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12, justifyContent: "center" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: space.sm, marginTop: space.md, justifyContent: "center" }}>
           {series.map((sr) => {
             const isHidden = hidden.has(sr.id);
             return (
               <button key={sr.id} onClick={() => toggleMember(sr.id)}
                 style={{
-                  display: "flex", alignItems: "center", gap: 5, padding: "3px 8px", borderRadius: 20,
+                  display: "flex", alignItems: "center", gap: space.xs, padding: `${space.xs}px ${space.sm}px`, borderRadius: 20,
                   border: "1px solid " + (isHidden ? "#334155" : sr.color + "55"),
                   background: isHidden ? "transparent" : sr.color + "12",
                   cursor: "pointer", fontSize: 10, fontWeight: 600,
@@ -660,28 +664,33 @@ export default function Trends({ seasonData }) {
         </div>
 
         {/* Table view toggle (accessible alternative to the chart) */}
-        <div style={{ marginTop: 14, textAlign: "center" }}>
+        <div style={{ marginTop: space.md, textAlign: "center" }}>
           <button onClick={() => {
               track(EVENTS.TRENDS_VIEW_TOGGLED, { view: showTable ? "chart" : "table" });
               setShowTable(showTable ? false : 21);
             }}
             style={{ background: "none", border: "1px solid " + s.bdr, borderRadius: 8,
-              padding: "5px 12px", color: s.mut, fontSize: 11, cursor: "pointer" }}>
+              padding: `${space.xs}px ${space.md}px`, color: s.mut, fontSize: 11, cursor: "pointer" }}>
             {showTable ? "Hide data table" : "View as table"}
           </button>
         </div>
 
         {showTable && (
-          <div style={{ marginTop: 12, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <div style={{ marginTop: space.md, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            {/* Dense data table — cell padding/fontSize intentionally stay
+                below the spacing/type floor used elsewhere. It's scanned
+                tabular data (up to 11 member columns), not prose; raising
+                either would blow out horizontal scroll on a phone for no
+                real reading benefit. */}
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
                 <tr>
-                  <th style={{ padding: "6px 8px", textAlign: "left", color: s.mut,
+                  <th style={{ padding: space.sm, textAlign: "left", color: s.mut,
                     borderBottom: "1px solid " + s.bdr, position: "sticky", left: 0, background: s.card }}>
                     Date
                   </th>
                   {visibleSeries.map((sr) => (
-                    <th key={sr.id} style={{ padding: "6px 8px", textAlign: "right", color: sr.color,
+                    <th key={sr.id} style={{ padding: space.sm, textAlign: "right", color: sr.color,
                       borderBottom: "1px solid " + s.bdr, whiteSpace: "nowrap" }}>
                       {sr.name}
                     </th>
@@ -691,12 +700,12 @@ export default function Trends({ seasonData }) {
               <tbody>
                 {tableDates.map((d) => (
                   <tr key={d}>
-                    <td style={{ padding: "5px 8px", color: s.dim, borderBottom: "1px solid #1e293b",
+                    <td style={{ padding: `${space.xs}px ${space.sm}px`, color: s.dim, borderBottom: "1px solid #1e293b",
                       position: "sticky", left: 0, background: s.card, whiteSpace: "nowrap" }}>
                       {fmtShort(d)}
                     </td>
                     {visibleSeries.map((sr) => (
-                      <td key={sr.id} style={{ padding: "5px 8px", textAlign: "right", color: "#e2e8f0",
+                      <td key={sr.id} style={{ padding: `${space.xs}px ${space.sm}px`, textAlign: "right", color: "#e2e8f0",
                         borderBottom: "1px solid #1e293b" }}>
                         {byDate.get(d)?.[sr.id] ?? 0}
                       </td>
@@ -706,7 +715,7 @@ export default function Trends({ seasonData }) {
               </tbody>
             </table>
             {showTable !== "all" && dates.length > 21 && (
-              <div style={{ textAlign: "center", marginTop: 8 }}>
+              <div style={{ textAlign: "center", marginTop: space.sm }}>
                 <button onClick={() => {
                     track(EVENTS.TRENDS_TABLE_EXPANDED, { total_snapshots: dates.length });
                     setShowTable("all");

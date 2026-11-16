@@ -3,7 +3,7 @@ import { AlertTriangle, Target, Users, Shuffle, Trophy, Pencil, Rocket, History 
 import { DRAFT_MEMBERS, MEMBER_COLORS, NEW_MEMBER_COLORS } from "../constants/members";
 import { DRAFT_CATEGORIES, CATEGORY_ORDER, CATEGORY_KEY_TO_ID } from "../constants/categories";
 import { PICK_OPTIONS } from "../constants/pickOptions";
-import { theme, cardStyle, inputStyle, buttonStyle } from "../constants/theme";
+import { theme, cardStyle, inputStyle, buttonStyle, space, type } from "../constants/theme";
 import { generateSnakeOrder } from "../utils/helpers";
 import {
   supabase,
@@ -18,7 +18,7 @@ import {
 } from "../utils/storage";
 import { notifyTurn } from "../utils/push";
 import { track, timeEvent, EVENTS } from "../utils/analytics";
-import { Avatar } from "./Badges";
+import { Avatar, Skeleton } from "./Badges";
 import StatusCard from "./StatusCard";
 
 const TIMER_DURATION = 120;
@@ -98,14 +98,14 @@ const DraftCountdown = memo(function DraftCountdown({
   const displayTimer = liveSession ? computeLiveRemaining(liveSession, liveNow + clockOffsetRef.current) : timer;
 
   return (
-    <div style={{ ...cardStyle, marginBottom: 16, textAlign: "center",
+    <div style={{ ...cardStyle, marginBottom: space.md, textAlign: "center",
       border: `2px solid ${MEMBER_COLORS[member ? member.id : ""] || theme.acc}` }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: theme.mut, textTransform: "uppercase",
-        letterSpacing: 1, marginBottom: isMobile ? 4 : 8 }}>
+        letterSpacing: 1, marginBottom: isMobile ? space.xs : space.sm }}>
         On The Clock · Pick #{currentPick + 1}
       </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-        marginBottom: isMobile ? 8 : 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: space.sm,
+        marginBottom: isMobile ? space.sm : space.md }}>
         {member && <Avatar name={member.name} color={MEMBER_COLORS[member.id]} size={isMobile ? 28 : 34} />}
         <span style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800,
           color: MEMBER_COLORS[member ? member.id : ""] }}>
@@ -113,11 +113,11 @@ const DraftCountdown = memo(function DraftCountdown({
         </span>
       </div>
       <div style={{ fontSize: isMobile ? 36 : 48, fontWeight: 800, fontFamily: "monospace",
-        color: displayTimer <= 15 ? theme.red : displayTimer <= 30 ? theme.yel : theme.txt, marginBottom: 8 }}>
+        color: displayTimer <= 15 ? theme.red : displayTimer <= 30 ? theme.yel : theme.txt, marginBottom: space.sm }}>
         {Math.floor(displayTimer / 60)}:{String(displayTimer % 60).padStart(2, "0")}
       </div>
       {canControlTimer && (
-        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: space.sm, justifyContent: "center", flexWrap: "wrap" }}>
           {displayTimerActive
             ? <button onClick={onPause} style={buttonStyle(theme.yel)}>⏸ Pause</button>
             : <button onClick={onStart} style={buttonStyle(theme.grn)}>▶ Start</button>}
@@ -323,10 +323,10 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // none of it would be saved until the very last click. Only applies
   // when there's no real draft to watch instead — see spectatorBanner.
   const nonCommissionerBanner = !isCommissioner && !liveSession && (
-    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.yel,
-      display: "flex", alignItems: "flex-start", gap: 10 }}>
+    <div style={{ ...cardStyle, marginBottom: space.md, border: "1px solid " + theme.yel,
+      display: "flex", alignItems: "flex-start", gap: space.sm }}>
       <AlertTriangle size={16} color={theme.yel} style={{ flexShrink: 0, marginTop: 1 }} />
-      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
+      <div style={{ fontSize: type.base, color: theme.dim, lineHeight: 1.5 }}>
         <b style={{ color: theme.yel }}>You're not signed in as commissioner.</b> You can run
         through this whole draft, but none of it will be saved — sign in with Google from the
         header to make it official.
@@ -494,10 +494,10 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // this here, now that self-service picking means a non-commissioner can
   // act too, just not at every moment.
   const spectatorBanner = !isCommissioner && liveSession && !canPick && (
-    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.acc,
-      display: "flex", alignItems: "flex-start", gap: 10 }}>
+    <div style={{ ...cardStyle, marginBottom: space.md, border: "1px solid " + theme.acc,
+      display: "flex", alignItems: "flex-start", gap: space.sm }}>
       <Eye size={16} color={theme.acc} style={{ flexShrink: 0, marginTop: 1 }} />
-      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
+      <div style={{ fontSize: type.base, color: theme.dim, lineHeight: 1.5 }}>
         <b style={{ color: theme.acc }}>You're watching the live draft.</b>{" "}
         {member ? `${member.name} is on the clock` : "Waiting for the next pick"} — picks appear
         here the moment they're made. Pick buttons will show up right on this screen once it's
@@ -509,20 +509,20 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // Shown to a claimed, non-commissioner member exactly while it's their
   // turn — the self-service counterpart to spectatorBanner above.
   const yourTurnBanner = !isCommissioner && isMyTurn && (
-    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.grn,
-      display: "flex", alignItems: "flex-start", gap: 10 }}>
+    <div style={{ ...cardStyle, marginBottom: space.md, border: "1px solid " + theme.grn,
+      display: "flex", alignItems: "flex-start", gap: space.sm }}>
       <Target size={16} color={theme.grn} style={{ flexShrink: 0, marginTop: 1 }} />
-      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>
+      <div style={{ fontSize: type.base, color: theme.dim, lineHeight: 1.5 }}>
         <b style={{ color: theme.grn }}>It's your turn!</b> Pick a category below.
       </div>
     </div>
   );
 
   const pickErrorBanner = pickError && (
-    <div style={{ ...cardStyle, marginBottom: 16, border: "1px solid " + theme.red,
-      display: "flex", alignItems: "flex-start", gap: 10 }}>
+    <div style={{ ...cardStyle, marginBottom: space.md, border: "1px solid " + theme.red,
+      display: "flex", alignItems: "flex-start", gap: space.sm }}>
       <AlertTriangle size={16} color={theme.red} style={{ flexShrink: 0, marginTop: 1 }} />
-      <div style={{ fontSize: 12, color: theme.dim, lineHeight: 1.5 }}>{pickError}</div>
+      <div style={{ fontSize: type.base, color: theme.dim, lineHeight: 1.5 }}>{pickError}</div>
     </div>
   );
 
@@ -873,10 +873,18 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   };
 
   // ===== Still checking whether a live draft exists =====
+  // Shaped like the "New Season Draft" intro card it's about to become
+  // (or the live draft board, whichever this check resolves to) rather
+  // than bare text — same "this is already loading" reasoning as every
+  // other tab's skeleton, see Badges.jsx's Skeleton comment.
   if (liveSession === undefined) {
     return (
-      <div style={{ maxWidth: 600, margin: "40px auto", textAlign: "center", color: theme.dim, fontSize: 13 }}>
-        Checking for a live draft...
+      <div style={{ maxWidth: 600, margin: "0 auto" }}>
+        <div style={{ ...cardStyle, textAlign: "center", padding: space.xl }}>
+          <Skeleton width={48} height={48} radius="50%" style={{ margin: `0 auto ${space.md}px` }} />
+          <Skeleton width={180} height={20} style={{ margin: `0 auto ${space.sm}px` }} />
+          <Skeleton width={260} height={13} style={{ margin: "0 auto" }} />
+        </div>
       </div>
     );
   }
@@ -885,9 +893,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   if (phase === "setup" && !liveSession) {
     return (
       <div style={{ maxWidth: 600, margin: "0 auto" }}>
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: space.md }}>
           <StatusCard icon={Target} iconSize={48} iconColor={theme.acc} headingLevel={2}
-            titleSize={isMobile ? 18 : 22} title="New Season Draft" maxWidth="100%" padding={isMobile ? 20 : 32}>
+            titleSize={isMobile ? 18 : 22} title="New Season Draft" maxWidth="100%" padding={isMobile ? space.lg : space.xl}>
             Set up members, enter guesses, and determine draft order.
           </StatusCard>
         </div>
@@ -895,22 +903,22 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         {nonCommissionerBanner}
 
         {/* Member Management */}
-        <div style={{ ...cardStyle, marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <h3 style={{ margin: 0, fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ ...cardStyle, marginBottom: space.md }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space.sm }}>
+            <h3 style={{ margin: 0, fontSize: 16, display: "flex", alignItems: "center", gap: space.xs }}>
               <Users size={16} /> Members ({activeMembers.length})
             </h3>
             <button onClick={() => setShowMemberMgmt(!showMemberMgmt)}
-              style={{ ...buttonStyle(theme.srf), fontSize: 11, padding: "4px 10px", border: `1px solid ${theme.bdr}` }}>
+              style={{ ...buttonStyle(theme.srf), fontSize: 11, padding: `${space.xs}px ${space.sm}px`, border: `1px solid ${theme.bdr}` }}>
               {showMemberMgmt ? "Close" : "Manage"}
             </button>
           </div>
           {showMemberMgmt && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+            <div style={{ marginBottom: space.md }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: space.xs, marginBottom: space.sm }}>
                 {activeMembers.map((m) => (
                   <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                    padding: "6px 10px", borderRadius: 6, background: theme.srf }}>
+                    padding: `${space.sm}px ${space.sm}px`, borderRadius: 6, background: theme.srf }}>
                     <span style={{ fontWeight: 600, color: MEMBER_COLORS[m.id] }}>{m.name}</span>
                     <button onClick={() => removeMember(m.id)}
                       style={{ background: "none", border: "none",
@@ -921,9 +929,9 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                   </div>
                 ))}
               </div>
-              <div style={{ padding: 12, borderRadius: 8, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: theme.acc, marginBottom: 8 }}>+ Add New Member</div>
-                <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 8 }}>
+              <div style={{ padding: space.md, borderRadius: 8, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.2)" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: theme.acc, marginBottom: space.sm }}>+ Add New Member</div>
+                <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: space.sm }}>
                   <input value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)}
                     placeholder="Display name" style={{ ...inputStyle, flex: 1 }}
                     onKeyDown={(e) => { if (e.key === "Enter") addMember(); }} />
@@ -931,7 +939,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                     placeholder="Full name (opt)" style={{ ...inputStyle, flex: 1 }}
                     onKeyDown={(e) => { if (e.key === "Enter") addMember(); }} />
                   <button onClick={addMember} disabled={!newMemberName.trim()}
-                    style={{ ...buttonStyle(theme.grn), padding: "8px 16px", fontSize: 13, opacity: newMemberName.trim() ? 1 : 0.4 }}>
+                    style={{ ...buttonStyle(theme.grn), padding: `${space.sm}px ${space.md}px`, fontSize: 13, opacity: newMemberName.trim() ? 1 : 0.4 }}>
                     Add
                   </button>
                 </div>
@@ -941,12 +949,12 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         </div>
 
         {/* Google Results */}
-        <div style={{ ...cardStyle, marginBottom: 16 }}>
-          <label style={{ fontSize: 13, fontWeight: 600, color: theme.mut, display: "block", marginBottom: 6 }}>Secret Word/Phrase</label>
+        <div style={{ ...cardStyle, marginBottom: space.md }}>
+          <label style={{ fontSize: type.base, fontWeight: 600, color: theme.mut, display: "block", marginBottom: space.sm }}>Secret Word/Phrase</label>
           <input value={searchPhrase} onChange={(e) => setSearchPhrase(e.target.value)}
             placeholder="purple monkey dishwasher" style={inputStyle} />
-          <div style={{ marginTop: 12 }}>
-            <label style={{ fontSize: 13, fontWeight: 600, color: theme.mut, display: "block", marginBottom: 6 }}>Actual Google Results</label>
+          <div style={{ marginTop: space.md }}>
+            <label style={{ fontSize: type.base, fontWeight: 600, color: theme.mut, display: "block", marginBottom: space.sm }}>Actual Google Results</label>
             <input value={actualResults} onChange={(e) => setActualResults(e.target.value)}
               placeholder="e.g. 1234567" type="number" style={inputStyle} />
           </div>
@@ -955,12 +963,12 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         {/* Guesses — hidden while Manage is open so the member list isn't
             shown twice in a row the user has to scroll past */}
         {!showMemberMgmt && (
-        <div style={{ ...cardStyle, marginBottom: 16 }}>
-          <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Member Guesses</h3>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+        <div style={{ ...cardStyle, marginBottom: space.md }}>
+          <h3 style={{ margin: `0 0 ${space.md}px`, fontSize: 16 }}>Member Guesses</h3>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: space.sm }}>
             {activeMembers.map((m) => (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, minWidth: 60, color: MEMBER_COLORS[m.id] }}>{m.name}</span>
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: space.sm }}>
+                <span style={{ fontSize: type.base, fontWeight: 600, minWidth: 60, color: MEMBER_COLORS[m.id] }}>{m.name}</span>
                 <input value={guesses[m.id] || ""}
                   onChange={(e) => setGuesses((g) => ({ ...g, [m.id]: e.target.value }))}
                   placeholder="Guess" type="number" style={{ ...inputStyle, width: isMobile ? "100%" : 120, flex: isMobile ? 1 : "unset" }} />
@@ -970,40 +978,40 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
         </div>
         )}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: space.sm, marginBottom: space.md }}>
           <button onClick={calculateOrder} style={{ ...buttonStyle(), width: "100%" }}>Calculate Draft Order</button>
           <button onClick={randomizeOrder}
             style={{ ...buttonStyle(theme.srf), width: "100%", border: `1px solid ${theme.bdr}`, color: theme.dim,
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              display: "flex", alignItems: "center", justifyContent: "center", gap: space.sm }}>
             <Shuffle size={14} /> Or Skip & Randomize Order
           </button>
         </div>
 
         {draftOrder.length > 0 && (
-          <div style={{ ...cardStyle, marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 8px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ ...cardStyle, marginBottom: space.md }}>
+            <h3 style={{ margin: `0 0 ${space.sm}px`, fontSize: 16, display: "flex", alignItems: "center", gap: space.sm }}>
               <Trophy size={16} color={theme.yel} /> Draft Order (Snake)
             </h3>
-            <p style={{ color: theme.dim, fontSize: 12, margin: "0 0 8px" }}>
+            <p style={{ color: theme.dim, fontSize: type.base, margin: `0 0 ${space.sm}px` }}>
               {draftOrder.length} members → max base = {draftOrder.length}
             </p>
             {draftOrder.map((m, i) => (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
-                borderRadius: 8, background: i === 0 ? "rgba(234,179,8,0.1)" : theme.srf, marginBottom: 4 }}>
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: space.md, padding: `${space.sm}px ${space.md}px`,
+                borderRadius: 8, background: i === 0 ? "rgba(234,179,8,0.1)" : theme.srf, marginBottom: space.xs }}>
                 <span style={{ fontSize: 20, fontWeight: 800, color: i === 0 ? theme.yel : theme.dim, minWidth: 30 }}>#{i + 1}</span>
                 <span style={{ fontWeight: 700, color: MEMBER_COLORS[m.id], flex: 1 }}>{m.name}</span>
-                {!isMobile && <span style={{ fontSize: 13, color: theme.mut }}>Guessed: {m.guess?.toLocaleString()}</span>}
+                {!isMobile && <span style={{ fontSize: type.base, color: theme.mut }}>Guessed: {m.guess?.toLocaleString()}</span>}
               </div>
             ))}
-            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <div style={{ display: "flex", gap: space.sm, marginTop: space.md }}>
               <button onClick={() => { track(EVENTS.DRAFT_ORDER_EDIT_REOPENED); setManualOrder(draftOrder); setDraftOrder([]); }}
                 style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}`,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: space.sm }}>
                 <Pencil size={14} /> Edit
               </button>
               <button onClick={startDraft}
-                style={{ ...buttonStyle(theme.grn), flex: 2, padding: 14, fontSize: 16,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                style={{ ...buttonStyle(theme.grn), flex: 2, padding: space.md, fontSize: 16,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: space.sm }}>
                 <Rocket size={16} /> Start Draft!
               </button>
             </div>
@@ -1016,7 +1024,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // ===== DRAFT PHASE =====
   // Mobile panel toggle bar
   const panelToggle = isMobile && (
-    <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+    <div style={{ display: "flex", gap: space.xs, marginBottom: space.md }}>
       {[
         { id: "draft", label: "Draft", Icon: Target },
         { id: "rosters", label: "Rosters", Icon: Users },
@@ -1027,7 +1035,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             ...buttonStyle(mobilePanel === p.id ? theme.acc : theme.srf),
             flex: 1, fontSize: 12,
             border: mobilePanel === p.id ? "none" : `1px solid ${theme.bdr}`,
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: space.xs,
           }}>
           <p.Icon size={13} /> {p.label}
         </button>
@@ -1038,7 +1046,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // Roster panel content
   const rosterPanel = (
     <div style={{ width: isMobile ? "100%" : 200, flexShrink: 0 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: theme.mut, marginBottom: 8 }}>ROSTERS</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: theme.mut, marginBottom: space.sm }}>ROSTERS</div>
       {effective.draftOrder.map((m) => {
         const roster = getRoster(m.id);
         const isOnClock = !isComplete && member && m.id === member.id;
@@ -1047,16 +1055,16 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               if (showRoster !== m.id) track(EVENTS.DRAFT_ROSTER_VIEWED, { member_id: m.id });
               setShowRoster(showRoster === m.id ? null : m.id);
             }}
-            style={{ ...cardStyle, padding: "10px 12px", marginBottom: 6, cursor: "pointer",
+            style={{ ...cardStyle, padding: `${space.sm}px ${space.md}px`, marginBottom: space.xs, cursor: "pointer",
               border: isOnClock ? `2px solid ${MEMBER_COLORS[m.id]}` : `1px solid ${theme.bdr}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontWeight: 700, fontSize: 13, color: MEMBER_COLORS[m.id] }}>{m.name}</span>
+              <span style={{ fontWeight: 700, fontSize: type.base, color: MEMBER_COLORS[m.id] }}>{m.name}</span>
               <span style={{ fontSize: 11, color: theme.dim }}>{roster.length}/15</span>
             </div>
             {showRoster === m.id && roster.length > 0 && (
-              <div style={{ marginTop: 8, borderTop: `1px solid ${theme.bdr}`, paddingTop: 8 }}>
+              <div style={{ marginTop: space.sm, borderTop: `1px solid ${theme.bdr}`, paddingTop: space.sm }}>
                 {roster.map((r, i) => (
-                  <div key={i} style={{ fontSize: 11, color: theme.mut, marginBottom: 3, display: "flex", gap: 6 }}>
+                  <div key={i} style={{ fontSize: 11, color: theme.mut, marginBottom: space.xs, display: "flex", gap: space.sm }}>
                     <span>{r.category.icon}</span>
                     <span style={{ color: theme.txt }}>{r.pick}</span>
                   </div>
@@ -1072,20 +1080,20 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
   // History panel content
   const historyPanel = (
     <div style={{ width: isMobile ? "100%" : 200, flexShrink: 0 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: theme.mut, marginBottom: 8 }}>PICK HISTORY</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: theme.mut, marginBottom: space.sm }}>PICK HISTORY</div>
       <div style={{ maxHeight: isMobile ? 400 : "calc(100vh - 200px)", overflowY: "auto" }}>
         {[...effective.pickHistory].reverse().map((h, i) => {
           const mem = effective.draftOrder.find((m) => m.id === h.memberId);
           const cat = DRAFT_CATEGORIES.find((c) => c.id === h.categoryId);
           return (
-            <div key={i} style={{ ...cardStyle, padding: "8px 10px", marginBottom: 4 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: theme.dim, marginBottom: 2 }}>
+            <div key={i} style={{ ...cardStyle, padding: `${space.sm}px ${space.sm}px`, marginBottom: space.xs }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: theme.dim, marginBottom: space.xs }}>
                 <span>#{h.pick + 1}</span>
                 <span>{cat ? cat.icon : ""} {cat ? cat.name : ""}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontWeight: 700, fontSize: 12, color: MEMBER_COLORS[h.memberId] }}>{mem ? mem.name : ""}</span>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{h.selection}</span>
+                <span style={{ fontWeight: 700, fontSize: type.base, color: MEMBER_COLORS[h.memberId] }}>{mem ? mem.name : ""}</span>
+                <span style={{ fontSize: type.base, fontWeight: 600 }}>{h.selection}</span>
               </div>
             </div>
           );
@@ -1099,32 +1107,32 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
     <div style={{ flex: 1, minWidth: 0 }}>
       {isComplete ? (
         <div>
-          <div style={{ ...cardStyle, textAlign: "center", padding: isMobile ? 20 : 32, marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+          <div style={{ ...cardStyle, textAlign: "center", padding: isMobile ? space.lg : space.xl, marginBottom: space.md }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: space.md }}>
               <PartyPopper size={isMobile ? 48 : 60} color={theme.acc} />
             </div>
-            <h2 style={{ margin: "0 0 8px", fontSize: isMobile ? 20 : 24 }}>Draft Complete!</h2>
-            <p style={{ color: theme.mut, fontSize: 13, marginBottom: 16 }}>
+            <h2 style={{ margin: `0 0 ${space.sm}px`, fontSize: isMobile ? 20 : 24 }}>Draft Complete!</h2>
+            <p style={{ color: theme.mut, fontSize: type.base, marginBottom: space.md }}>
               {effective.draftOrder.length} members · Max base: {effective.draftOrder.length}
             </p>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", marginBottom: 16,
+            <div style={{ display: "flex", gap: space.sm, alignItems: "center", justifyContent: "center", marginBottom: space.md,
               flexDirection: isMobile ? "column" : "row" }}>
               <label style={{ fontSize: 14, color: theme.mut, fontWeight: 600 }}>Season:</label>
               <input value={seasonName} onChange={(e) => setSeasonName(e.target.value)} disabled={!canControlTimer}
                 style={{ ...inputStyle, width: 120, textAlign: "center", fontSize: 18, fontWeight: 700, opacity: canControlTimer ? 1 : 0.6 }} />
             </div>
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: space.sm, justifyContent: "center", flexWrap: "wrap" }}>
               <button onClick={() => { track(EVENTS.DRAFT_FINALIZE_MODAL_OPENED, { season_name: seasonName }); setShowFinalizeModal(true); }} disabled={!isCommissioner}
-                style={{ ...buttonStyle(theme.grn), padding: "12px 24px", fontSize: isMobile ? 13 : 15, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default",
-                  display: "flex", alignItems: "center", gap: 8 }}>
+                style={{ ...buttonStyle(theme.grn), padding: `${space.md}px ${space.lg}px`, fontSize: isMobile ? 13 : 15, opacity: isCommissioner ? 1 : 0.5, cursor: isCommissioner ? "pointer" : "default",
+                  display: "flex", alignItems: "center", gap: space.sm }}>
                 <Trophy size={16} /> Finalize & Launch {seasonName}
               </button>
-              <button onClick={exportCSV} style={{ ...buttonStyle(theme.acc), display: "flex", alignItems: "center", gap: 6 }}>
+              <button onClick={exportCSV} style={{ ...buttonStyle(theme.acc), display: "flex", alignItems: "center", gap: space.sm }}>
                 <Download size={14} /> Export CSV
               </button>
             </div>
             {!isCommissioner && (
-              <div style={{ marginTop: 12, fontSize: 12, color: theme.dim }}>
+              <div style={{ marginTop: space.md, fontSize: type.base, color: theme.dim }}>
                 Commissioner sign-in is required to publish the draft as the new active season.
               </div>
             )}
@@ -1133,26 +1141,26 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           {/* Finalize confirmation modal */}
           {showFinalizeModal && (
             <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
-              display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-              <div style={{ ...cardStyle, maxWidth: 500, width: "100%", padding: 24 }}>
-                <h3 style={{ margin: "0 0 12px", fontSize: 18, color: theme.red, display: "flex", alignItems: "center", gap: 8 }}>
+              display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: space.lg }}>
+              <div style={{ ...cardStyle, maxWidth: 500, width: "100%", padding: space.lg }}>
+                <h3 style={{ margin: `0 0 ${space.md}px`, fontSize: 18, color: theme.red, display: "flex", alignItems: "center", gap: space.sm }}>
                   <AlertTriangle size={18} /> Commissioner Authorization
                 </h3>
-                <div style={{ fontSize: 13, color: theme.mut, lineHeight: 1.7, marginBottom: 16 }}>
+                <div style={{ fontSize: type.base, color: theme.mut, lineHeight: 1.7, marginBottom: space.md }}>
                   This will archive the current season and launch <strong>{seasonName}</strong> as the new active season.
                   All {effective.draftOrder.length} members × 15 categories = {effective.draftOrder.length * 15} picks will be saved to Supabase.
                   Scores start at 0. The draft board will be saved for the Recap tab.
                 </div>
-                <div style={{ ...inputStyle, marginBottom: 8, opacity: 0.7 }}>
+                <div style={{ ...inputStyle, marginBottom: space.sm, opacity: 0.7 }}>
                   {commissionerEmail || "Commissioner session required"}
                 </div>
                 {finalizeError && (
-                  <div style={{ fontSize: 12, color: theme.red, marginBottom: 8, padding: 8, borderRadius: 6,
+                  <div style={{ fontSize: type.base, color: theme.red, marginBottom: space.sm, padding: space.sm, borderRadius: 6,
                     background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)" }}>
                     ❌ {finalizeError}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: space.sm }}>
                   <button onClick={() => { setShowFinalizeModal(false); setFinalizeError(""); }}
                     disabled={finalizing}
                     style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}` }}>Cancel</button>
@@ -1194,15 +1202,15 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
             <>
               {!selectedCategory && (
                 <div style={cardStyle}>
-                  <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>Step 1: Category ({availCats.length} left)</h3>
+                  <h3 style={{ margin: `0 0 ${space.md}px`, fontSize: 16 }}>Step 1: Category ({availCats.length} left)</h3>
                   <div style={{ display: "grid",
                     gridTemplateColumns: isMobile ? "repeat(auto-fill, minmax(120px, 1fr))" : "repeat(auto-fill, minmax(150px, 1fr))",
-                    gap: 8 }}>
+                    gap: space.sm }}>
                     {availCats.map((cat) => (
                       <button key={cat.id}
                         onClick={() => { setSelectedCategory(cat); setSearchFilter(""); setCustomInput(""); }}
                         style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
-                          textAlign: "left", padding: isMobile ? 10 : 12, fontSize: isMobile ? 12 : 13 }}>
+                          textAlign: "left", padding: isMobile ? space.sm : space.md, fontSize: isMobile ? 12 : 13 }}>
                         <span style={{ fontSize: isMobile ? 14 : 18 }}>{cat.icon}</span> {cat.name}
                       </button>
                     ))}
@@ -1212,14 +1220,14 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
 
               {selectedCategory && (
                 <div style={cardStyle}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space.md }}>
                     <h3 style={{ margin: 0, fontSize: 16 }}>{selectedCategory.icon} {selectedCategory.name}</h3>
                     <button onClick={() => setSelectedCategory(null)}
                       style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}` }}>← Back</button>
                   </div>
                   <input value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)}
-                    placeholder="Search..." style={{ ...inputStyle, marginBottom: 8 }} />
-                  <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                    placeholder="Search..." style={{ ...inputStyle, marginBottom: space.sm }} />
+                  <div style={{ maxHeight: isMobile ? 250 : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: space.xs }}>
                     {(PICK_OPTIONS[selectedCategory.id] || ["Custom..."])
                       .filter((opt) => opt.toLowerCase().includes(searchFilter.toLowerCase()))
                       .filter((opt) => {
@@ -1260,7 +1268,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                           const lookupCfg = DRAFT_LOOKUP_CONFIG[selectedCategory.id];
                           return (
                             <div key="custom">
-                              <div style={{ display: "flex", gap: 8 }}>
+                              <div style={{ display: "flex", gap: space.sm }}>
                                 <input value={customInput} onChange={(e) => setCustomInput(e.target.value)}
                                   placeholder="Type custom pick..." style={{ ...inputStyle, flex: 1 }}
                                   onKeyDown={(e) => {
@@ -1268,10 +1276,10 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                                   }} />
                                 <button onClick={() => {
                                   if (customInput.trim()) makePick(selectedCategory.id, customInput.trim(), true);
-                                }} style={{ ...buttonStyle(theme.grn), padding: "8px 16px" }}>Pick</button>
+                                }} style={{ ...buttonStyle(theme.grn), padding: `${space.sm}px ${space.md}px` }}>Pick</button>
                               </div>
                               {lookupCfg && customInput.trim() && (
-                                <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                                <div style={{ marginTop: space.sm, display: "flex", flexDirection: "column", gap: space.xs }}>
                                   {customLookupLoading && (
                                     <div style={{ fontSize: 11, color: theme.dim }}>Searching…</div>
                                   )}
@@ -1283,8 +1291,8 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                                   {customSuggestions.map((s) => (
                                     <button key={s.id} onClick={() => makePick(selectedCategory.id, s.label, false)}
                                       style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
-                                        textAlign: "left", padding: "6px 10px",
-                                        display: "flex", alignItems: "center", gap: 8 }}>
+                                        textAlign: "left", padding: `${space.sm}px ${space.sm}px`,
+                                        display: "flex", alignItems: "center", gap: space.sm }}>
                                       {s.photoUrl && (
                                         <img src={s.photoUrl} alt="" style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
                                       )}
@@ -1302,7 +1310,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
                         return (
                           <button key={opt} onClick={() => makePick(selectedCategory.id, opt, false)}
                             style={{ ...buttonStyle(theme.srf), border: `1px solid ${theme.bdr}`,
-                              textAlign: "left", padding: "8px 12px" }}>
+                              textAlign: "left", padding: `${space.sm}px ${space.md}px` }}>
                             {opt}
                           </button>
                         );
@@ -1312,7 +1320,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
               )}
             </>
           ) : (
-            <div style={{ ...cardStyle, textAlign: "center", color: theme.dim, fontSize: 13, padding: 20 }}>
+            <div style={{ ...cardStyle, textAlign: "center", color: theme.dim, fontSize: type.base, padding: space.lg }}>
               Waiting for {member ? member.name : "the next member"} to pick...
             </div>
           )}
@@ -1323,22 +1331,22 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-        <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20, display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: space.md, flexWrap: "wrap", gap: space.sm }}>
+        <h2 style={{ margin: 0, fontSize: isMobile ? 17 : 20, display: "flex", alignItems: "center", gap: space.sm }}>
           <Target size={isMobile ? 17 : 20} /> {headerSeasonLabel} Draft
           {liveSession && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 800,
-              color: theme.red, border: `1px solid ${theme.red}`, borderRadius: 999, padding: "2px 8px",
+            <span style={{ display: "inline-flex", alignItems: "center", gap: space.xs, fontSize: 10, fontWeight: 800,
+              color: theme.red, border: `1px solid ${theme.red}`, borderRadius: 999, padding: `${space.xs}px ${space.sm}px`,
               textTransform: "uppercase", letterSpacing: 0.5 }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: theme.red }} /> Live
             </span>
           )}
         </h2>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: space.sm }}>
           {liveSession && isCommissioner && (
             <button onClick={() => setShowCancelModal(true)}
               style={{ ...buttonStyle(theme.srf), fontSize: 11, border: `1px solid ${theme.bdr}`, color: theme.red,
-                display: "flex", alignItems: "center", gap: 5 }}>
+                display: "flex", alignItems: "center", gap: space.xs }}>
               <XCircle size={13} /> Cancel Draft
             </button>
           )}
@@ -1359,16 +1367,16 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       {/* Cancel-draft confirmation modal */}
       {showCancelModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
-          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-          <div style={{ ...cardStyle, maxWidth: 440, width: "100%", padding: 24 }}>
-            <h3 style={{ margin: "0 0 12px", fontSize: 18, color: theme.red, display: "flex", alignItems: "center", gap: 8 }}>
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: space.lg }}>
+          <div style={{ ...cardStyle, maxWidth: 440, width: "100%", padding: space.lg }}>
+            <h3 style={{ margin: `0 0 ${space.md}px`, fontSize: 18, color: theme.red, display: "flex", alignItems: "center", gap: space.sm }}>
               <AlertTriangle size={18} /> Cancel this live draft?
             </h3>
-            <div style={{ fontSize: 13, color: theme.mut, lineHeight: 1.7, marginBottom: 16 }}>
+            <div style={{ fontSize: type.base, color: theme.mut, lineHeight: 1.7, marginBottom: space.md }}>
               Everyone watching will lose the live draft — picks made so far are not saved anywhere else.
               You'll start over from setup.
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: space.sm }}>
               <button onClick={() => setShowCancelModal(false)} disabled={cancelling}
                 style={{ ...buttonStyle(theme.srf), flex: 1, border: `1px solid ${theme.bdr}`,
                   opacity: cancelling ? 0.5 : 1, cursor: cancelling ? "default" : "pointer" }}>Keep drafting</button>
@@ -1391,7 +1399,7 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
           {mobilePanel === "history" && historyPanel}
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ display: "flex", gap: space.md }}>
           {rosterPanel}
           {draftMainArea}
           {showHistory && historyPanel}
@@ -1399,10 +1407,16 @@ export default function DraftTool({ onFinalize, isCommissioner, commissionerEmai
       )}
 
       {/* Draft Board */}
-      <div style={{ marginTop: 16, ...cardStyle, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <h3 style={{ margin: "0 0 12px", fontSize: 16, display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ marginTop: space.md, ...cardStyle, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <h3 style={{ margin: `0 0 ${space.md}px`, fontSize: 16, display: "flex", alignItems: "center", gap: space.sm }}>
           <BarChart3 size={16} /> Draft Board
         </h3>
+        {/* Deliberately NOT migrated to the space/type scale below — this
+            table packs up to 11 members × 15 categories into one view.
+            Raising its cell padding or font size off the dense-table
+            floor would push it into horizontal overflow on mobile far
+            more than the handful of pixels gained is worth; density is
+            the actual requirement here, not an oversight. */}
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: isMobile ? 10 : 11 }}>
           <thead>
             <tr>

@@ -96,3 +96,37 @@ export const CATEGORY_BONUS_RULES = {
 
 // Which categories are "sports" (have playoff rounds)
 export const SPORT_CATEGORIES = ["NFL", "MLB", "NBA", "NHL", "NCAAF", "NCAAB", "MLS"];
+
+// Category color-coding (Calendar's event dots/badges) — generated, not
+// picked by feel from a framework's default swatches. The previous values
+// were assorted Tailwind stops chosen per category "by eye," which is how
+// NCAAF and NCAAB silently ended up the exact same yellow and F1 and MLB
+// the exact same red — two categories becoming visually indistinguishable
+// on the one screen whose whole job is letting a glance tell them apart.
+// This set instead comes from one formula (see
+// scripts/gen-category-colors.js if that's ever rerun): HSL with fixed
+// saturation 68% / lightness 54%, hue stepped at 360/16 = 22.5° starting
+// at 10.5° — chosen, like MEMBER_COLORS' formula, to clear this app's own
+// semantic hues (theme.yel/grn/up/down/you/acc) so a category color is
+// never mistaken for a win/loss/lock/"you" cue. "General" (calendar-only,
+// not a draftable category) is deliberately NOT part of this formula — it
+// marks league-wide events (draft day, etc.), so it intentionally reuses
+// the brand accent (theme.acc) rather than getting its own generated hue.
+export const CATEGORY_COLORS = {
+  NFL: "#d9573a",      // hue 11
+  MLB: "#d9923a",      // hue 33
+  NBA: "#d9cf3a",      // hue 56
+  NHL: "#aad93a",      // hue 78
+  NCAAF: "#6cd93a",    // hue 101
+  NCAAB: "#3ad942",    // hue 123
+  MLS: "#3ad97f",      // hue 146
+  Tennis: "#3ad9ba",   // hue 168
+  Golf: "#3abcd9",     // hue 191
+  F1: "#3a82d9",       // hue 213
+  Actor: "#3a45d9",    // hue 236
+  Actress: "#6a3ad9",  // hue 258
+  Musician: "#a73ad9", // hue 281
+  Country: "#d93ad1",  // hue 303
+  Stock: "#d93a94",    // hue 326
+  Film: "#d93a5a",     // hue 348 — calendar-only (film releases), not a draftable category
+};

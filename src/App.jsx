@@ -6,6 +6,7 @@ import {
   Calendar as CalendarIcon,
   ClipboardList,
   Target,
+  AlertTriangle,
 } from "lucide-react";
 import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { theme } from "./constants/theme";
@@ -39,6 +40,7 @@ import Scoreboard from "./components/Scoreboard";
 import AdUnit from "./components/AdUnit";
 import AppShell from "./components/AppShell";
 import { Skeleton } from "./components/Badges";
+import StatusCard from "./components/StatusCard";
 
 // Scoreboard (above) is the default tab and the one every link/share
 // lands on, so it stays an eager import — everything below only costs a
@@ -117,16 +119,8 @@ class TabErrorBoundary extends Component {
   render() {
     if (this.state.failed) {
       return (
-        <div style={{ textAlign: "center", padding: 40, color: theme.dim }}>
-          <div style={{ marginBottom: 12, fontSize: 14 }}>
-            This tab couldn't load — probably a network blip.
-          </div>
-          <button onClick={() => window.location.reload()}
-            style={{ background: "none", border: "1px solid " + theme.bdr, borderRadius: 8,
-              padding: "7px 16px", color: theme.txt, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            Reload
-          </button>
-        </div>
+        <StatusCard icon={AlertTriangle} iconColor={theme.red} title="This tab couldn't load — probably a network blip."
+          action={{ label: "Reload", onClick: () => window.location.reload() }} />
       );
     }
     return this.props.children;
