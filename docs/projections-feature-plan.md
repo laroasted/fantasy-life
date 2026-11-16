@@ -789,3 +789,40 @@ figures), Pro up to 800s. A 504 here is literally
 comfortably within Hobby's own ceiling, no plan upgrade needed, real
 headroom over Billboard's worst case, and the job-completion-ordering
 logic (the thing already fixed once before) is untouched.
+
+## Fourteenth iteration — Oscar bonus was cross-matching Golden Globes
+markets, not Oscar odds
+
+User audit, prompted by a projection that made no sense on its face:
+Jon Bernthal showing as projected to win Best Actor. Checked live
+against Polymarket (via Alexandria) rather than guessing — the real
+**Oscars 2027: Best Actor Winner** market has 22 real nominee markets
+(Chalamet, Gosling, Pascal, Stan, Damon, etc.); Bernthal isn't one of
+them.
+
+Root cause: `applyOscarBonus`'s search for `"Best Actor Winner"` comes
+back with 9 events, not 1 — alongside the two real Oscar events
+(Best Actor / Best Supporting Actor), Polymarket's full-text search
+also surfaces 6 unrelated **Golden Globes** acting-category events
+(Drama, Limited Series, Musical/Comedy, Television Drama, and their
+Supporting variants). The existing `excludeSupporting` filter
+(added in the eleventh iteration for exactly this class of bug) only
+ever excluded the word "supporting" — it did nothing to require the
+survivors actually be Oscar events, so all the lead-track Golden
+Globes categories sailed straight through. Bernthal is 41.55% to win
+**Golden Globes 2027: Best Actor – Limited Series Winner** (confirmed
+live) — `findMarketProbabilitiesForPicks` matched his name inside that
+event's markets (since it scans every surviving event, not just the
+intended one) and that Golden Globes probability got recorded as his
+Oscar win probability instead. Confirmed the identical leak for
+`"Best Actress Winner"` (6 Golden Globes Actress events), and confirmed
+BOTH `"Nominations"` searches come back Oscars-only already (Golden
+Globes runs no nomination-only markets), so only the two `Winner`
+lookups were affected.
+
+Fixed by renaming `excludeSupporting` to `oscarEventOnly` and requiring
+the event title match `/oscar/i` in addition to excluding `/supporting/i`
+— every real Oscars event here is literally titled `"Oscars 2027: ..."`,
+so this is a precise, verified match, not a broadened guess at a
+pattern. Same fix serves both Actor and Actress (one shared function,
+`awardLabel`-parameterized, per the original design).
