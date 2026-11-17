@@ -97,6 +97,16 @@ export default function Trends({ seasonData }) {
   const svgWrapRef = useRef(null);
   const pillsRef = useRef(null);
   const requestIdRef = useRef(0);
+  // Which seasonYear `rows` actually belongs to — set alongside every
+  // setRows() call in load() below. A plain `rows.length === 0` check
+  // (what the cold-start/retry skeleton split below reduces to) can't
+  // tell "stale rows from a Retry on the same year, keep showing them"
+  // apart from "rows left over from the year the user just switched
+  // away from" — both have rows.length > 0. Without this, switching the
+  // season picker to a different year renders the OLD year's chart
+  // under the NEW year's selection until the fetch resolves (caught in
+  // review on this PR, real).
+  const rowsYearRef = useRef(null);
 
   const seasonYear = seasonData?.year;
   const members = useMemo(() => seasonData?.members || [], [seasonData]);
@@ -175,6 +185,7 @@ export default function Trends({ seasonData }) {
       if (!stillCurrent()) return;
       if (cached && cached.length > 0) {
         setRows(cached);
+        rowsYearRef.current = seasonYear;
         setIsStale(true);
         setLoading(false);
         return;
@@ -186,6 +197,7 @@ export default function Trends({ seasonData }) {
     }
     if (!stillCurrent()) return;
     setRows(allRows);
+    rowsYearRef.current = seasonYear;
     setIsStale(false);
     storageSet(cacheKey, JSON.stringify(allRows)).catch(() => {});
     setLoading(false);
@@ -342,7 +354,16 @@ export default function Trends({ seasonData }) {
 
   const tableDates = useMemo(() => [...dates].reverse().slice(0, showTable === "all" ? dates.length : 21), [dates, showTable]);
 
-  if (loading) {
+  // Full skeleton for a true cold start OR a year switch (rowsYearRef
+  // doesn't match what's currently selected — whatever's in `rows`
+  // belongs to a different season and must not render under this one's
+  // header). A Retry while stale/cached rows for THIS SAME year are
+  // already on screen must NOT hit this branch — tearing down an
+  // already-rendered chart to show generic placeholder bars for what's
+  // meant to be a quiet background refresh is worse than the lag it's
+  // "fixing." The Retry button itself (in the isStale banner) carries
+  // loading's pending state instead.
+  if (loading && (rows.length === 0 || rowsYearRef.current !== seasonYear)) {
     return (
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
         <div style={{ display: "flex", gap: space.sm, justifyContent: "center", marginBottom: space.md, flexWrap: "wrap" }}>
@@ -454,9 +475,10 @@ export default function Trends({ seasonData }) {
           <span style={{ fontSize: 11, color: s.dim }}>
             Showing a cached snapshot — couldn't reach the live data just now.
           </span>
-          <button onClick={load} style={{ marginLeft: "auto", background: "none", border: "none",
-            color: s.acc, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
-            Retry
+          <button onClick={load} disabled={loading} style={{ marginLeft: "auto", background: "none", border: "none",
+            color: s.acc, fontSize: 11, fontWeight: 700, cursor: loading ? "default" : "pointer", flexShrink: 0,
+            opacity: loading ? 0.6 : 1 }}>
+            {loading ? "Retrying…" : "Retry"}
           </button>
         </div>
       )}

@@ -23,6 +23,7 @@ export default function AppShell({
   isMobile,
   pushSupported,
   pushEnabled,
+  pushToggling,
   handlePushToggle,
   authReady,
   commissionerSession,
@@ -231,8 +232,8 @@ export default function AppShell({
     </IconButton>
   );
   const bellButton = pushSupported && (
-    <IconButton onClick={handlePushToggle}
-      title={pushEnabled ? "Turn off notifications" : "Get notified about score updates"}
+    <IconButton onClick={handlePushToggle} disabled={pushToggling}
+      title={pushToggling ? "Updating…" : pushEnabled ? "Turn off notifications" : "Get notified about score updates"}
       active={pushEnabled} size={isMobile ? 44 : 32}>
       {pushEnabled ? <Bell size={15} /> : <BellOff size={15} />}
     </IconButton>
