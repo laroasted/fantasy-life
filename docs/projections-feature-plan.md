@@ -826,3 +826,39 @@ the event title match `/oscar/i` in addition to excluding `/supporting/i`
 so this is a precise, verified match, not a broadened guess at a
 pattern. Same fix serves both Actor and Actress (one shared function,
 `awardLabel`-parameterized, per the original design).
+
+## Fifteenth iteration — MLS Cup bonus had no projection at all, a stale
+activeMonths table, not an odds-matching problem this time
+
+User audit: "looks like there is no projections going on for MLS cup
+bonus points." Traced it to `SPORTS_ACTIVE_MONTHS.MLS` in this file —
+`[4,5,6,7,8,9,10]` — despite this file's own header comment on that
+table claiming it's "a direct duplicate of update-sports.js's own
+`ESPN_LEAGUES[...].activeMonths`." It wasn't, for MLS specifically:
+`update-sports.js`'s real `ESPN_LEAGUES.MLS.activeMonths` is
+`[4,5,6,7,8,9,10,11,12]` — Nov/Dec included on purpose, per that file's
+own comment, because MLS Cup (and the bonus it decides) is played in
+Nov/Dec, after the regular season (base) ends. This file's copy had
+silently drifted to exclude both months. Effect: `isSportBaseActive
+('MLS')` went false the moment the regular season ended, so the whole
+category — base AND bonus — got routed through `runStatic` (flat actual
+values, zero Monte Carlo, no odds lookup attempted at all) for exactly
+the window MLS Cup is actually being decided in. NFL/NBA/NHL/MLB's
+copies were checked against their real `ESPN_LEAGUES` entries too and
+all four match — this was an MLS-only drift, not a systemic one.
+
+Fixed the table. That alone would have let a second, previously-latent
+bug surface for the first time: `buildPointsRateModel`'s "no games
+data" fallback (`sampleNormal(rng, 0, ...)`, non-zero variance) doesn't
+distinguish "no data to compute a rate from" from "fully parsed record,
+zero games remaining" — MLS past Decision Day is the latter, a
+genuinely static metric (the comment on `update-sports.js`'s own MLS
+entry: "standings don't move after Decision Day"), not a missing-data
+case. Left as-is, re-activating MLS for Nov/Dec would have had its base
+projection sampling phantom variance on top of a number that cannot
+actually move. Added an explicit zero-remaining branch (`deltaSampler:
+() => 0`, `static:regular_season_complete_no_games_remaining`) ahead of
+the generic fallback — same treatment Golf's `eventsRemaining === 0`
+case already gets in `buildRankingPointsModel`. NHL is unaffected (its
+record format has no dash, so `parseRecordToGamesPlayed` always returns
+null for it and it never reaches this branch).

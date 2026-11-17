@@ -72,7 +72,15 @@ const SPORTS_ACTIVE_MONTHS = {
   NBA: [10, 11, 12, 1, 2],
   NHL: [10, 11, 12, 1, 2],
   MLB: [4, 5, 6, 7, 8, 9],
-  MLS: [4, 5, 6, 7, 8, 9, 10],
+  // MLS: this table had drifted from update-sports.js's own ESPN_LEAGUES
+  // entry despite this file's header comment claiming an exact mirror —
+  // missing Nov/Dec meant isSportBaseActive('MLS') went false the moment
+  // the regular season ended, routing the whole category through
+  // runStatic (base AND bonus both held flat, no odds lookup at all) for
+  // the entire MLS Cup playoff window the real bonus is actually decided
+  // in. Found via user audit ("no projections for MLS Cup bonus points").
+  // Corrected to match update-sports.js's real ESPN_LEAGUES.MLS.activeMonths.
+  MLS: [4, 5, 6, 7, 8, 9, 10, 11, 12],
 };
 function isSportBaseActive(league, now) {
   const month = (now || new Date()).getMonth() + 1;
@@ -530,7 +538,17 @@ function buildPointsRateModel(picks, league, ownerNameById) {
     }
 
     let deltaSampler;
-    if (games && games.remaining > 0 && games.played > 0) {
+    if (games && games.played > 0 && games.remaining === 0) {
+      // A fully-parsed record with zero games remaining (MLS past
+      // Decision Day, in particular, now that SPORTS_ACTIVE_MONTHS.MLS
+      // correctly stays "active" through the Dec MLS Cup window below) —
+      // standings are genuinely done for the year, not merely missing
+      // data. The generic fallback below is for the OPPOSITE case (no
+      // games data at all) and would otherwise sample noise on top of a
+      // metric that cannot actually move, overstating projected_base.
+      deltaSampler = () => 0;
+      sourceNote = 'static:regular_season_complete_no_games_remaining';
+    } else if (games && games.remaining > 0 && games.played > 0) {
       const ptsPerGame = currentPoints / games.played;
       const meanDelta = ptsPerGame * games.remaining;
       // Points only accumulate (never decrease), so the sampled delta is
