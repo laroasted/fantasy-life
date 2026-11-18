@@ -177,6 +177,30 @@
   </head>
   <body>
     <noscript>You need to enable JavaScript to run Fantasy Life Hub.</noscript>
-    <div id="root"></div>
+    <!-- Static fallback: this app is pure client-side React (ReactDOM.createRoot
+         in src/index.js does a full render, not hydrateRoot, so there's no
+         hydration mismatch to worry about) — a crawler that doesn't execute
+         JS, or that snapshots before the Supabase fetch in App.jsx resolves,
+         otherwise sees nothing but the noscript line above. React's first
+         commit replaces this div's contents immediately, so real visitors
+         never see it render. -->
+    <div id="root">
+      <div style="max-width: 760px; margin: 40px auto; padding: 0 20px; font-family: 'Public Sans', system-ui, sans-serif; color: #F2F3F5;">
+        <h1 style="font-family: 'Sora', system-ui, sans-serif;">Fantasy Life Hub</h1>
+        <p>Fantasy Life Hub is a scoreboard and draft tool for a fantasy league built
+          around real-world outcomes instead of athletic box scores. Each season,
+          league members draft picks across fifteen categories — NFL, NBA, MLB,
+          NHL, NCAA Football, NCAA Basketball, ATP Tennis, international golf,
+          Formula 1, MLS, film actor, film actress, musician, country, and company
+          stock — and the site tracks how every pick performs over the course of
+          the season.</p>
+        <p>The Scoreboard ranks every league member by category and by overall
+          standing, updated automatically from live sports results, box office and
+          awards data, music chart performance, and market data. The Draft tool
+          runs the league's live snake draft and keeps a full pick history and
+          recap. Trends charts each member's standing across the season, and the
+          Calendar tracks upcoming events that affect scoring.</p>
+      </div>
+    </div>
   </body>
 </html>
