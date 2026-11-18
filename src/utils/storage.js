@@ -132,6 +132,26 @@ try {
 }
 }
 
+// Build-time snapshot, written by scripts/build-preload-snapshot.js into
+// public/preload-season.js (loaded as a plain blocking <script> in
+// index.html, before this app's own bundle runs — see that script tag's
+// comment). Distinct from readCachedActiveSeason() above: that one is
+// per-device, written by a prior real visit to THIS browser; this one
+// ships with the deploy itself, so it's the only one a visitor's very
+// first-ever page load (no localStorage yet) has anything to read —
+// including, deliberately, a crawler's only visit. Same reasoning as that
+// cache: a real head start on first paint, never a substitute for the
+// loadSeason() fetch that always still runs right behind it.
+export function readPreloadedSeason() {
+  try {
+    const snapshot = window.__PRELOADED_SEASON__;
+    if (!snapshot || !snapshot.year) return null;
+    return { season: snapshot, generatedAt: window.__PRELOADED_SEASON_GENERATED_AT__ || null };
+  } catch (e) {
+    return null;
+  }
+}
+
 export const STORAGE_KEYS = {
 ACTIVE_SEASON: "active-season",
 ARCHIVED_SEASONS: "archived-seasons",
