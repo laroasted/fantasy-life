@@ -149,4 +149,9 @@ async function main() {
   }
 }
 
-main();
+// Belt-and-suspenders on top of the try/catches above: an unhandled
+// rejection out of main() would otherwise crash this process with a
+// non-zero exit code (default Node behavior since v15), and the npm
+// script below relies on this script never doing that — see its own
+// comment for why `&&`, not `;`, chains it with `react-scripts build`.
+main().catch((e) => writePlaceholder(`unhandled rejection (${e && e.message})`));
