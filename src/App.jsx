@@ -22,6 +22,7 @@ import {
   fetchProjectionsFromSupabase,
   cacheActiveSeason,
   readCachedActiveSeason,
+  readPreloadedSeason,
   fetchBiggestScoreMovers,
   saveLocksToSupabase,
   savePaywallsToSupabase,
@@ -269,7 +270,13 @@ export default function App() {
   // and falls straight through to the loading spinner exactly as before.
   const [activeSeason, setActiveSeason] = useState(() => {
     const cached = readCachedActiveSeason();
-    return cached ? cached.season : null;
+    if (cached) return cached.season;
+    // No per-device cache (true of every first-ever visit, including any
+    // crawler's) — fall back to the build-time snapshot (see
+    // scripts/build-preload-snapshot.js) instead of the bare loading
+    // spinner, so first paint still has real content.
+    const preloaded = readPreloadedSeason();
+    return preloaded ? preloaded.season : null;
   });
   // Mirrors activeSeason, but updated manually and synchronously by
   // handleSettingsSave itself (below) the instant it computes a new
@@ -299,7 +306,7 @@ export default function App() {
   // archived-year deep link as invalid before archivedSeasons has had a
   // chance to arrive and resets it to the active season.
   const [archivedLoaded, setArchivedLoaded] = useState(false);
-  const [loaded, setLoaded] = useState(() => !!readCachedActiveSeason());
+  const [loaded, setLoaded] = useState(() => !!(readCachedActiveSeason() || readPreloadedSeason()));
   // Whether the very first loadSeason() call for this page load (the one
   // in the mount effect below) has resolved yet — true from mount,
   // flipped false once, success or failure, and never touched again by a
@@ -333,9 +340,15 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(() => {
     const cached = readCachedActiveSeason();
-    return cached && cached.cachedAt ? new Date(cached.cachedAt) : null;
+    if (cached) return cached.cachedAt ? new Date(cached.cachedAt) : null;
+    const preloaded = readPreloadedSeason();
+    return preloaded && preloaded.generatedAt ? new Date(preloaded.generatedAt) : null;
   });
-  const [dataSource, setDataSource] = useState(() => (readCachedActiveSeason() ? "local" : "loading"));
+  const [dataSource, setDataSource] = useState(() => {
+    if (readCachedActiveSeason()) return "local";
+    if (readPreloadedSeason()) return "prebuilt";
+    return "loading";
+  });
   // Shared with Scoreboard.jsx via useViewport() so the header widens in
   // lockstep with Scoreboard's sidebar instead of the two hand-copying the
   // same breakpoint numbers (see useViewport.js).
@@ -842,10 +855,20 @@ export default function App() {
         // would claim freshness it doesn't have (see the dataSource
         // "local" status dot further down).
         resolvedAt = cached.cachedAt ? new Date(cached.cachedAt) : new Date();
+      } else {
+        // No per-device cache either (first-ever visit) — the build-time
+        // snapshot is still better than the fully-synthetic build2025()
+        // stub below: real names, real scores, just as of the last deploy.
+        const preloaded = readPreloadedSeason();
+        if (preloaded) {
+          active = preloaded.season;
+          source = "prebuilt";
+          resolvedAt = preloaded.generatedAt ? new Date(preloaded.generatedAt) : new Date();
+        }
       }
       track(EVENTS.DATA_FALLBACK_USED, {
         surface: "season",
-        fallback_level: source === "local" ? "local" : "hardcoded",
+        fallback_level: source === "local" || source === "prebuilt" ? source : "hardcoded",
         reason: "supabase_fetch_failed",
       });
     }
@@ -1489,9 +1512,13 @@ export default function App() {
                     <span style={{ fontSize: 10, color: theme.dim, opacity: 0.6,
                       display: "flex", alignItems: "center", gap: 5 }}>
                       <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%",
-                        background: dataSource === "supabase" ? theme.grn : dataSource === "local" ? theme.yel : theme.red,
+                        background: dataSource === "supabase" ? theme.grn
+                          : dataSource === "local" || dataSource === "prebuilt" ? theme.yel : theme.red,
                         animation: justSynced ? "livePulse 0.6s ease" : "none" }} />
-                      {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live") : dataSource === "local" ? "Cached" : "Offline"}
+                      {dataSource === "supabase" ? (realtimeLive ? "Live · auto-updating" : "Live")
+                        : dataSource === "local" ? "Cached"
+                        : dataSource === "prebuilt" ? "Preview"
+                        : "Offline"}
                       {" "}· {justSynced ? "Updated just now" : "Updated " + lastUpdated.toLocaleTimeString()}
                     </span>
                   )}

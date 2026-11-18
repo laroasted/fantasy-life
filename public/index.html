@@ -19,6 +19,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Fantasy Life" />
     <title>Fantasy Life Hub</title>
+    <!-- Build-time season snapshot — see scripts/build-preload-snapshot.js.
+         Plain blocking script (no async/defer) so it runs during HTML
+         parsing, before the app bundle (injected at the end of <body>)
+         ever executes — window.__PRELOADED_SEASON__ is guaranteed to
+         already exist by the time src/App.jsx's first render reads it. -->
+    <script src="%PUBLIC_URL%/preload-season.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <!-- A plain <link rel="stylesheet"> here blocks first paint on a

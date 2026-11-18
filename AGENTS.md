@@ -151,8 +151,11 @@ the long-form version; this file is the in-repo quick reference.
 ## Super properties (registered globally)
 
 `is_commissioner`, `device_type` (`mobile`/`desktop`), `season_year`,
-`data_source` (`supabase`/`local`/`hardcoded`) — see `analytics.js` for the
-setter functions (`setDeviceTypeSuperProperty`, `setSeasonSuperProperties`).
+`data_source` (`supabase`/`local`/`prebuilt`/`hardcoded`) — see
+`analytics.js` for the setter functions (`setDeviceTypeSuperProperty`,
+`setSeasonSuperProperties`). `prebuilt` is the build-time season snapshot
+(`scripts/build-preload-snapshot.js` → `public/preload-season.js` →
+`readPreloadedSeason()` in `storage.js`) — see its own section below.
 
 ## Value Moment
 
@@ -559,6 +562,55 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   Don't auto-lock NBA/NHL base on regular-season end (see `AUTO_LOCK_RULES`).
   NBA/NHL base scores Oct–Feb plus March through Oscar night, the latter
   only while the ending season is still active (`extendBaseToOscarNight`).
+
+## Build-time season snapshot (first-paint content, AdSense/crawler fix)
+
+- This app is a pure client-rendered SPA (`src/index.js` does a plain
+  `ReactDOM.createRoot(...).render(...)`, no SSR). Every visit starts from
+  an empty `<div id="root">` and waits on a live Supabase fetch
+  (`loadSeason()` in `App.jsx`) before any real content exists — a
+  returning visitor on the same device skips that wait via the
+  `readCachedActiveSeason()` localStorage cache, but a first-ever visit
+  (every crawler's visit, by definition — including AdSense's own review
+  crawler) has nothing to seed from and sits on the "Loading scores..."
+  spinner for however long that fetch takes. Confirmed directly: the same
+  URL returned either literally nothing but that spinner text, or the full
+  real page, depending only on how long the fetch was given to resolve
+  before the page was read. This was a real, reproducible contributor to
+  an AdSense "Google-served ads on screens without publisher-content"
+  rejection — see the PR that added this section for the investigation.
+- Fix: `scripts/build-preload-snapshot.js` runs as part of `npm run build`
+  (wired in `package.json`, before `react-scripts build`; failure-safe —
+  every error path just leaves the build's existing
+  `public/preload-season.js` alone rather than ever failing the build).
+  It does the same public, anon-key `seasons`/`members`/`picks` read
+  `fetchSeasonFromSupabase()` does for the active season and writes a
+  minimal real snapshot (`categories` only — not the much larger
+  `detailedData` or `projections`, both of which `Scoreboard.jsx` already
+  treats as optional on every normal page load) to
+  `public/preload-season.js` as `window.__PRELOADED_SEASON__` +
+  `window.__PRELOADED_SEASON_GENERATED_AT__`. That file is loaded via a
+  plain blocking `<script>` tag in `index.html`'s `<head>` (before the app
+  bundle, which is injected at the end of `<body>`), so the global is
+  guaranteed to exist by the time `App.jsx`'s first render reads it.
+- `readPreloadedSeason()` (`storage.js`) reads it back.`App.jsx`'s four
+  first-paint state initializers (`activeSeason`, `loaded`, `lastUpdated`,
+  `dataSource`) and `loadSeason()`'s own supabase→local→hardcoded fallback
+  chain all fall back to it — **after** the localStorage cache, **before**
+  the fully-synthetic `build2025()` stub — so every visitor's very first
+  paint has real member names and real scores already on screen, no
+  network wait, while the live fetch still runs immediately after and
+  overwrites it with current data. `dataSource: "prebuilt"` (status line
+  shows "Preview") is this path; it can be as stale as the last deploy,
+  which is why it's a step below `"local"` (a per-device cache of an
+  actually-succeeded live fetch, not a build-time snapshot) in every
+  fallback chain, never a replacement for the live fetch.
+- Committed `public/preload-season.js` is a `window.__PRELOADED_SEASON__ =
+  null;` placeholder — what local `npm start` sees (the snapshot script
+  only runs as part of `npm run build`), and what production falls back to
+  if the snapshot script's own Supabase read ever fails. Either way,
+  `readPreloadedSeason()` already treats `null` as "nothing to preload,"
+  so this degrades to exactly the app's pre-existing behavior.
 
 ## Governance
 

@@ -680,6 +680,17 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
  }
 
  // ═══ COMMISSIONER GATE ═══
+ // Real season content above the gate, not just a bare sign-in prompt —
+ // this screen used to be nothing but "Commissioner Access Required" for
+ // every signed-out visitor, which is Google's own named example of a
+ // "dead end" / no-content screen (AdSense publisher policies: "Thank
+ // You, Log in, Exit, Error pages"). Deliberately limited to the season's
+ // own identity fields (year/name/member count) rather than attempting a
+ // read-only summary of locks/paywalls here — `locks` below is keyed by a
+ // non-trivial per-field/per-row scheme (see isLocked() and the splice
+ // logic further down this file), and getting a "what's locked" summary
+ // subtly wrong in a tool this league actually relies on for scoring
+ // corrections is worse than not showing it.
  if (!isCommissioner) {
   return (
    <StatusCard icon={Lock} iconSize={44} headingLevel={3} maxWidth={500} title="Commissioner Access Required"
@@ -689,6 +700,15 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
      </div>
      <button disabled style={{ ...buttonStyle(theme.srf), width: "100%", opacity: 0.6, cursor: "default" }}>Awaiting Commissioner Sign-In</button>
     </>}>
+    {seasonData && seasonData.year && (
+     <p style={{ margin: "0 0 10px", color: theme.txt }}>
+      {(seasonData.name || "Fantasy Life") + " — " + seasonData.year}
+      {typeof seasonData.memberCount === "number" && seasonData.memberCount > 0
+       ? ", " + seasonData.memberCount + " members"
+       : ""}
+      .
+     </p>
+    )}
     Sign in with Google from the header (visible on Draft or here) using your commissioner account to unlock scoring controls, locks, and corrections.
    </StatusCard>
   );
