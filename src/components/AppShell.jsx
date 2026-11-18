@@ -253,7 +253,13 @@ export default function AppShell({
 
   if (isMobile) {
     return (
-      <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+      // minHeight lives on the whole shell (header + content), not the
+      // content area alone, and subtracts body's own safe-area padding —
+      // so the document is never shorter than the viewport (anti-hop fix
+      // above) but also never taller than it on a short page like the
+      // Settings sign-in gate, which would scroll into blank space.
+      <div style={{ maxWidth: 1280, margin: "0 auto",
+        minHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))" }}>
         {/* Condensed mobile header — logo + account/bell/refresh/settings,
             every icon button a real 44x44px touch target. */}
         <div style={{
@@ -278,12 +284,9 @@ export default function AppShell({
 
         {/* Bottom clearance = floating bar height (52) + its offset from
             the screen edge + a little breathing room, so the last row of
-            content can still scroll fully clear of the bar. minHeight keeps
-            the document from ever being shorter than the viewport (the
-            other half of the anti-hop fix above). */}
+            content can still scroll fully clear of the bar. */}
         <div style={{
           padding: `${space.md}px ${space.sm}px calc(84px + env(safe-area-inset-bottom, 0px))`,
-          minHeight: "100dvh",
         }}>{children}</div>
 
         {/* Floating pill tab bar (Facebook-style): inset from both sides,
