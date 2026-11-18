@@ -10,13 +10,7 @@
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!-- "black", not "black-translucent": with translucent, iOS WebKit
-         sizes the standalone viewport without the status-bar strip the app
-         draws under, and the fixed bottom tab bar jumped ~59pt up whenever
-         a tab's content was short (three CSS workarounds didn't stop it).
-         "black" makes iOS reserve that strip as an opaque bar, which
-         against this app's #0B0E14 background is visually near-identical. -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Fantasy Life" />
     <title>Fantasy Life Hub</title>
     <!-- Build-time season snapshot — see scripts/build-preload-snapshot.js.
@@ -83,11 +77,11 @@
         color: #F2F3F5;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-        /* If apple-mobile-web-app-status-bar-style is ever switched back
-           to "black-translucent" (see the meta tag's comment for why it
-           isn't), the app draws under the iPhone status bar/notch in
-           standalone mode, and this padding is what keeps real content
-           out from underneath it. With "black" the top inset is 0. viewport-fit=cover (above) is what
+        /* apple-mobile-web-app-status-bar-style is "black-translucent",
+           which lets the app draw under the iPhone status bar/notch in
+           standalone (Added to Home Screen) mode — real content has to
+           opt back out of that area itself, or it renders invisible
+           underneath the status bar. viewport-fit=cover (above) is what
            makes these env() values non-zero in the first place; both are
            0px in an ordinary browser tab, so this has no effect there. */
         padding-top: env(safe-area-inset-top, 0px);

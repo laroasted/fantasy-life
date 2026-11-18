@@ -253,21 +253,16 @@ export default function AppShell({
 
   if (isMobile) {
     return (
-      // minHeight lives on the whole shell (header + content). Target: the
-      // whole document (this + body's top/bottom safe-area padding) is at
-      // least 100dvh + safe-area-inset-top + 1px.
-      //
-      // Why the top inset: in an installed iOS PWA with the
-      // black-translucent status bar, WebKit sizes the viewport as if the
-      // status bar (59pt on Dynamic Island iPhones) weren't drawn over, so
-      // when the document is shorter than the real screen, a fixed
-      // bottom:0 bar anchors to that short viewport and sits ~59pt too
-      // high: the "hopping" bar on every tab whose loading skeleton is
-      // short. Exactly-viewport and viewport+1px both still hopped.
-      // Known workaround: document min-height = 100% + top inset. In
-      // ordinary Safari the top inset is 0, so this is a no-op there.
+      // minHeight lives on the whole shell (header + content), not the
+      // content area alone, and subtracts body's own safe-area padding,
+      // then adds 1px so the document ALWAYS overflows the viewport. In an
+      // installed iOS PWA, a fixed bottom bar on a page that can't scroll
+      // at all (a short loading skeleton, the Settings gate) renders
+      // ~60pt too high until the page grows again: the "hopping" bar.
+      // Exactly-viewport-height wasn't enough to stop it; one pixel of
+      // overflow is, and is too small to read as blank scroll space.
       <div style={{ maxWidth: 1280, margin: "0 auto",
-        minHeight: "calc(100dvh - env(safe-area-inset-bottom, 0px) + 1px)" }}>
+        minHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) + 1px)" }}>
         {/* Condensed mobile header — logo + account/bell/refresh/settings,
             every icon button a real 44x44px touch target. */}
         <div style={{
