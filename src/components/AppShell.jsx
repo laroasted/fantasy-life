@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import { Trophy, Bell, BellOff, Settings as SettingsIcon } from "lucide-react";
 import { theme, font, space } from "../constants/theme";
 import { MEMBER_COLORS } from "../constants/members";
@@ -45,6 +46,17 @@ export default function AppShell({
   refreshing,
   children,
 }) {
+  // Reset scroll on every tab change, before paint. Without this, leaving
+  // a long, scrolled-down tab for one whose content is (even briefly)
+  // shorter shrinks the document below the current scroll offset, and
+  // iOS WebKit's scroll clamp drags the fixed bottom bar up for several
+  // frames before snapping back: the "hopping" bar. Layout effect, not
+  // a plain effect, so the first painted frame of the new tab is
+  // already at the top.
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [activeTab]);
+
   function goToTab(id) {
     track(EVENTS.TAB_VIEWED, { tab_name: id, previous_tab: activeTab, is_mobile: isMobile });
     setActiveTab(id);
@@ -241,7 +253,13 @@ export default function AppShell({
 
   if (isMobile) {
     return (
-      <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+      // minHeight lives on the whole shell (header + content), not the
+      // content area alone, and subtracts body's own safe-area padding —
+      // so the document is never shorter than the viewport (anti-hop fix
+      // above) but also never taller than it on a short page like the
+      // Settings sign-in gate, which would scroll into blank space.
+      <div style={{ maxWidth: 1280, margin: "0 auto",
+        minHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))" }}>
         {/* Condensed mobile header — logo + account/bell/refresh/settings,
             every icon button a real 44x44px touch target. */}
         <div style={{
@@ -264,36 +282,50 @@ export default function AppShell({
           <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
         </div>
 
-        {/* 72px bottom clearance is functional, not decorative — it matches
-            the fixed bottom tab bar's own height (56px minHeight) plus
-            breathing room, so it's pinned to that number rather than
-            snapped onto the spacing scale below. */}
-        <div style={{ padding: `${space.md}px ${space.sm}px 72px` }}>{children}</div>
+        {/* Bottom clearance = floating bar height (52) + its offset from
+            the screen edge + a little breathing room, so the last row of
+            content can still scroll fully clear of the bar. */}
+        <div style={{
+          padding: `${space.md}px ${space.sm}px calc(84px + env(safe-area-inset-bottom, 0px))`,
+        }}>{children}</div>
 
-        {/* New bottom tab bar — doesn't exist today (the old layout was
-            top-tab-bar-only on every screen size). Needs its own
-            safe-area padding so it clears the home indicator on an
-            installed-PWA iPhone, same reasoning as the header's own
-            env(safe-area-inset-top) above. */}
+        {/* Floating pill tab bar (Facebook-style): inset from both sides,
+            sitting partly inside the home-indicator safe area instead of
+            stacked fully above it, translucent + blurred so content shows
+            through above, below and behind it. translateZ(0) gives it its
+            own compositor layer, which keeps WebKit from repainting it
+            mid-scroll. */}
         <nav aria-label="Main" style={{
-          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 100,
-          display: "flex", background: theme.card, borderTop: "1px solid " + theme.bdr,
-          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+          position: "fixed", zIndex: 100,
+          left: space.md, right: space.md,
+          bottom: "max(8px, calc(env(safe-area-inset-bottom, 0px) - 14px))",
+          height: 52, padding: 4,
+          display: "flex", gap: 2,
+          background: "rgba(20, 25, 34, 0.78)",
+          backdropFilter: "blur(16px) saturate(160%)",
+          WebkitBackdropFilter: "blur(16px) saturate(160%)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          borderRadius: 26,
+          boxShadow: "0 6px 24px rgba(0, 0, 0, 0.45)",
+          transform: "translateZ(0)",
         }}>
           {tabs.map((t) => {
             const isActive = activeTab === t.id;
             return (
               <button key={t.id} onClick={() => goToTab(t.id)}
                 aria-current={isActive ? "page" : undefined}
+                aria-label={t.label}
                 style={{
-                  flex: 1, minHeight: 56, display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center", gap: space.xs,
-                  background: "none", border: "none", font: "inherit",
+                  flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
+                  alignItems: "center", justifyContent: "center", gap: 2,
+                  background: isActive ? theme.accSoft : "none",
+                  border: "none", borderRadius: 22, font: "inherit",
                   color: isActive ? theme.acc : theme.dim,
-                  fontSize: 10, fontWeight: isActive ? 700 : 500, cursor: "pointer",
+                  fontSize: 9.5, fontWeight: isActive ? 700 : 500, cursor: "pointer",
+                  WebkitTapHighlightColor: "transparent",
                 }}>
-                <t.Icon size={18} />
-                <span>{t.label}</span>
+                <t.Icon size={19} />
+                <span style={{ lineHeight: 1, whiteSpace: "nowrap" }}>{t.label}</span>
               </button>
             );
           })}
