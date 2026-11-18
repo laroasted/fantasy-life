@@ -254,12 +254,15 @@ export default function AppShell({
   if (isMobile) {
     return (
       // minHeight lives on the whole shell (header + content), not the
-      // content area alone, and subtracts body's own safe-area padding —
-      // so the document is never shorter than the viewport (anti-hop fix
-      // above) but also never taller than it on a short page like the
-      // Settings sign-in gate, which would scroll into blank space.
+      // content area alone, and subtracts body's own safe-area padding,
+      // then adds 1px so the document ALWAYS overflows the viewport. In an
+      // installed iOS PWA, a fixed bottom bar on a page that can't scroll
+      // at all (a short loading skeleton, the Settings gate) renders
+      // ~60pt too high until the page grows again: the "hopping" bar.
+      // Exactly-viewport-height wasn't enough to stop it; one pixel of
+      // overflow is, and is too small to read as blank scroll space.
       <div style={{ maxWidth: 1280, margin: "0 auto",
-        minHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))" }}>
+        minHeight: "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) + 1px)" }}>
         {/* Condensed mobile header — logo + account/bell/refresh/settings,
             every icon button a real 44x44px touch target. */}
         <div style={{

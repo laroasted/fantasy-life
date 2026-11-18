@@ -47,12 +47,30 @@ import StatusCard from "./components/StatusCard";
 // visitor anything the moment they actually click that tab. These six
 // cover every non-Scoreboard destination in App.jsx's TABS array plus
 // Settings/Privacy, which aren't in TABS but are still reachable.
-const DraftTool = lazy(() => import("./components/DraftTool"));
-const SeasonSettings = lazy(() => import("./components/SeasonSettings"));
-const Calendar = lazy(() => import("./components/Calendar"));
-const DraftRecap = lazy(() => import("./components/DraftRecap"));
-const Trends = lazy(() => import("./components/Trends"));
+const loadDraftTool = () => import("./components/DraftTool");
+const loadSeasonSettings = () => import("./components/SeasonSettings");
+const loadCalendar = () => import("./components/Calendar");
+const loadDraftRecap = () => import("./components/DraftRecap");
+const loadTrends = () => import("./components/Trends");
+const DraftTool = lazy(loadDraftTool);
+const SeasonSettings = lazy(loadSeasonSettings);
+const Calendar = lazy(loadCalendar);
+const DraftRecap = lazy(loadDraftRecap);
+const Trends = lazy(loadTrends);
 const PrivacyPolicy = lazy(() => import("./components/PrivacyPolicy"));
+
+// Warm the main tabs' chunks once the browser is idle after first load,
+// so tapping one of them later doesn't sit on TabFallback while its code
+// downloads. Initial load still only pays for Scoreboard; this just moves
+// the rest off the critical path instead of onto the first tap.
+function prefetchTabChunks() {
+  const run = () => {
+    [loadTrends, loadCalendar, loadDraftRecap, loadDraftTool, loadSeasonSettings]
+      .forEach((load) => load().catch(() => {}));
+  };
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout: 4000 });
+  else setTimeout(run, 2000);
+}
 import {
   track,
   EVENTS,
@@ -397,6 +415,7 @@ export default function App() {
   );
 
   useEffect(() => { setDeviceTypeSuperProperty(isMobile); }, [isMobile]);
+  useEffect(() => { prefetchTabChunks(); }, []);
 
   // Lazily fetch who's already claimed, only when the picker is actually
   // open and there's still a name to pick — no need to hold this in state
