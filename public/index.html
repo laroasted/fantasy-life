@@ -144,6 +144,17 @@
       @media (prefers-reduced-motion: reduce) {
         @keyframes skeletonShimmer { from { background-position: 50% 50%; } to { background-position: 50% 50%; } }
       }
+      /* Boot splash loading bar in #root's static fallback (see the
+         comment above <div id="root">). Same motion as App.jsx's own
+         `!loaded` screen so the handoff to React doesn't visibly change. */
+      @keyframes bootSplashBar {
+        0%, 100% { opacity: 0.4; transform: translateX(-20px); }
+        50% { opacity: 1; transform: translateX(80px); }
+      }
+      .boot-splash-bar { animation: bootSplashBar 1.5s ease-in-out infinite; }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash-bar { animation: none; }
+      }
       /* Remove number input spinners */
       input[type="number"]::-webkit-inner-spin-button,
       input[type="number"]::-webkit-outer-spin-button {
@@ -183,17 +194,41 @@
   </head>
   <body>
     <noscript>You need to enable JavaScript to run Fantasy Life Hub.</noscript>
-    <!-- Static fallback: this app is pure client-side React (ReactDOM.createRoot
-         in src/index.js does a full render, not hydrateRoot, so there's no
-         hydration mismatch to worry about) — a crawler that doesn't execute
-         JS, or that snapshots before the Supabase fetch in App.jsx resolves,
-         otherwise sees nothing but the noscript line above. React's first
-         commit replaces this div's contents immediately, so real visitors
-         never see it render. -->
+    <!-- Static fallback / boot splash. This app is pure client-side React
+         (ReactDOM.createRoot in src/index.js does a full render, not
+         hydrateRoot, so there's no hydration mismatch to worry about). A
+         crawler that doesn't execute JS, or that snapshots before the bundle
+         runs, would otherwise see nothing but the noscript line above, which
+         contributed to an AdSense "ads on screens without publisher-content"
+         rejection.
+
+         This IS visible to real visitors: it paints from the moment the HTML
+         parses until the JS bundle downloads, executes, and React's first
+         commit replaces #root's contents. On a phone cold-launching from the
+         home screen that's a few hundred ms or more. So the first viewport is
+         a branded splash that matches App.jsx's own `!loaded` screen (same
+         trophy, same colors, same loading bar), and the descriptive copy sits
+         below the fold in muted type. Don't hide that copy with CSS
+         (display:none, off-screen, zero-size, etc.): showing crawlers text
+         that users can't see is hidden-text cloaking under Google's spam and
+         AdSense policies. Below the fold, but genuinely visible, is fine. -->
     <div id="root">
-      <div style="max-width: 760px; margin: 40px auto; padding: 0 20px; font-family: 'Public Sans', system-ui, sans-serif; color: #F2F3F5;">
-        <h1 style="font-family: 'Sora', system-ui, sans-serif;">Fantasy Life Hub</h1>
-        <p>Fantasy Life Hub is a scoreboard and draft tool for a fantasy league built
+      <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 20px; text-align: center;">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#F2B84B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+          <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+          <path d="M4 22h16" />
+          <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+          <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+          <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+        </svg>
+        <h1 style="font-size: 22px; font-weight: 800; color: #F2F3F5;">Fantasy Life Hub</h1>
+        <div style="width: 120px; height: 3px; border-radius: 2px; background: #141922; overflow: hidden;">
+          <div class="boot-splash-bar" style="width: 40%; height: 100%; border-radius: 2px; background: #F2B84B;"></div>
+        </div>
+      </div>
+      <div style="max-width: 760px; margin: 0 auto; padding: 0 20px 48px; color: #7D8590; font-size: 14px; line-height: 1.6;">
+        <p style="margin-bottom: 12px;">Fantasy Life Hub is a scoreboard and draft tool for a fantasy league built
           around real-world outcomes instead of athletic box scores. Each season,
           league members draft picks across fifteen categories — NFL, NBA, MLB,
           NHL, NCAA Football, NCAA Basketball, ATP Tennis, international golf,
