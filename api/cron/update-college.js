@@ -146,7 +146,7 @@ async function fetchESPNTeams(sport, league) {
   for (var t of teams) {
    var team = t.team || {};
    if (!team.id) continue;
-   out.push({ id: team.id, teamName: team.name || '', displayName: team.displayName || '', abbreviation: team.abbreviation || '', location: team.location || '' });
+   out.push({ id: team.id, teamName: team.name || '', displayName: team.displayName || '', nickname: team.nickname || '', abbreviation: team.abbreviation || '', location: team.location || '' });
   }
   return out.length > 0 ? out : null;
  } catch (err) { console.error(' ' + league + ': team list fetch error — ' + err.message); return null; }
@@ -240,7 +240,12 @@ function computeNCAAFTier(games) {
  return last.won ? { tier: 1, label: 'Won ' + bowlName } : { tier: 0, label: 'Lost ' + bowlName };
 }
 
-const NAME_ALIASES = { 'Ole Miss': 'Mississippi', 'SMU': 'SMU Mustangs', 'LSU': 'LSU Tigers', 'UCLA': 'UCLA Bruins', 'USC': 'USC Trojans', 'BYU': 'BYU Cougars', 'TCU': 'TCU Horned Frogs' };
+// Pick name → ESPN's own naming. ESPN calls Connecticut "UConn" in every
+// field (location, nickname, abbreviation "CONN"), so the dropdown's
+// "Connecticut" never matched anything and scored as Unranked even while
+// UConn sat at #3 in the AP poll. update-projections.js already carried
+// this same alias for its Kalshi/Polymarket lookups.
+const NAME_ALIASES = { 'Connecticut': 'UConn', 'Ole Miss': 'Mississippi', 'SMU': 'SMU Mustangs', 'LSU': 'LSU Tigers', 'UCLA': 'UCLA Bruins', 'USC': 'USC Trojans', 'BYU': 'BYU Cougars', 'TCU': 'TCU Horned Frogs' };
 
 /**
 * Assigns base points with split/average tiebreaker logic.
@@ -287,21 +292,43 @@ async function fetchAPRankings(league, config) {
  } catch (err) { console.error(' ' + league + ': Fetch error — ' + err.message); return null; }
 }
 
+// ESPN's rankings feed carries NO displayName on its team objects (only
+// location / name / nickname / abbreviation — e.g. UConn is
+// {location:"UConn", name:"Huskies", nickname:"UConn", abbreviation:"CONN"}),
+// so the old `displayName || name` fallback silently turned every ranked
+// team's displayName into just its mascot. Rebuild the full
+// "Location Mascot" form here so it matches fetchESPNTeams()'s shape and
+// a pick stored as a full ESPN displayName (which is exactly what
+// api/draft-lookup.js submits for a confirmed autocomplete suggestion,
+// e.g. "UConn Huskies") still resolves.
 function parseRanks(ranks) {
- return ranks.filter(e => e?.team).map(e => ({
-  rank: e.current || e.rank || 0, teamName: e.team.name || e.team.shortDisplayName || '',
-  displayName: e.team.displayName || e.team.name || '', location: e.team.location || e.team.nickname || '',
-  abbreviation: e.team.abbreviation || '', apPoints: e.points || 0,
- }));
+ return ranks.filter(e => e?.team).map(e => {
+  var location = e.team.location || e.team.nickname || '', name = e.team.name || e.team.shortDisplayName || '';
+  return {
+   rank: e.current || e.rank || 0, teamName: name,
+   displayName: e.team.displayName || (location + ' ' + name).trim(), location: location,
+   nickname: e.team.nickname || '', abbreviation: e.team.abbreviation || '', apPoints: e.points || 0,
+  };
+ });
 }
 
+// Exact matches on every name field for every term first, THEN a
+// mascot-substring fallback. Order matters because the rankings list holds
+// only ~25 teams: a substring check against the full displayName would let
+// an unranked "Texas" or "Michigan" pick grab "Texas Tech Red Raiders" /
+// "Michigan State Spartans", and running it before trying the alias'
+// sibling term let "Ole Miss" → "Mississippi" grab "Mississippi State".
 function matchTeam(pickName, espnTeams) {
  var pick = pickName.trim(), alias = NAME_ALIASES[pick], terms = alias ? [alias, pick] : [pick];
+ var eq = function (a, b) { return (a || '').toLowerCase() === b; };
  for (var term of terms) {
   var lower = term.toLowerCase();
-  var loc = espnTeams.find(t => t.location.toLowerCase() === lower); if (loc) return loc;
-  var con = espnTeams.find(t => t.displayName.toLowerCase().includes(lower) || t.teamName.toLowerCase().includes(lower)); if (con) return con;
-  var abbr = espnTeams.find(t => t.abbreviation.toLowerCase() === lower); if (abbr) return abbr;
+  var exact = espnTeams.find(t => eq(t.location, lower) || eq(t.displayName, lower) || eq(t.nickname, lower) || eq(t.abbreviation, lower));
+  if (exact) return exact;
+ }
+ for (var term2 of terms) {
+  var lower2 = term2.toLowerCase();
+  var mascot = espnTeams.find(t => (t.teamName || '').toLowerCase().includes(lower2)); if (mascot) return mascot;
  }
  return null;
 }
