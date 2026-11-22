@@ -96,6 +96,8 @@ const FEATURED_GPS = [
   { tier: 'LV', keywords: ['las vegas grand prix'] },
 ];
 const FEATURED_GP_BONUS = { 1: 3, 2: 2, 3: 1 };
+// ~2h race + time for Jolpica to publish the classification.
+const RACE_RESULT_BUFFER_MS = 3 * 60 * 60 * 1000;
 
 async function fetchFeaturedGPPodiums(seasonYear) {
   var podiums = [];
@@ -110,7 +112,14 @@ async function fetchFeaturedGPPodiums(seasonYear) {
       var raceName = (race.raceName || '').toLowerCase();
       var gp = FEATURED_GPS.find(function (g) { return g.keywords.some(function (k) { return raceName.includes(k); }); });
       if (!gp) continue;
-      var hasHappened = race.date ? new Date(race.date).getTime() <= now : false;
+      // Jolpica's `date` is the race's UTC calendar date and `time` its
+      // UTC lights-out. Comparing the bare date (UTC midnight) treated a
+      // night race as "already run" hours before it started — the Las
+      // Vegas GP (Sat 8pm PT = 04:00Z Sunday) was checked mid-race and
+      // came back with no results. Require lights-out + a buffer instead,
+      // so "has happened" means "should have a classified result".
+      var startMs = race.date ? Date.parse(race.date + 'T' + (race.time || '00:00:00Z')) : NaN;
+      var hasHappened = !isNaN(startMs) && startMs + RACE_RESULT_BUFFER_MS <= now;
       if (!hasHappened) continue;
       try {
         var resultsUrl = 'https://api.jolpi.ca/ergast/f1/' + seasonYear + '/' + race.round + '/results.json';
@@ -118,6 +127,7 @@ async function fetchFeaturedGPPodiums(seasonYear) {
         if (!rres.ok) continue;
         var rdata = await rres.json();
         var raceResults = rdata?.MRData?.RaceTable?.Races?.[0]?.Results || [];
+        if (raceResults.length === 0) console.log('  F1: ' + race.raceName + ' has no published results yet — bonus will resolve on a later run');
         for (var r of raceResults) {
           var pos = parseInt(r.position, 10);
           if (!FEATURED_GP_BONUS[pos]) continue;
