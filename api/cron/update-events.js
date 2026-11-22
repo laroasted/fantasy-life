@@ -33,6 +33,13 @@
  *   Like every bonus write in this file: never overwrites a locked
  *   `bonus` field, and never guesses — an unresolved pick's existing
  *   bonus (including a manual commissioner entry) is left untouched.
+ *
+ * CHANGELOG (2026-11-22) — F1 breakdown rows
+ *   The F1 bonus total/note were automated but the per-GP breakdown under
+ *   an expanded Scoreboard row (event_majors) was still hand-entered, so
+ *   the 2026 Las Vegas GP bonus landed with no matching row. F1 now also
+ *   upserts one event_majors row per featured GP per pick (syncF1EventRows).
+ *   Tennis/Golf breakdown rows are still manual.
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -89,18 +96,29 @@ function isFieldLocked(locks, category, ownerName, field) { return locks ? !!loc
 // /races.json and /{round}/results.json shapes are long-documented,
 // stable Ergast-compatible endpoints.
 // ═══════════════════════════════════════════════════════════════════════
+// `label` is the event_majors.event_name the Scoreboard breakdown shows;
+// `rowMatch` recognizes an existing row for this GP however it was
+// originally typed (the pre-automation rows were entered by hand, e.g.
+// "US GP" or "US GP (Austin)"), so the cron updates that row in place
+// instead of adding a duplicate next to it.
 const FEATURED_GPS = [
-  { tier: 'AUS', keywords: ['australian grand prix'] },
-  { tier: 'MIA', keywords: ['miami grand prix'] },
-  { tier: 'ATX', keywords: ['united states grand prix'] },
-  { tier: 'LV', keywords: ['las vegas grand prix'] },
+  { tier: 'AUS', keywords: ['australian grand prix'], label: 'Australian GP', rowMatch: function (n) { return n.includes('australia'); } },
+  { tier: 'MIA', keywords: ['miami grand prix'], label: 'Miami GP', rowMatch: function (n) { return n.includes('miami'); } },
+  { tier: 'ATX', keywords: ['united states grand prix'], label: 'US GP', rowMatch: function (n) { return !n.includes('vegas') && (n.includes('us gp') || n.includes('united states') || n.includes('austin') || n.includes('cota')); } },
+  { tier: 'LV', keywords: ['las vegas grand prix'], label: 'Las Vegas GP', rowMatch: function (n) { return n.includes('vegas'); } },
 ];
+const PODIUM_LABEL = { 1: 'Winner', 2: '2nd', 3: '3rd' };
 const FEATURED_GP_BONUS = { 1: 3, 2: 2, 3: 1 };
 // ~2h race + time for Jolpica to publish the classification.
 const RACE_RESULT_BUFFER_MS = 3 * 60 * 60 * 1000;
 
+// Returns { podiums, races }: `podiums` feeds the bonus total exactly as
+// before; `races` is every featured GP that has run, with its full
+// classification, so the per-GP breakdown rows (event_majors) can be
+// written for every pick — "Outside P3" included — not just podium
+// finishers.
 async function fetchFeaturedGPPodiums(seasonYear) {
-  var podiums = [];
+  var podiums = [], races = [];
   try {
     var url = 'https://api.jolpi.ca/ergast/f1/' + seasonYear + '/races.json?limit=40';
     var res = await fetch(url, { headers: { 'User-Agent': 'FantasyLifeHub/1.0' }, signal: AbortSignal.timeout(10000) });
@@ -128,6 +146,16 @@ async function fetchFeaturedGPPodiums(seasonYear) {
         var rdata = await rres.json();
         var raceResults = rdata?.MRData?.RaceTable?.Races?.[0]?.Results || [];
         if (raceResults.length === 0) console.log('  F1: ' + race.raceName + ' has no published results yet — bonus will resolve on a later run');
+        if (raceResults.length > 0) {
+          races.push({
+            gp: gp,
+            raceName: race.raceName,
+            finishers: raceResults.map(function (r) {
+              var d = r.Driver || {};
+              return { name: ((d.givenName || '') + ' ' + (d.familyName || '')).trim(), position: parseInt(r.position, 10), positionText: r.positionText || '' };
+            }).filter(function (f) { return f.name; }),
+          });
+        }
         for (var r of raceResults) {
           var pos = parseInt(r.position, 10);
           if (!FEATURED_GP_BONUS[pos]) continue;
@@ -139,7 +167,68 @@ async function fetchFeaturedGPPodiums(seasonYear) {
       } catch (err) { console.error('  F1 featured GP results fetch failed for ' + race.raceName + ':', err.message); }
     }
   } catch (err) { console.error('  F1 featured GP schedule fetch failed:', err.message); }
-  return podiums;
+  return { podiums: podiums, races: races };
+}
+
+// Jolpica positionText: a number when classified, otherwise R (retired),
+// D (disqualified), W (withdrawn / did not start), N/E/F (not classified,
+// excluded, failed to qualify).
+function finishText(f) {
+  if (!f) return 'Did not race';
+  if (/^\d+$/.test(f.positionText)) return 'P' + f.positionText;
+  return { R: 'DNF', D: 'DSQ', W: 'DNS', N: 'NC', E: 'EX', F: 'DNQ' }[f.positionText] || f.positionText || '—';
+}
+
+// Writes the per-GP breakdown shown under a pick's expanded Scoreboard row
+// (event_majors). Before this, only picks.bonus/bonus_note were automated,
+// so the bonus total moved but the breakdown table — hand-entered rows —
+// never gained the new GP. Same guardrails as the bonus write: skips a
+// pick whose bonus is locked (the commissioner owns that pick's bonus,
+// breakdown included) and skips any individual row locked in Settings
+// (`F1|<owner>|row<idx>`, idx = position in event_order order, the same
+// index Scoreboard.jsx's rowLockIcon and SeasonSettings.jsx use). Only
+// writes when something actually differs, so a re-run is a no-op.
+async function syncF1EventRows(supabase, picks, races, locks, memberNameById) {
+  if (!races.length || !picks.length) return;
+  var pickIds = picks.map(function (p) { return p.id; });
+  var { data: existing, error: exErr } = await supabase.from('event_majors')
+    .select('id, pick_id, event_name, event_order, result, score, pts').in('pick_id', pickIds);
+  if (exErr) { console.error('  F1: event_majors read failed, skipping breakdown sync:', exErr.message); return; }
+  var byPick = {};
+  (existing || []).forEach(function (row) { (byPick[row.pick_id] = byPick[row.pick_id] || []).push(row); });
+
+  var inserted = 0, changed = 0;
+  for (var pick of picks) {
+    var ownerName = memberNameById[pick.member_id] || pick.member_id;
+    if (isFieldLocked(locks, 'F1', ownerName, 'bonus')) continue;
+    var rows = (byPick[pick.id] || []).slice().sort(function (a, b) { return (Number(a.event_order) || 0) - (Number(b.event_order) || 0); });
+    var maxOrder = rows.reduce(function (m, r) { return Math.max(m, Number(r.event_order) || 0); }, 0);
+
+    for (var race of races) {
+      var f = matchAthlete(pick.pick, race.finishers);
+      var pos = f && /^\d+$/.test(f.positionText) ? f.position : null;
+      var want = {
+        result: pos && PODIUM_LABEL[pos] ? PODIUM_LABEL[pos] : 'Outside P3',
+        score: finishText(f),
+        pts: pos && FEATURED_GP_BONUS[pos] ? FEATURED_GP_BONUS[pos] : 0,
+      };
+      var idx = rows.findIndex(function (r) { return race.gp.rowMatch((r.event_name || '').toLowerCase()); });
+      if (idx >= 0) {
+        var row = rows[idx];
+        if (locks['F1|' + ownerName + '|row' + idx]) continue;
+        if (row.result === want.result && row.score === want.score && Number(row.pts) === want.pts) continue;
+        var { error: upErr } = await supabase.from('event_majors').update(want).eq('id', row.id);
+        if (upErr) console.error('  F1: event_majors update failed for ' + ownerName + ' / ' + race.gp.label + ':', upErr.message);
+        else changed++;
+      } else {
+        maxOrder += 1;
+        var { error: insErr } = await supabase.from('event_majors').insert(Object.assign({ pick_id: pick.id, event_name: race.gp.label, event_order: maxOrder, note: '' }, want));
+        if (insErr) console.error('  F1: event_majors insert failed for ' + ownerName + ' / ' + race.gp.label + ':', insErr.message);
+        else inserted++;
+      }
+    }
+  }
+  console.log('  F1: breakdown rows — ' + inserted + ' added, ' + changed + ' updated');
 }
 
 // Sums podium bonus per driver across every featured GP already run this
@@ -558,8 +647,9 @@ module.exports = async function handler(req, res) {
     // a pick against it exactly the same way it resolves base-score names.
     var bonusByAthlete = {};
     if (league === 'F1') {
-      var podiums = await fetchFeaturedGPPodiums(seasonYear);
-      bonusByAthlete = aggregateF1Bonus(podiums);
+      var gpData = await fetchFeaturedGPPodiums(seasonYear);
+      bonusByAthlete = aggregateF1Bonus(gpData.podiums);
+      await syncF1EventRows(supabase, picks, gpData.races, locks, memberNameById);
     } else if (league === 'Golf') {
       bonusByAthlete = await fetchGolfMajorBonus();
     } else if (league === 'Tennis') {
