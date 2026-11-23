@@ -5,6 +5,19 @@
  * Tiebreaker: stocks with the same % change split/average the base points
  * they collectively occupy.
  * e.g. 2-way tie for ranks 1–2 out of 12 = (12+11)/2 = 11.5 each
+ *
+ * Stock splits: pctChange is (closePrice - openPrice) / openPrice, where
+ * openPrice is a snapshot taken once, at draft time, and never otherwise
+ * touched. A forward N-for-1 split divides the live trading price by N
+ * with zero real change to anyone's position — SNDK's 8-for-1 split
+ * (effective 2026-11-20) turned a flat stock into an apparent ~-87.5% move
+ * because openPrice was still carrying the pre-split price. fetchPrice()
+ * below also asks Yahoo for any splits between openPrice's capture date
+ * and today and rebases openPrice by the cumulative factor — the same
+ * thing a brokerage does to your cost basis after a split — so this is a
+ * one-time fix for SNDK and an evergreen one for every future split on
+ * any ticker. See phase23_stock_split_adjustments.sql for the column this
+ * uses to avoid re-applying a split it already folded in.
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -42,17 +55,38 @@ function isFieldLocked(locks, category, ownerName, field) {
   return locks ? !!locks[category + '|' + ownerName + '|' + field] : false;
 }
  
-async function fetchPrice(ticker) {
+/**
+ * Fetches the current price, plus any stock splits between `sinceUnix`
+ * (unix seconds — either the last split this pick already folded into its
+ * open price, or its draft date if it's never had one) and now.
+ *
+ * Yahoo's chart API returns splits as `events.splits`, keyed by the
+ * split's own unix timestamp, e.g. SNDK's 8-for-1:
+ *   { "1795185000": { date: 1795185000, numerator: 8, denominator: 1 } }
+ * A forward N-for-1 split has numerator=N, denominator=1 (reverse splits
+ * are the same shape the other way round); the price-rebasing factor is
+ * always denominator/numerator. Confirmed against SNDK's real numbers:
+ * $776.22 pre-split * (1/8) = $97.03, its actual first post-split price.
+ */
+async function fetchPrice(ticker, sinceUnix) {
   try {
     // Yahoo Finance uses dashes not dots for class shares (e.g. BRK.B must be BRK-B)
     var yahooTicker = ticker.replace(/\./g, '-');
-    var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + yahooTicker + '?interval=1d&range=1d';
+    var period1 = sinceUnix || (Math.floor(Date.now() / 1000) - 400 * 86400);
+    var period2 = Math.floor(Date.now() / 1000) + 86400; // pad a day for clock skew
+    var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + yahooTicker
+      + '?period1=' + period1 + '&period2=' + period2 + '&interval=1d&events=split';
     var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) { console.error('Yahoo Finance HTTP ' + res.status + ' for ' + ticker); return null; }
     var data = await res.json();
-    var meta = data?.chart?.result?.[0]?.meta;
+    var result = data?.chart?.result?.[0];
+    var meta = result?.meta;
     if (!meta) { console.error('No meta data for ' + ticker); return null; }
-    return meta.regularMarketPrice || meta.previousClose || null;
+    var price = meta.regularMarketPrice || meta.previousClose || null;
+    if (price === null) return null;
+    var splitsByTimestamp = (result.events && result.events.splits) || {};
+    var splits = Object.values(splitsByTimestamp).filter(function(s) { return !sinceUnix || s.date > sinceUnix; });
+    return { price: price, splits: splits };
   } catch (err) { console.error('Failed to fetch ' + ticker + ':', err.message); return null; }
 }
  
@@ -64,10 +98,14 @@ module.exports = async function handler(req, res) {
   var supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   console.log('📈 Fetching stock prices...\n');
  
-  var { data: season } = await supabase.from('seasons').select('year, locks').eq('status', 'active').single();
+  var { data: season } = await supabase.from('seasons').select('year, locks, draft_date').eq('status', 'active').single();
   if (!season) return res.status(200).json({ message: 'No active season found, skipping' });
- 
+
   var seasonYear = season.year, locks = season.locks || {};
+  // Falls back to fetchPrice()'s own 400-day lookback if a season somehow
+  // has no draft_date — never expected, but splits are rare enough that a
+  // slightly-too-wide window of "did this split since draft" costs nothing.
+  var draftDateUnix = season.draft_date ? Math.floor(new Date(season.draft_date).getTime() / 1000) : null;
  
   var { data: membersArr } = await supabase.from('members').select('id, name');
   var memberNameById = {};
@@ -77,20 +115,40 @@ module.exports = async function handler(req, res) {
   if (pickErr || !picks || picks.length === 0) return res.status(200).json({ message: 'No Stock picks found, skipping' });
  
   var pickIds = picks.map(function(p) { return p.id; });
-  var { data: stockRows } = await supabase.from('stock_prices').select('pick_id, open_price').in('pick_id', pickIds);
-  var openPriceByPickId = {};
-  (stockRows || []).forEach(function(s) { openPriceByPickId[s.pick_id] = Number(s.open_price); });
- 
+  var { data: stockRows } = await supabase.from('stock_prices').select('pick_id, open_price, split_adjusted_through').in('pick_id', pickIds);
+  var openPriceByPickId = {}, splitAdjustedThroughByPickId = {};
+  (stockRows || []).forEach(function(s) {
+    openPriceByPickId[s.pick_id] = Number(s.open_price);
+    splitAdjustedThroughByPickId[s.pick_id] = s.split_adjusted_through;
+  });
+
   var priceResults = [];
- 
+
   for (var pick of picks) {
     var ticker = pick.pick;
     var openPrice = openPriceByPickId[pick.id];
     if (openPrice == null || openPrice === 0) { console.warn('  ' + ticker + ': No open price or open price is 0 — skipping (check stock_prices table)'); continue; }
-    var closePrice = await fetchPrice(ticker);
-    if (closePrice === null) { console.warn('  ' + ticker + ': Failed to fetch — preserving existing'); continue; }
+    // Where to start looking for splits: right after the last one this
+    // pick already folded in, or its draft date if it's never had one.
+    var splitCheckSince = splitAdjustedThroughByPickId[pick.id] || draftDateUnix;
+    var fetched = await fetchPrice(ticker, splitCheckSince);
+    if (fetched === null) { console.warn('  ' + ticker + ': Failed to fetch — preserving existing'); continue; }
+    var closePrice = fetched.price;
+
+    // Rebase openPrice for every split since the last check, oldest first,
+    // and remember the latest one applied so a future run (Yahoo keeps
+    // returning the same historical split forever) doesn't apply it again.
+    var splitAdjustedThrough = splitAdjustedThroughByPickId[pick.id] || null;
+    var splitNotes = [];
+    fetched.splits.sort(function(a, b) { return a.date - b.date; }).forEach(function(s) {
+      openPrice = openPrice * (s.denominator / s.numerator);
+      splitAdjustedThrough = s.date;
+      splitNotes.push(s.numerator + '-for-' + s.denominator + ' on ' + new Date(s.date * 1000).toISOString().slice(0, 10));
+    });
+    if (splitNotes.length > 0) console.log('  ' + ticker + ': split-adjusted open price for ' + splitNotes.join(', ') + ' → $' + openPrice.toFixed(2));
+
     var pctChange = ((closePrice - openPrice) / openPrice) * 100;
-    priceResults.push({ ...pick, openPrice: openPrice, closePrice: closePrice, pctChange: pctChange });
+    priceResults.push({ ...pick, openPrice: openPrice, closePrice: closePrice, pctChange: pctChange, splitAdjustedThrough: splitAdjustedThrough });
     console.log('  ' + ticker + ': $' + openPrice.toFixed(2) + ' → $' + closePrice.toFixed(2) + ' (' + (pctChange >= 0 ? '+' : '') + pctChange.toFixed(2) + '%)');
   }
  
@@ -145,7 +203,7 @@ module.exports = async function handler(req, res) {
       continue;
     }
 
-    var { error: stockUpdateErr } = await supabase.from('stock_prices').update({ close_price: r.closePrice }).eq('pick_id', r.id);
+    var { error: stockUpdateErr } = await supabase.from('stock_prices').update({ close_price: r.closePrice, open_price: r.openPrice, split_adjusted_through: r.splitAdjustedThrough }).eq('pick_id', r.id);
     if (stockUpdateErr) { console.error('  Failed to update stock_prices ' + r.member_id + ':', stockUpdateErr.message); continue; }
 
     updated++;
