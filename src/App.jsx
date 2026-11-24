@@ -36,6 +36,7 @@ import {
   fetchClaimedMemberIds,
   SUPABASE_SESSION_STORAGE_KEY,
 } from "./utils/storage";
+import { diffSeasonEdits, persistSeasonEdits } from "./utils/seasonEdits";
 import { DRAFT_MEMBERS } from "./constants/members";
 import Scoreboard from "./components/Scoreboard";
 import AdUnit from "./components/AdUnit";
@@ -1079,10 +1080,23 @@ export default function App() {
     if (updatedSeason.paywalls && updatedSeason.year) {
       paywallsOk = await savePaywallsToSupabase(updatedSeason.year, updatedSeason.paywalls);
     }
-    if (!locksOk || !paywallsOk) {
+    // Scores, bonus notes, pick swaps and detail rows. These used to stop
+    // at the local state + cache above and silently revert on the next
+    // live load. See src/utils/seasonEdits.js for how each is written.
+    let editFailures = [];
+    if (updatedSeason.year) {
+      try {
+        const result = await persistSeasonEdits(supabase, updatedSeason, diffSeasonEdits(prevSeason, updatedSeason));
+        editFailures = result.failures;
+      } catch (err) {
+        editFailures = [err && err.message ? err.message : "unknown error"];
+      }
+    }
+    if (!locksOk || !paywallsOk || editFailures.length > 0) {
+      const parts = [!locksOk && "locks", !paywallsOk && "paywalls"].filter(Boolean);
       throw new Error(
         "Saved locally, but the write to Supabase failed (" +
-        [!locksOk && "locks", !paywallsOk && "paywalls"].filter(Boolean).join(", ") +
+        parts.concat(editFailures).join("; ") +
         ") — this change may revert on the next reload. Check your connection and try again."
       );
     }

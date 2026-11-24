@@ -544,6 +544,18 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   whenever there's genuinely no good match — this is additive, not a
   replacement for that escape hatch.
 
+## Settings edits → Supabase
+
+- Every Settings save goes through `handleSettingsSave` (`App.jsx`), which
+  writes locks, paywalls, and (via `src/utils/seasonEdits.js`) any changed
+  picks columns and detail rows. Detail rows are written through the
+  commissioner-checked `replace_pick_detail_rows` RPC
+  (`supabase/phase23_settings_detail_writes.sql`), never by opening table
+  RLS. If you add an editable field to Settings, add it to
+  `diffSeasonEdits`/`DETAIL_TABLES` too, or it will silently stay local.
+- Breakdown rows for Tennis/Golf/F1 (`event_majors`) are also written by
+  `update-events.js`; see "Breakdown rows" in `docs/bonus-automation.md`.
+
 ## Fantasy-year boundaries (league rules — read before touching any cron's date logic)
 
 - **The Oscars are the last scored event of every fantasy year.** The

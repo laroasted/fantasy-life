@@ -596,7 +596,15 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   });
 
   // 4b) Auto-recalculate base rankings for Actor, Actress, Musician, Stock
-  var autoRankCats = ['Actor', 'Actress', 'Musician', 'Stock'];
+  // Only for a category whose detail rows were edited in THIS save. This
+  // used to re-rank all four on every save, which was harmless while
+  // Settings edits never left the browser, but saves now persist
+  // (src/utils/seasonEdits.js), and re-ranking an untouched category
+  // would rewrite its real base scores as a side effect of, say, an NFL
+  // bonus edit.
+  var editedCats = {};
+  Object.keys(detailEdits).forEach(function (key) { editedCats[key.split("|")[0]] = true; });
+  var autoRankCats = ['Actor', 'Actress', 'Musician', 'Stock'].filter(function (c) { return editedCats[c]; });
   autoRankCats.forEach(function (cat) {
    var catArr = newCats[cat];
    var detArr = newDetail[cat];
@@ -619,10 +627,24 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
 
    memberMetrics.sort(function (a, b) { return b.metric - a.metric; });
 
+   // Ties split the points they jointly occupy, e.g. a 2-way tie for
+   // 1st–2nd of 12 = (12+11)/2 = 11.5 each, the same rule every scoring
+   // cron uses (assignBasePointsWithTiebreaker), so a Settings save and
+   // the next cron run agree instead of flip-flopping a tied pick's base.
    var totalMembers = memberMetrics.length;
+   var tiedBase = [];
+   for (var ti = 0; ti < memberMetrics.length; ) {
+    var tj = ti;
+    while (tj < memberMetrics.length && memberMetrics[tj].metric === memberMetrics[ti].metric) tj++;
+    var tieSum = 0;
+    for (var tp = ti; tp < tj; tp++) tieSum += (totalMembers - tp);
+    var tieAvg = Math.round((tieSum / (tj - ti)) * 100) / 100;
+    for (var tq = ti; tq < tj; tq++) tiedBase[tq] = tieAvg;
+    ti = tj;
+   }
    for (var ri = 0; ri < memberMetrics.length; ri++) {
     var mm = memberMetrics[ri];
-    var newBase = totalMembers - ri;
+    var newBase = tiedBase[ri];
     var oldBase = mm.entry.base;
     if (oldBase !== newBase) {
      log.push(cat + ' \u2014 ' + mm.owner + ': base auto-recalculated ' + oldBase + ' \u2192 ' + newBase + ' (metric: ' + Math.round(mm.metric * 100) / 100 + ')');
