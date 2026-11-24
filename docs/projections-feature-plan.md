@@ -733,9 +733,12 @@ can never drift out of sync with the number next to it:
 - **Grammys** (`addSingleWinnerTier`, also accumulates): "Projected to
   win Album of the Year", joined across however many of the 5 markets
   this pick tops.
-- **NCAAF/NCAAB** (still on the legacy EV path): a probability-stated
-  note — "34% projected to win College Football Playoff" — since this
-  path doesn't compute a discrete tier the way the others do.
+- **NCAAF/NCAAB** (still on the single-market EV path): a probability-stated
+  note — "35% chance to win the CFP National Championship" — since this
+  path doesn't compute a discrete tier the way the others do. Omitted for
+  a pick whose bonus is locked, and when no title-winner market exists
+  for the season's own championship year (see "Championship odds
+  matched the wrong markets" below).
 - **MLB/frozen NHL/MLS** (`runStatic`): "Season complete — locked".
 
 Surfaced on the Scoreboard in the same expanded-detail spot the
@@ -862,3 +865,51 @@ the generic fallback — same treatment Golf's `eventsRemaining === 0`
 case already gets in `buildRankingPointsModel`. NHL is unaffected (its
 record format has no dash, so `parseRecordToGamesPlayed` always returns
 null for it and it never reaches this branch).
+
+## Championship odds matched the wrong markets (2026-11)
+
+Reported from the live Scoreboard: NCAAB showed Illinois "Lost in Final
+Four" directly above "50% projected to win NCAA Tournament", Houston
+(out in the Sweet 16) at 44%, and the percentages across both college
+categories summed far past 100%.
+
+Root cause, confirmed against live Polymarket `/public-search` payloads:
+the lookup took the first market *anywhere in the search results* whose
+text mentioned the team, never checking what the question asked.
+"NCAA Tournament" returns "Which teams will be a #1 seed in the 2027
+NCAA Tournament?" first — Illinois's 0.50 there is exactly the "50%" on
+screen (four #1 seeds → those prices sum to ~400%). "College Football
+Playoff" returns make-the-title-game / make-the-quarters / make-the-semis
+/ top-4-seed events and no winner event at all (title-game odds sum to
+~200%). The pro bracket path had the same exposure: "World Series"
+returns "Team to advance to 2027 World Series" ahead of the champion
+market. A second, independent error: every market returned was for
+2027, but the 2026 season's NCAAB bonus is the March 2026 tournament,
+already played and locked.
+
+Fix (`matchMarketProbabilities`' `strictWinner` mode, used by college
+and the five pro brackets; Tennis/F1/Oscars/Grammys unchanged):
+
+- Only questions about winning the title (`win`, `be named … champion`),
+  rejecting make/reach/advance/seed/conference/division/"team from"/Final
+  Four variants.
+- `targetYear`: the championship the season's bonus is actually scored on
+  (NFL and NCAAF Y+1; NBA/NHL/MLB/MLS/NCAAB Y). Season-range labels
+  resolve to their end year ("2026-27 Stanley Cup" = 2027).
+- Whole-word team matching that rejects a different school sharing a word
+  ("Texas" ≠ "Texas Tech"/"Texas A&M", "Arizona" ≠ "Arizona State"),
+  exact `groupItemTitle` preferred, `active: false` placeholder markets
+  ("Team 99" at a flat 0.50) ignored.
+- If the matched probabilities in a category sum past 1.25, publish none
+  of them (`implausible_winner_prob_sum`).
+- Commissioner-locked bonuses are excluded from the lookup entirely (no
+  note, no bracket slot).
+- College searches changed to queries verified to surface the winner
+  events: "College Football National Champion", "NCAA Basketball
+  Champion" (women's event filtered out).
+
+Still a simplification, not addressed here: the college EV path credits
+only the title win (`prob × (10 − banked)`), not the intermediate tiers
+(5 for a semifinal loss, etc.), so mid-bracket college projections
+undercount a little.
+
