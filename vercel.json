@@ -27,7 +27,7 @@
       "requestMethod": "GET"
     },
     "update-events": {
-      "schedule": "0 4 * * *",
+      "schedule": "0 10 * * *",
       "path": "/api/cron/update-events",
       "requestMethod": "GET"
     },

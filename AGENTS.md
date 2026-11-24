@@ -191,7 +191,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
 | `member_row_expanded` | scoreboard | `surface`, `category`, `member_name` |
 | `data_fallback_used` | season, calendar, trends, activity_feed | `surface`, `fallback_level`, `reason` |
 | `app_loaded` | app | `data_source`, `is_mobile`, `archived_season_count` |
-| `season_loaded` | app | `data_source`, `year`, `is_refresh`, `trigger` (`initial`\|`manual_refresh`\|`realtime`) |
+| `season_loaded` | app | `data_source`, `year`, `is_refresh`, `trigger` (`initial`\|`manual_refresh`\|`realtime`\|`settings_resync`) |
 | `data_refresh_triggered` | app | `success`, `jobs_succeeded`, `jobs_failed`, `duration_ms`, `is_skipped` |
 | `overall_category_tile_clicked` | scoreboard | `category` |
 | `activity_feed_load_failed` | scoreboard | `error_message` |
@@ -543,6 +543,18 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   as before (Enter, or the Pick button with no suggestion chosen) for
   whenever there's genuinely no good match — this is additive, not a
   replacement for that escape hatch.
+
+## Settings edits → Supabase
+
+- Every Settings save goes through `handleSettingsSave` (`App.jsx`), which
+  writes locks, paywalls, and (via `src/utils/seasonEdits.js`) any changed
+  picks columns and detail rows. Detail rows are written through the
+  commissioner-checked `replace_pick_detail_rows` RPC
+  (`supabase/phase23_settings_detail_writes.sql`), never by opening table
+  RLS. If you add an editable field to Settings, add it to
+  `diffSeasonEdits`/`DETAIL_TABLES` too, or it will silently stay local.
+- Breakdown rows for Tennis/Golf/F1 (`event_majors`) are also written by
+  `update-events.js`; see "Breakdown rows" in `docs/bonus-automation.md`.
 
 ## Fantasy-year boundaries (league rules — read before touching any cron's date logic)
 

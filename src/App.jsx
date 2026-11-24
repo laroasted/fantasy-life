@@ -36,6 +36,7 @@ import {
   fetchClaimedMemberIds,
   SUPABASE_SESSION_STORAGE_KEY,
 } from "./utils/storage";
+import { diffSeasonEdits, persistSeasonEdits } from "./utils/seasonEdits";
 import { DRAFT_MEMBERS } from "./constants/members";
 import Scoreboard from "./components/Scoreboard";
 import AdUnit from "./components/AdUnit";
@@ -1079,6 +1080,36 @@ export default function App() {
     if (updatedSeason.paywalls && updatedSeason.year) {
       paywallsOk = await savePaywallsToSupabase(updatedSeason.year, updatedSeason.paywalls);
     }
+    // Scores, bonus notes, pick swaps and detail rows. These used to stop
+    // at the local state + cache above and silently revert on the next
+    // live load. See src/utils/seasonEdits.js for how each is written.
+    let editFailures = [];
+    if (updatedSeason.year) {
+      try {
+        const result = await persistSeasonEdits(supabase, updatedSeason, diffSeasonEdits(prevSeason, updatedSeason));
+        editFailures = result.failures;
+      } catch (err) {
+        editFailures = [err && err.message ? err.message : "unknown error"];
+      }
+    }
+    if (editFailures.length > 0) {
+      // Don't leave the unsaved edit on screen. Settings has already
+      // cleared its pending inputs, and the next save diffs against the
+      // season now in state, so re-saving the same value would diff to
+      // nothing and silently write nothing. Put back the pre-edit season
+      // (state, ref AND cache, since the cache was just overwritten with
+      // the unsaved edit above), then pull the truth from the database:
+      // anything that did save comes back, anything that didn't is gone,
+      // and redoing the edit diffs correctly again.
+      activeSeasonRef.current = prevSeason;
+      setActiveSeason(prevSeason);
+      cacheActiveSeason(prevSeason);
+      loadSeason(false, "settings_resync").catch(() => {});
+      throw new Error(
+        "Not saved to the database (" + editFailures.join("; ") +
+        "). The page is reloading the current data. Redo the edit once it does."
+      );
+    }
     if (!locksOk || !paywallsOk) {
       throw new Error(
         "Saved locally, but the write to Supabase failed (" +
@@ -1086,7 +1117,7 @@ export default function App() {
         ") — this change may revert on the next reload. Check your connection and try again."
       );
     }
-  }, [isCommissioner]);
+  }, [isCommissioner, loadSeason]);
 
   // No commissioner gate here on purpose: any visitor who pays their own
   // toll can lift their own paywall. The actual write goes through a

@@ -81,6 +81,64 @@ function LockBtn({ locked, onToggle, size }) {
  );
 }
 
+// Re-ranks one auto-ranked category (Actor, Actress, Musician, Stock) from
+// its detail rows, mutating `newCats`/`newDetail` in place and pushing a
+// line per base change onto `log`. Shared by applyChanges (after editing
+// rows) and deleteDetailRow (removing a film or song changes the metric
+// too), so both persist a base that matches the rows they persist.
+var AUTO_RANK_CATS = ["Actor", "Actress", "Musician", "Stock"];
+function rerankAutoCategory(newCats, newDetail, cat, log) {
+ var catArr = newCats[cat];
+ var detArr = newDetail[cat];
+ if (!catArr || !detArr) return;
+
+ var memberMetrics = catArr.map(function (entry) {
+  var d = detArr.find(function (x) { return x.owner === entry.owner; });
+  var metric = 0;
+
+  if (FILM_CATS.includes(cat) && d && d.films) {
+   metric = d.films.reduce(function (s, f) { return s + (f.score || 0); }, 0);
+  } else if (cat === 'Musician' && d && d.songs) {
+   metric = d.songs.reduce(function (s, sg) { return s + (Number(sg.weeks) || 0); }, 0);
+  } else if (cat === 'Stock' && d) {
+   metric = Number(d.pctChange) || 0;
+  }
+
+  return { owner: entry.owner, metric: metric, entry: entry, detail: d };
+ });
+
+ memberMetrics.sort(function (a, b) { return b.metric - a.metric; });
+
+ // Ties split the points they jointly occupy, e.g. a 2-way tie for
+ // 1st–2nd of 12 = (12+11)/2 = 11.5 each, the same rule every scoring
+ // cron uses (assignBasePointsWithTiebreaker), so a Settings save and
+ // the next cron run agree instead of flip-flopping a tied pick's base.
+ var totalMembers = memberMetrics.length;
+ var tiedBase = [];
+ for (var ti = 0; ti < memberMetrics.length; ) {
+  var tj = ti;
+  while (tj < memberMetrics.length && memberMetrics[tj].metric === memberMetrics[ti].metric) tj++;
+  var tieSum = 0;
+  for (var tp = ti; tp < tj; tp++) tieSum += (totalMembers - tp);
+  var tieAvg = Math.round((tieSum / (tj - ti)) * 100) / 100;
+  for (var tq = ti; tq < tj; tq++) tiedBase[tq] = tieAvg;
+  ti = tj;
+ }
+ for (var ri = 0; ri < memberMetrics.length; ri++) {
+  var mm = memberMetrics[ri];
+  var newBase = tiedBase[ri];
+  var oldBase = mm.entry.base;
+  if (oldBase !== newBase) {
+   log.push(cat + ' \u2014 ' + mm.owner + ': base auto-recalculated ' + oldBase + ' \u2192 ' + newBase + ' (metric: ' + Math.round(mm.metric * 100) / 100 + ')');
+   mm.entry.base = newBase;
+   mm.entry.total = newBase + (mm.entry.bonus || 0);
+   if (mm.detail) {
+    mm.detail.base = newBase;
+    mm.detail.total = newBase + (mm.detail.bonus || 0);
+   }
+  }
+ }
+}
 // ═══════════════════════════════════════════════════════════
 // MAIN SETTINGS COMPONENT
 // ═══════════════════════════════════════════════════════════
@@ -434,6 +492,7 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
    var removed = arr[idx];
    label = removed.title || removed.round || removed.event || removed.category || "row";
    arr.splice(idx, 1);
+   if (AUTO_RANK_CATS.includes(cat)) rerankAutoCategory(newSeason.categories, newSeason.detailedData, cat, []);
 
    // Every lock on a row AFTER idx needs its own embedded index shifted
    // down by one to keep tracking the row it actually belongs to, now
@@ -596,45 +655,16 @@ export default function SeasonSettings({ seasonData, onSave, isCommissioner, com
   });
 
   // 4b) Auto-recalculate base rankings for Actor, Actress, Musician, Stock
-  var autoRankCats = ['Actor', 'Actress', 'Musician', 'Stock'];
-  autoRankCats.forEach(function (cat) {
-   var catArr = newCats[cat];
-   var detArr = newDetail[cat];
-   if (!catArr || !detArr) return;
-
-   var memberMetrics = catArr.map(function (entry) {
-    var d = detArr.find(function (x) { return x.owner === entry.owner; });
-    var metric = 0;
-
-    if (FILM_CATS.includes(cat) && d && d.films) {
-     metric = d.films.reduce(function (s, f) { return s + (f.score || 0); }, 0);
-    } else if (cat === 'Musician' && d && d.songs) {
-     metric = d.songs.reduce(function (s, sg) { return s + (Number(sg.weeks) || 0); }, 0);
-    } else if (cat === 'Stock' && d) {
-     metric = Number(d.pctChange) || 0;
-    }
-
-    return { owner: entry.owner, metric: metric, entry: entry, detail: d };
-   });
-
-   memberMetrics.sort(function (a, b) { return b.metric - a.metric; });
-
-   var totalMembers = memberMetrics.length;
-   for (var ri = 0; ri < memberMetrics.length; ri++) {
-    var mm = memberMetrics[ri];
-    var newBase = totalMembers - ri;
-    var oldBase = mm.entry.base;
-    if (oldBase !== newBase) {
-     log.push(cat + ' \u2014 ' + mm.owner + ': base auto-recalculated ' + oldBase + ' \u2192 ' + newBase + ' (metric: ' + Math.round(mm.metric * 100) / 100 + ')');
-     mm.entry.base = newBase;
-     mm.entry.total = newBase + (mm.entry.bonus || 0);
-     if (mm.detail) {
-      mm.detail.base = newBase;
-      mm.detail.total = newBase + (mm.detail.bonus || 0);
-     }
-    }
-   }
-  });
+  // Only for a category whose detail rows were edited in THIS save. This
+  // used to re-rank all four on every save, which was harmless while
+  // Settings edits never left the browser, but saves now persist
+  // (src/utils/seasonEdits.js), and re-ranking an untouched category
+  // would rewrite its real base scores as a side effect of, say, an NFL
+  // bonus edit.
+  var editedCats = {};
+  Object.keys(detailEdits).forEach(function (key) { editedCats[key.split("|")[0]] = true; });
+  var autoRankCats = AUTO_RANK_CATS.filter(function (c) { return editedCats[c]; });
+  autoRankCats.forEach(function (cat) { rerankAutoCategory(newCats, newDetail, cat, log); });
 
   // 5) Pick swaps
   Object.keys(swaps).forEach(function (key) {

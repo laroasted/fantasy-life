@@ -45,6 +45,43 @@ bracket entirely) is a flat game result rather than bracket depth, and
 that's still gettable from the same per-team postseason schedule call. See
 "NCAAF/NCAAB bowl & tournament bonus" below for the full design.
 
+### Breakdown rows (Tennis / Golf / F1)
+
+The bonus total and note are only half of what the Scoreboard shows. The
+per-event table under an expanded pick (Australian GP / Miami GP / ...)
+comes from `event_majors`, which used to be hand-entered only, so an
+automated bonus could land with no matching row (the 2026 Las Vegas GP).
+`update-events.js`'s `syncEventRows` now writes one row per finished bonus
+event per pick:
+
+- **F1:** every featured GP that has run (lights-out + 3h): Winner / 2nd /
+  3rd / Outside P3, with the finish (P6, DNF, DSQ) as the sub-line.
+- **Golf:** every completed major, from the full leaderboard: Winner /
+  Runner-up / Top 10 / Outside top 10 / Missed cut / Did not play, with the
+  position (T7, CUT) as the sub-line.
+- **Tennis:** each major once its final has been seen: Winner / Runner-up /
+  Semifinal / Before SF. Coarser than the others because the source only
+  lists semifinalists, so "Before SF" can't tell an early loss from not
+  entering.
+
+Existing hand-entered rows are matched by name ("US GP (Austin)", "The
+Masters") and updated in place. A pick with a locked bonus, and any single
+locked row, is left alone. Frozen leagues still get rows (never base or
+bonus), so Golf backfills majors it scored before its Aug 31 freeze.
+
+### Settings edits persist (phase 23)
+
+Settings → Scores & Bonus edits used to stop at the browser: only locks
+and paywalls reached Supabase, so a manual bonus fix or breakdown-row edit
+reverted on the next live load. `src/utils/seasonEdits.js` now diffs each
+save and writes picks columns (pick/base/bonus/bonus_note, via the phase11
+commissioner policy) and detail rows (via the `replace_pick_detail_rows`
+RPC in `supabase/phase23_settings_detail_writes.sql`). Both refuse to
+overwrite data a cron changed after the page loaded and surface an error
+instead. **Apply phase23 in the Supabase SQL editor before deploying**, or
+detail-row saves will fail with a "function not found" error (shown in
+Settings; nothing is lost).
+
 ## Oscar/Grammy: Wikipedia, not Wikidata — and not `update-projections.js`
 
 `update-projections.js` already had `applyOscarBonus`/`applyGrammyBonus`,
