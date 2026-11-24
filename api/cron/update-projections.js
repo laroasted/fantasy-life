@@ -300,91 +300,20 @@ async function fetchJsonDiagnostic(url, ms) {
  * actually found and confirmed so far, not a guess at others that might
  * exist. A no-op for any name that doesn't match one of these patterns.
  */
-const VERIFIED_NAME_ALIASES = { 'LAFC': 'Los Angeles FC', 'NYCFC': 'New York City FC', 'Connecticut': 'UConn' };
+//   - MLB's "D-backs" pick label: the real market says "Will the Arizona
+//     Diamondbacks win the 2027 World Series?" (confirmed live 2026-11).
+//   - "Ole Miss": the 2027 CFP National Champion market lists it as
+//     "Mississippi Rebels" (confirmed live 2026-11). Aliased to the full
+//     label, not bare "Mississippi", so it can't hit Mississippi State.
+const VERIFIED_NAME_ALIASES = {
+  'LAFC': 'Los Angeles FC', 'NYCFC': 'New York City FC', 'Connecticut': 'UConn',
+  'D-backs': 'Diamondbacks', 'Ole Miss': 'Mississippi Rebels',
+};
 function nameVariants(name) {
   const variants = [name];
   if (/\bState\b/i.test(name)) variants.push(name.replace(/\bState\b/i, 'St.'));
   if (VERIFIED_NAME_ALIASES[name]) variants.push(VERIFIED_NAME_ALIASES[name]);
   return variants;
-}
-
-async function findPolymarketProbability(titleKeyword, outcomeKeywords) {
-  const candidates = Array.isArray(outcomeKeywords) ? outcomeKeywords : [outcomeKeywords];
-  // VERIFIED live via Firecrawl's Alexandria integration (which has its
-  // own network path, unlike this file's deploy target) — NOT the
-  // /events?title= filter used before, which three separate live runs
-  // proved doesn't actually filter anything. This is Polymarket's real
-  // full-text search: querying "Super Bowl Champion" correctly found the
-  // current season's actual market even though it's literally titled
-  // "Pro Football: 2027 Champion" (Polymarket avoids the NFL's
-  // trademarked term) — sharing zero words with the query. Confirmed
-  // field names too: question/groupItemTitle/outcomes/outcomePrices on
-  // each event's markets[] are exactly what this file already parses
-  // below. events_status=active is Polymarket's own upstream filter
-  // (confirmed via the capability's documented parameter list); the
-  // active/closed check below is kept as a client-side safety net in
-  // case that upstream param doesn't behave as named.
-  const url = 'https://gamma-api.polymarket.com/public-search?events_status=active&limit_per_type=10&q=' + encodeURIComponent(titleKeyword);
-  const res = await fetchJsonDiagnostic(url, 8000);
-  if (res.error) return { prob: null, reason: 'fetch_error:' + res.error };
-  if (!res.ok) return { prob: null, reason: 'http_' + res.status };
-  const data = res.json;
-  const allEvents = Array.isArray(data) ? data : (data && data.events) || [];
-  const events = allEvents.filter((ev) => ev.active !== false && ev.closed !== true);
-  if (!events || events.length === 0) return { prob: null, reason: 'no_active_events_matched_query(' + titleKeyword + ')' };
-
-  const needles = candidates.map((k) => (k || '').toLowerCase()).filter(Boolean);
-  let marketsScanned = 0;
-  for (const ev of events) {
-    const markets = ev.markets || [];
-    for (const m of markets) {
-      marketsScanned++;
-      const question = (m.question || m.groupItemTitle || m.title || '').toLowerCase();
-      if (!needles.some((n) => question.includes(n))) continue;
-      try {
-        const outcomes = JSON.parse(m.outcomes || '[]');
-        const prices = JSON.parse(m.outcomePrices || '[]');
-        const yesIdx = outcomes.findIndex((o) => String(o).toLowerCase() === 'yes');
-        const price = yesIdx >= 0 ? parseFloat(prices[yesIdx]) : parseFloat(prices[0]);
-        if (!isNaN(price)) return { prob: clamp(price, 0, 1), reason: 'matched' };
-      } catch (e) { /* malformed market payload — skip, don't guess */ }
-    }
-  }
-  return { prob: null, reason: events.length + '_events_' + marketsScanned + '_markets_none_matched_outcome(' + candidates.join('|') + ')' };
-}
-
-/**
- * Secondary/best-effort Kalshi lookup. Uses only the officially-documented
- * public endpoints (no API key). The series ticker guess is NOT verified
- * live — this is intentionally best-effort and silently returns null on
- * any shape mismatch rather than throwing. Not currently given a real
- * series ticker anywhere this file calls findChampionshipProbability
- * (kalshiSeriesGuess is always null), so this path is dead code until
- * someone has a verified ticker to pass in — kept because the function
- * itself is sound, just unfed.
- */
-async function findKalshiProbability(seriesTickerGuess, outcomeKeyword) {
-  const url = 'https://external-api.kalshi.com/trade-api/v2/markets?series_ticker=' + encodeURIComponent(seriesTickerGuess) + '&status=open&limit=100';
-  const data = await fetchJsonWithTimeout(url, 8000);
-  const markets = data && data.markets;
-  if (!Array.isArray(markets) || markets.length === 0) return null;
-
-  const needle = outcomeKeyword.toLowerCase();
-  const match = markets.find((m) => (m.title || m.yes_sub_title || '').toLowerCase().includes(needle));
-  if (!match) return null;
-  const yesBid = typeof match.yes_bid_dollars === 'number' ? match.yes_bid_dollars : (match.yes_bid || 0) / 100;
-  return isNaN(yesBid) ? null : clamp(yesBid, 0, 1);
-}
-
-/** Tries Polymarket then Kalshi; returns { prob, source, reason }. reason is only meaningful when prob is null. */
-async function findChampionshipProbability(titleKeyword, outcomeKeyword, kalshiSeriesGuess) {
-  const poly = await findPolymarketProbability(titleKeyword, outcomeKeyword);
-  if (poly.prob !== null) return { prob: poly.prob, source: 'polymarket:' + titleKeyword, reason: null };
-  if (kalshiSeriesGuess) {
-    const kalshi = await findKalshiProbability(kalshiSeriesGuess, outcomeKeyword);
-    if (kalshi !== null) return { prob: kalshi, source: 'kalshi:' + kalshiSeriesGuess, reason: null };
-  }
-  return { prob: null, source: null, reason: 'polymarket:' + poly.reason };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -825,54 +754,164 @@ function attachBonusSampler(models, bonusProbByOwner, bonusPointsIfWin) {
 // live projection output.
 // ═══════════════════════════════════════════════════════════════════════
 
+// ── Strict championship-winner matching ────────────────────────────────
+// Polymarket's full-text search (/public-search, verified live) returns
+// EVERY event loosely related to the query, not just the title-winner
+// market. Confirmed live 2026-11: "NCAA Tournament" returned "Which teams
+// will be a #1 seed" and "Team to advance to the Final Four" events ahead
+// of anything about winning; "College Football Playoff" returned "Team to
+// Make National Championship [Game]", "make Quarters/Semis", "Top 4
+// Seeds" and no winner event at all; "World Series" returned "Team to
+// advance to 2027 World Series" ahead of the champion market. Taking the
+// first market whose text merely mentions the team surfaced those
+// probabilities as "% to win" (Illinois at 50% = its #1-seed price),
+// summing to 200-400% across a category. Strict mode below only accepts a
+// question that is literally about winning the title, for the right
+// championship year, matched on whole team names.
+
+// A question has to be about winning the whole thing...
+const WINNER_QUESTION_RE = /\bwin\b|\bbe named\b[^?]*\bchampion\b|\bbe the\b[^?]*\bchampion\b/i;
+// ...and not one of the many partial-progress / grouped variants that share
+// the same wording ("Will the ACC conference win...", "Will a team from
+// Texas win...", "Will an Atlantic Division team win the Stanley Cup?").
+const NON_WINNER_QUESTION_RE = /\b(make|makes|reach|reaches|advance|advances|seed|seeded|qualify|qualifies|conference|division|matchup|attend|appear|perform)\b|\bfinal four\b|\bteam from\b|\btop \d+\b/i;
+
+// Words that, sitting right after/before a team name, mean it's a DIFFERENT
+// school: "Texas" must not match "Texas Tech"/"Texas A&M", "Arizona" must
+// not match "Arizona State", "Michigan" must not match "Western Michigan".
+// Both are present in the live 2027 CFB/NCAAB champion markets.
+const QUALIFIER_AFTER = new Set(['tech', 'state', 'st', 'st.', 'a&m', 'christian', 'southern', 'international', '(oh)', '(fl)']);
+const QUALIFIER_BEFORE = new Set(['north', 'south', 'east', 'west', 'northern', 'southern', 'eastern', 'western', 'central']);
+
+function escapeRegExp(str) { return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/** Whole-word match of `needle` inside `text` that isn't actually a
+ * differently-named school sharing the same leading/trailing word. */
+function mentionsTeam(text, needle) {
+  const hay = (text || '').toLowerCase();
+  const n = (needle || '').toLowerCase().trim();
+  if (!n) return false;
+  const re = new RegExp('(^|[^a-z0-9&])' + escapeRegExp(n) + '(?=$|[^a-z0-9&])', 'g');
+  let m;
+  while ((m = re.exec(hay)) !== null) {
+    const start = m.index + m[1].length;
+    const end = start + n.length;
+    const nextWord = (hay.slice(end).trim().split(/\s+/)[0] || '').replace(/[?,!:;]+$/, '');
+    const prevWord = (hay.slice(0, start).trim().split(/\s+/).pop() || '');
+    if (QUALIFIER_AFTER.has(nextWord) || QUALIFIER_BEFORE.has(prevWord)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** Championship years referenced in a market's text. A season-range label
+ * resolves to the year the championship is actually decided: "2026-27 CFP"
+ * and "2026-27 NHL Stanley Cup Champion" both mean 2027. */
+function championshipYearsIn(text) {
+  const years = [];
+  const re = /\b(20\d\d)(?:\s*[-–/]\s*(\d{2}|20\d\d))?\b/g;
+  let m;
+  while ((m = re.exec(text || '')) !== null) {
+    if (m[2]) years.push(m[2].length === 2 ? Number(m[1].slice(0, 2) + m[2]) : Number(m[2]));
+    else years.push(Number(m[1]));
+  }
+  return years;
+}
+
+/** True only if the market (or, failing that, its event) names targetYear
+ * as the championship year. No year at all is treated as a mismatch: the
+ * bug this guards against is precisely a different year's market being
+ * read as this season's. */
+function marketIsForYear(question, eventTitle, targetYear) {
+  let years = championshipYearsIn(question);
+  if (years.length === 0) years = championshipYearsIn(eventTitle);
+  return years.includes(targetYear);
+}
+
+function marketYesPrice(m) {
+  try {
+    const outcomes = JSON.parse(m.outcomes || '[]');
+    const prices = JSON.parse(m.outcomePrices || '[]');
+    const yesIdx = outcomes.findIndex((o) => String(o).toLowerCase() === 'yes');
+    const price = yesIdx >= 0 ? parseFloat(prices[yesIdx]) : parseFloat(prices[0]);
+    return isNaN(price) ? null : clamp(price, 0, 1);
+  } catch (e) { return null; /* malformed market payload — skip, don't guess */ }
+}
+
+// One title has one winner, so the win probabilities of a category's
+// picks (a subset of the field) can't legitimately add up to much more
+// than 1 (a little over allows for the market's own overround/spread).
+// Anything beyond that means the matched markets aren't mutually
+// exclusive title-winner markets, so publishing them would repeat the bug
+// above. Live 2026-11 full-field sums: NFL 1.02, NBA 1.03, NHL 1.04,
+// CFB 0.97, NCAAB 1.14.
+const MAX_WINNER_PROB_SUM = 1.25;
+
 /**
- * Looks up ONE betting-market event (by title keyword) and returns a win
- * probability per PICK, in a single search call shared across the whole
- * category — not one search per pick like findChampionshipProbability.
- * Every pick's probability has to come from the same market snapshot to
- * be comparable against each other, which rank-based tier assignment
- * needs (and as a side effect, this also cuts the network calls for a
- * 12-pick category from 12 down to 1).
+ * Pure matching core of findMarketProbabilitiesForPicks — split out so it
+ * can be exercised against saved live search payloads without a network.
+ *
+ * opts.strictWinner: only title-winner questions (see above), whole-word
+ *   team matching, placeholder markets (active === false, e.g. "Team 99"
+ *   at a flat 0.50 in the live NCAAB market) ignored, an exact
+ *   groupItemTitle match preferred, and the summed-probability check.
+ * opts.targetYear: with strictWinner, also require that the market is for
+ *   this championship year (see marketIsForYear).
  */
-async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVariants, eventFilter) {
-  const url = 'https://gamma-api.polymarket.com/public-search?events_status=active&limit_per_type=10&q=' + encodeURIComponent(titleKeyword);
-  const res = await fetchJsonDiagnostic(url, 8000);
-  if (res.error) return { probs: {}, reason: 'fetch_error:' + res.error };
-  if (!res.ok) return { probs: {}, reason: 'http_' + res.status };
-  const data = res.json;
-  const allEvents = Array.isArray(data) ? data : (data && data.events) || [];
+function matchMarketProbabilities(allEvents, picksWithNameVariants, eventFilter, opts = {}) {
+  const strict = !!opts.strictWinner;
   // eventFilter is an extra client-side narrowing beyond active/closed —
   // needed because Polymarket's search is loose enough that e.g. "Best
   // Actor Winner" also returns the separate "Best Supporting Actor
   // Winner" event (confirmed live), the same class of cross-match
   // already found and fixed for F1's practice-lap vs podium markets.
-  const events = allEvents.filter((ev) => ev.active !== false && ev.closed !== true && (!eventFilter || eventFilter(ev)));
-  if (!events || events.length === 0) return { probs: {}, reason: 'no_active_events_matched_query(' + titleKeyword + ')' };
+  const events = (allEvents || []).filter((ev) => ev.active !== false && ev.closed !== true && (!eventFilter || eventFilter(ev)));
+  if (events.length === 0) return { probs: {}, reason: 'no_active_events_matched_query' };
+
+  const isEligibleMarket = (m, ev) => {
+    const question = m.question || m.groupItemTitle || m.title || '';
+    if (!strict) return true;
+    if (m.active === false) return false;
+    if (!WINNER_QUESTION_RE.test(question) || NON_WINNER_QUESTION_RE.test(question)) return false;
+    if (opts.targetYear && !marketIsForYear(question, ev.title || '', opts.targetYear)) return false;
+    return true;
+  };
+  const textMatches = (m, needles) => {
+    const question = (m.question || m.groupItemTitle || m.title || '');
+    return strict
+      ? needles.some((n) => mentionsTeam(question, n))
+      : needles.some((n) => question.toLowerCase().includes(n));
+  };
 
   let marketsScanned = 0;
+  let eligibleMarkets = 0;
   const probs = {};
   for (const entry of picksWithNameVariants) {
-    const needles = entry.nameVariants.map((v) => (v || '').toLowerCase()).filter(Boolean);
+    const needles = entry.nameVariants.map((v) => (v || '').toLowerCase().trim()).filter(Boolean);
     let matchedPrice = null;
     for (const ev of events) {
       if (matchedPrice !== null) break;
+      const candidates = [];
       for (const m of (ev.markets || [])) {
         marketsScanned++;
-        const question = (m.question || m.groupItemTitle || m.title || '').toLowerCase();
-        if (!needles.some((n) => question.includes(n))) continue;
-        try {
-          const outcomes = JSON.parse(m.outcomes || '[]');
-          const prices = JSON.parse(m.outcomePrices || '[]');
-          const yesIdx = outcomes.findIndex((o) => String(o).toLowerCase() === 'yes');
-          const price = yesIdx >= 0 ? parseFloat(prices[yesIdx]) : parseFloat(prices[0]);
-          if (!isNaN(price)) { matchedPrice = clamp(price, 0, 1); break; }
-        } catch (e) { /* malformed market payload — skip, don't guess */ }
+        if (!isEligibleMarket(m, ev)) continue;
+        eligibleMarkets++;
+        if (textMatches(m, needles)) candidates.push(m);
+      }
+      if (candidates.length === 0) continue;
+      const exact = strict ? candidates.find((m) => needles.includes((m.groupItemTitle || '').toLowerCase().trim())) : null;
+      for (const m of (exact ? [exact] : candidates)) {
+        const price = marketYesPrice(m);
+        if (price !== null) { matchedPrice = price; break; }
       }
     }
     probs[entry.id] = matchedPrice;
   }
   const anyMatched = Object.keys(probs).some((id) => probs[id] !== null);
   if (!anyMatched) {
+    if (strict && eligibleMarkets === 0) {
+      return { probs, reason: events.length + '_events_' + marketsScanned + '_markets_none_are_title_winner_markets' + (opts.targetYear ? '_for_' + opts.targetYear : '') };
+    }
     return { probs, reason: events.length + '_events_' + marketsScanned + '_markets_none_matched_any_pick' };
   }
 
@@ -890,7 +929,34 @@ async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVarian
     return { probs: {}, reason: 'flat_untraded_market(all_matched_at_' + matchedValues[0] + ')' };
   }
 
+  if (strict) {
+    const sum = matchedValues.reduce((a, b) => a + b, 0);
+    if (sum > MAX_WINNER_PROB_SUM) {
+      return { probs: {}, reason: 'implausible_winner_prob_sum(' + round2(sum) + ')' };
+    }
+  }
+
   return { probs, reason: null };
+}
+
+/**
+ * Looks up ONE betting-market search (by title keyword) and returns a win
+ * probability per PICK, in a single search call shared across the whole
+ * category — every pick's probability has to come from the same market
+ * snapshot to be comparable against each other, which rank-based tier
+ * assignment needs (and it's 1 network call per category, not 12).
+ * See matchMarketProbabilities for eventFilter/opts.
+ */
+async function findMarketProbabilitiesForPicks(titleKeyword, picksWithNameVariants, eventFilter, opts) {
+  const url = 'https://gamma-api.polymarket.com/public-search?events_status=active&limit_per_type=10&q=' + encodeURIComponent(titleKeyword);
+  const res = await fetchJsonDiagnostic(url, 8000);
+  if (res.error) return { probs: {}, reason: 'fetch_error:' + res.error };
+  if (!res.ok) return { probs: {}, reason: 'http_' + res.status };
+  const data = res.json;
+  const allEvents = Array.isArray(data) ? data : (data && data.events) || [];
+  const result = matchMarketProbabilities(allEvents, picksWithNameVariants, eventFilter, opts);
+  if (result.reason === 'no_active_events_matched_query') result.reason = 'no_active_events_matched_query(' + titleKeyword + ')';
+  return result;
 }
 
 /**
@@ -1302,14 +1368,24 @@ module.exports = async function handler(req, res) {
       });
 
       if (bonusConfig) {
+        // A commissioner-locked bonus is final: simulateCategory already
+        // holds its number flat (lockedBonus), so it must not take part in
+        // an odds lookup either. Otherwise it still gets a misleading "X%
+        // to win" note (Illinois showed "Lost in Final Four" next to "50%
+        // projected to win NCAA Tournament"), and in the tier-ladder path
+        // it would occupy a projected bracket slot a live pick should get.
+        const openModels = models.filter((m) => !m.lockedBonus);
+        const picksWithVariants = openModels.map((m) => ({ id: m.id, nameVariants: nameVariants(m.pickName) }));
+        const lookupOpts = { strictWinner: !!bonusConfig.strictWinner, targetYear: bonusConfig.targetYear || null };
+        const skippedLookup = () => ({ probs: {}, reason: openModels.length === 0 ? 'skipped:all_bonuses_locked' : 'skipped:time_budget_exceeded' });
+
         if (bonusConfig.kind === 'tierLadder') {
           // Match on the PICKED TEAM/ATHLETE's name, never the league
           // member's — a championship market's outcome text says "Kansas
           // City Chiefs", never "LaRosa".
-          const picksWithVariants = models.map((m) => ({ id: m.id, nameVariants: nameVariants(m.pickName) }));
-          let lookup = { probs: {}, reason: 'skipped:time_budget_exceeded' };
-          if (!pastDeadline()) {
-            try { lookup = await findMarketProbabilitiesForPicks(bonusConfig.titleKeyword, picksWithVariants); }
+          let lookup = skippedLookup();
+          if (openModels.length > 0 && !pastDeadline()) {
+            try { lookup = await findMarketProbabilitiesForPicks(bonusConfig.titleKeyword, picksWithVariants, bonusConfig.eventFilter, lookupOpts); }
             catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
           }
           models = bonusConfig.mode === 'add'
@@ -1324,37 +1400,33 @@ module.exports = async function handler(req, res) {
             sourceNote: m.sourceNote + '|' + (applied.sourceNoteSuffix || 'custom_bonus'),
           }));
         } else {
-          // Legacy single-market EV path — still used for categories this
-          // pass didn't rework (NCAAF/NCAAB's non-bracket-shaped bowl/CFP
-          // tiers, Actor/Actress/Musician awards): every pick's own win
-          // probability × bonusPointsIfWin, added on top of the banked
-          // floor. See docs/projections-feature-plan.md for why the
-          // bracket sports moved off this model and these haven't, yet.
-          const bonusProbByOwner = {};
-          // Captures the FIRST failure reason seen in this category as a
-          // category-wide diagnostic (titleKeyword is the same for every
-          // pick here, so the root cause — no events found, events found
-          // but no outcome matched, a fetch error — is almost always the
-          // same across all of them too). Tells the next live run exactly
-          // where the lookup is failing instead of just "no match".
-          let bonusDiagnostic = null;
-          for (const m of models) {
-            if (pastDeadline()) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'skipped:time_budget_exceeded'; continue; }
-            try {
-              const found = await findChampionshipProbability(bonusConfig.titleKeyword, nameVariants(m.pickName), bonusConfig.kalshiSeriesGuess);
-              bonusProbByOwner[m.ownerName] = found.prob;
-              if (found.prob === null && !bonusDiagnostic) bonusDiagnostic = found.reason;
-            } catch (e) { bonusProbByOwner[m.ownerName] = null; if (!bonusDiagnostic) bonusDiagnostic = 'exception:' + e.message; }
-            await delay(150);
+          // Single-market EV path — NCAAF/NCAAB, whose real bonus rule
+          // (bowl games / tournament rounds) doesn't map onto
+          // rankIntoTierBonus as directly as the pro brackets: every open
+          // pick's own title-win probability × the remaining upside to
+          // bonusPointsIfWin, added on top of the banked floor. One search
+          // per category (same market snapshot for every pick), strict
+          // title-winner matching for this season's own championship year.
+          let lookup = skippedLookup();
+          if (openModels.length > 0 && !pastDeadline()) {
+            try { lookup = await findMarketProbabilitiesForPicks(bonusConfig.titleKeyword, picksWithVariants, bonusConfig.eventFilter, lookupOpts); }
+            catch (e) { lookup = { probs: {}, reason: 'exception:' + e.message }; }
           }
+          const bonusProbByOwner = {};
+          models.forEach((m) => {
+            const p = lookup.probs[m.id];
+            bonusProbByOwner[m.ownerName] = (!m.lockedBonus && typeof p === 'number') ? p : null;
+          });
           models = attachBonusSampler(models, bonusProbByOwner, bonusConfig.bonusPointsIfWin);
           models = models.map((m) => {
             const prob = bonusProbByOwner[m.ownerName];
-            const note = (typeof prob === 'number' && prob > 0.01)
-              ? Math.round(prob * 100) + '% projected to win ' + bonusConfig.titleKeyword
-              : m.bonusNote;
+            let note = m.bonusNote;
+            if (typeof prob === 'number' && prob >= 0.005) {
+              const pct = prob < 0.01 ? '<1' : String(Math.round(prob * 100));
+              note = pct + '% chance to win ' + bonusConfig.titleLabel;
+            }
             return Object.assign({}, m, {
-              sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only|odds_lookup:' + (bonusDiagnostic || 'matched'),
+              sourceNote: m.sourceNote + '|bonus_ev_models_title_win_only|odds_lookup:' + (lookup.reason || 'matched'),
               bonusNote: note,
             });
           });
@@ -1418,7 +1490,7 @@ module.exports = async function handler(req, res) {
       await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen', 'Season complete — locked');
       continue;
     }
-    const bonusConfig = bonusConfigFor(league);
+    const bonusConfig = bonusConfigFor(league, seasonYear);
     await runCategory(league, 'desc', async (picks) => {
       const models = await buildWinPctModel(picks, league, seasonYear, locks, ownerNameById, pastDeadline);
       // NBA: bonusConfigFor returns null here because the bonus-deciding
@@ -1445,7 +1517,7 @@ module.exports = async function handler(req, res) {
       await runStatic(league, 'static', 'deterministic', league.toLowerCase() + '_season_over_frozen', 'Season complete — locked');
       continue;
     }
-    const bonusConfig = bonusConfigFor(league);
+    const bonusConfig = bonusConfigFor(league, seasonYear);
     await runCategory(league, 'desc', async (picks) => {
       const models = await buildPointsRateModel(picks, league, ownerNameById);
       return bonusConfig ? models : models.map((m, idx) => {
@@ -1460,16 +1532,33 @@ module.exports = async function handler(req, res) {
     }, bonusConfig);
   }
   // ── College (AP poll, not the same accumulation shape as pro sports) ──
-  // Still on the legacy single-market EV bonus model (kind unset) — the
-  // real NCAAF/NCAAB bonus rule forks into separate named bowl games
+  // Still on the single-market EV bonus model (kind unset) — the real
+  // NCAAF/NCAAB bonus rule forks into separate named bowl games / rounds
   // rather than one clean single-elimination bracket (see
   // CATEGORY_BONUS_RULES.NCAAF/NCAAB), so it doesn't map onto
   // rankIntoTierBonus the same direct way the pro sports' brackets do.
-  // Left as future work, not reworked this pass.
+  //
+  // Search terms verified live 2026-11 to surface the actual title-winner
+  // events ("NCAA Football: 2027 National Champion", "2027 Men's College
+  // Basketball National Champion") — the old "College Football Playoff" /
+  // "NCAA Tournament" queries only ever returned make-the-playoff,
+  // make-the-title-game, #1-seed and Final Four markets. The men's and
+  // women's basketball champion events come back from the same search, so
+  // the women's event is filtered out explicitly.
+  //
+  // targetYear follows the league rule in update-college.js's
+  // fetchTeamPostseasonGames comment: season Y's NCAAF bonus is the
+  // 2026-27-style CFP decided in January Y+1; its NCAAB bonus is the March
+  // Y tournament (the March Y+1 tournament belongs to season Y+1). That
+  // means during the fall, the live NCAAB markets (for Y+1) are correctly
+  // ignored for season Y — its tournament is already over.
+  const notWomens = (ev) => !/\bwomen'?s?\b|\bwnba\b/i.test(ev.title || '');
   await runCategory('NCAAF', 'desc', (picks) => buildCollegeRankingModel(picks, 'NCAAF', ownerNameById),
-    { titleKeyword: 'College Football Playoff', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
+    { titleKeyword: 'College Football National Champion', titleLabel: 'the CFP National Championship',
+      strictWinner: true, targetYear: seasonYear + 1, eventFilter: notWomens, bonusPointsIfWin: 10 });
   await runCategory('NCAAB', 'desc', (picks) => buildCollegeRankingModel(picks, 'NCAAB', ownerNameById),
-    { titleKeyword: 'NCAA Tournament', kalshiSeriesGuess: null, bonusPointsIfWin: 10 });
+    { titleKeyword: 'NCAA Basketball Champion', titleLabel: 'the NCAA Tournament',
+      strictWinner: true, targetYear: seasonYear, eventFilter: notWomens, bonusPointsIfWin: 10 });
   // ── Individual-ranking sports ──
   // Tennis's bonus event is specifically the Australian Open — not "any
   // remaining Grand Slam this calendar year" (CATEGORY_METRICS.Tennis is
@@ -1542,7 +1631,7 @@ const SPORT_TIER_LABELS_LOCKED = {
   NHL: ['Won the Stanley Cup (already decided)', 'Lost the Stanley Cup Final (already decided)', 'Lost the Conference Finals (already decided)', 'Lost in Round 2 (already decided)', 'Lost in Round 1 (already decided)'],
 };
 
-function bonusConfigFor(league) {
+function bonusConfigFor(league, seasonYear) {
   // Each of these is a single-elimination bracket (CATEGORY_BONUS_RULES in
   // src/constants/categories.js): ONE champion (10), ONE runner-up (7),
   // then 5/3/2 going out earlier. Ranked into those tiers by live
@@ -1564,9 +1653,25 @@ function bonusConfigFor(league) {
   if ((league === 'NBA' || league === 'NHL') && isSportBaseActive(league)) return null;
   const title = CHAMPIONSHIP_TITLE[league];
   if (!title) return null;
-  return { kind: 'tierLadder', titleKeyword: title, tierValues: TIER_VALUES, tierLabels: SPORT_TIER_LABELS[league], mode: 'replace' };
+  // Which championship a season's bonus is scored on (AGENTS.md,
+  // "Fantasy-year boundaries"): the postseason that finishes inside the
+  // fantasy year (March Y → Oscar night Y+1). That's the Super Bowl played
+  // in February Y+1 for NFL, and the same-calendar-year Finals / Stanley
+  // Cup / World Series / MLS Cup for everyone else. Without this, e.g. a
+  // 2026 season still active in March 2027 would rank its MLB picks by
+  // 2027 World Series odds, and NBA/NHL in Jul–Sep would rank by the
+  // following year's Finals/Cup.
+  const targetYear = league === 'NFL' ? seasonYear + 1 : seasonYear;
+  // strictWinner: these searches return plenty of non-winner events too
+  // (confirmed live 2026-11: "World Series" leads with "Team to advance to
+  // 2027 World Series"; "Stanley Cup" returns conference/division/advance
+  // markets) — see matchMarketProbabilities.
+  return {
+    kind: 'tierLadder', titleKeyword: title, tierValues: TIER_VALUES, tierLabels: SPORT_TIER_LABELS[league], mode: 'replace',
+    strictWinner: true, targetYear, eventFilter: (ev) => !/\bwomen'?s?\b|\bwnba\b/i.test(ev.title || ''),
+  };
 }
 
 // Exported for local unit testing of the pure math core (see
 // scripts/test-projections-math.js) — not used by the Vercel handler.
-module.exports.__testing = { rankToPoints, simulateCategory, percentile, sampleNormal, sampleBinomial, gaussian };
+module.exports.__testing = { rankToPoints, simulateCategory, percentile, sampleNormal, sampleBinomial, gaussian, matchMarketProbabilities, mentionsTeam, championshipYearsIn, nameVariants, stripPickPrefix };
