@@ -144,7 +144,7 @@ export function diffSeasonEdits(prev, next) {
       }
       if (pd && nd && (nd.bonusNote || "") !== (pd.bonusNote || "")) changes.bonus_note = nd.bonusNote || null;
       if (Object.keys(changes).length > 0) {
-        pickUpdates.push({ category: cat, owner, changes, prev: { base: pc ? num(pc.base) : null, bonus: pc ? num(pc.bonus) : null } });
+        pickUpdates.push({ category: cat, owner, changes, prev: { pick: pc ? pc.pick : null, base: pc ? num(pc.base) : null, bonus: pc ? num(pc.bonus) : null } });
       }
 
       if (pd && nd) {
@@ -193,11 +193,16 @@ export async function persistSeasonEdits(client, season, diff) {
     const pickId = pickIdFor(u.category, u.owner);
     if (!pickId) { failures.push(label + ": pick not found"); continue; }
     let q = client.from("picks").update({ ...u.changes, updated_at: new Date().toISOString() }).eq("id", pickId);
+    // Every changed field is conditioned on the value it's replacing, pick
+    // swaps included: two quick swaps (A→B, then B→C) can reach the
+    // database out of order, and without this the older B would land last
+    // and silently win while the screen showed C.
+    if ("pick" in u.changes && u.prev.pick !== null) q = q.eq("pick", u.prev.pick);
     if ("base" in u.changes && u.prev.base !== null) q = q.eq("base", u.prev.base);
     if ("bonus" in u.changes && u.prev.bonus !== null) q = q.eq("bonus", u.prev.bonus);
     const { data, error } = await q.select("id");
     if (error) failures.push(label + ": " + error.message);
-    else if (!data || data.length === 0) failures.push(label + ": score changed on the server since this page loaded. Reload and redo this edit");
+    else if (!data || data.length === 0) failures.push(label + ": this pick changed on the server since this page loaded. Reload and redo this edit");
     else written++;
   }
 

@@ -107,7 +107,7 @@ test("reports a stale score instead of overwriting it", async () => {
   const next = vegasEdit();
   const calls = [];
   const r = await persistSeasonEdits(mockClient(dbMajors, calls, 2), next, diffSeasonEdits(prev, next));
-  expect(r.failures.join(" ")).toMatch(/score changed/);
+  expect(r.failures.join(" ")).toMatch(/pick changed on the server/);
 });
 
 test("blank 'New Event' rows are never written; filled-in ones are", () => {
@@ -132,4 +132,14 @@ test("sends the rows it read so the RPC can re-check them atomically", async () 
     { event_name: "Australian GP", result: "Outside P3", opponent: null, score: null, pts: 0, note: null, event_order: 1 },
     { event_name: "US GP", result: "3rd", opponent: null, score: null, pts: 1, note: "", event_order: 2 },
   ]);
+});
+
+test("pick swaps are conditioned on the pick they replace", async () => {
+  const next = clone(prev);
+  next.categories.F1[0].pick = "Lando Norris";
+  const calls = [];
+  await persistSeasonEdits(mockClient(dbMajors, calls), next, diffSeasonEdits(prev, next));
+  const [, update, filters] = calls.find((c) => c[0] === "picks.update");
+  expect(update.pick).toBe("Lando Norris");
+  expect(filters).toContainEqual(["pick", "Max Verstappen"]);
 });

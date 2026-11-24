@@ -75,6 +75,14 @@ begin
     raise exception 'Unsupported table %', p_table;
   end if;
 
+  -- Lock the parent picks row first. Every detail table references
+  -- picks(id), and an insert into a referencing table must take a KEY
+  -- SHARE lock on its parent row, which waits on this FOR UPDATE. So a
+  -- cron insert for this pick can't slip in between the check and the
+  -- delete below, even when the pick has no rows yet and the row-level
+  -- lock that follows would lock nothing.
+  perform 1 from public.picks where id::text = p_pick_id for update;
+
   if p_expected is not null then
     -- Lock this pick's rows, then compare them (as a multiset over the
     -- known columns) with what the browser last read.
