@@ -74,8 +74,13 @@ async function fetchPrice(ticker, sinceUnix) {
     var yahooTicker = ticker.replace(/\./g, '-');
     var period1 = sinceUnix || (Math.floor(Date.now() / 1000) - 400 * 86400);
     var period2 = Math.floor(Date.now() / 1000) + 86400; // pad a day for clock skew
+    // interval=1mo, not 1d: split events are metadata independent of bar
+    // granularity (confirmed against Yahoo's real response), and this
+    // window only ever grows over a season — daily bars would mean
+    // fetching and parsing an ever-larger full-season OHLC history just
+    // to check for splits, for every stock pick, on every single run.
     var url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + yahooTicker
-      + '?period1=' + period1 + '&period2=' + period2 + '&interval=1d&events=split';
+      + '?period1=' + period1 + '&period2=' + period2 + '&interval=1mo&events=split';
     var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) { console.error('Yahoo Finance HTTP ' + res.status + ' for ' + ticker); return null; }
     var data = await res.json();
@@ -115,11 +120,12 @@ module.exports = async function handler(req, res) {
   if (pickErr || !picks || picks.length === 0) return res.status(200).json({ message: 'No Stock picks found, skipping' });
  
   var pickIds = picks.map(function(p) { return p.id; });
-  var { data: stockRows } = await supabase.from('stock_prices').select('pick_id, open_price, split_adjusted_through').in('pick_id', pickIds);
-  var openPriceByPickId = {}, splitAdjustedThroughByPickId = {};
+  var { data: stockRows } = await supabase.from('stock_prices').select('pick_id, open_price, split_adjusted_through, pre_split_open_price').in('pick_id', pickIds);
+  var openPriceByPickId = {}, splitAdjustedThroughByPickId = {}, preSplitOpenPriceByPickId = {};
   (stockRows || []).forEach(function(s) {
     openPriceByPickId[s.pick_id] = Number(s.open_price);
     splitAdjustedThroughByPickId[s.pick_id] = s.split_adjusted_through;
+    preSplitOpenPriceByPickId[s.pick_id] = s.pre_split_open_price == null ? null : Number(s.pre_split_open_price);
   });
 
   var priceResults = [];
@@ -139,8 +145,12 @@ module.exports = async function handler(req, res) {
     // and remember the latest one applied so a future run (Yahoo keeps
     // returning the same historical split forever) doesn't apply it again.
     var splitAdjustedThrough = splitAdjustedThroughByPickId[pick.id] || null;
+    var preSplitOpenPrice = preSplitOpenPriceByPickId[pick.id];
     var splitNotes = [];
     fetched.splits.sort(function(a, b) { return a.date - b.date; }).forEach(function(s) {
+      // Only the very first split this pick ever sees needs to record the
+      // true original price — once set, never overwrite it again.
+      if (preSplitOpenPrice == null) preSplitOpenPrice = openPrice;
       openPrice = openPrice * (s.denominator / s.numerator);
       splitAdjustedThrough = s.date;
       splitNotes.push(s.numerator + '-for-' + s.denominator + ' on ' + new Date(s.date * 1000).toISOString().slice(0, 10));
@@ -148,7 +158,7 @@ module.exports = async function handler(req, res) {
     if (splitNotes.length > 0) console.log('  ' + ticker + ': split-adjusted open price for ' + splitNotes.join(', ') + ' → $' + openPrice.toFixed(2));
 
     var pctChange = ((closePrice - openPrice) / openPrice) * 100;
-    priceResults.push({ ...pick, openPrice: openPrice, closePrice: closePrice, pctChange: pctChange, splitAdjustedThrough: splitAdjustedThrough });
+    priceResults.push({ ...pick, openPrice: openPrice, closePrice: closePrice, pctChange: pctChange, splitAdjustedThrough: splitAdjustedThrough, preSplitOpenPrice: preSplitOpenPrice == null ? null : preSplitOpenPrice });
     console.log('  ' + ticker + ': $' + openPrice.toFixed(2) + ' → $' + closePrice.toFixed(2) + ' (' + (pctChange >= 0 ? '+' : '') + pctChange.toFixed(2) + '%)');
   }
  
@@ -173,14 +183,22 @@ module.exports = async function handler(req, res) {
     var ownerName = memberNameById[r.member_id] || r.member_id;
     var baseLocked = isFieldLocked(locks, 'Stock', ownerName, 'base');
     var metricLocked = isFieldLocked(locks, 'Stock', ownerName, 'metric');
- 
+    // SeasonSettings.jsx's Stock editor also lets the commissioner lock
+    // 'openPrice'/'closePrice' directly (its own detail-row fields,
+    // distinct from base/metric above) — honor those the same way, so a
+    // manual correction here can't be silently overwritten by this cron.
+    var openPriceLocked = isFieldLocked(locks, 'Stock', ownerName, 'openPrice');
+    var closePriceLocked = isFieldLocked(locks, 'Stock', ownerName, 'closePrice');
+
     var pickUpdate = { updated_at: new Date().toISOString() };
     if (!baseLocked) { pickUpdate.base = r.newBase; pickUpdate.bonus = 0; }
     if (!metricLocked) pickUpdate.metric = Math.round(r.pctChange * 100) / 100;
- 
+
     var skipped = [];
     if (baseLocked) skipped.push('base');
     if (metricLocked) skipped.push('metric');
+    if (openPriceLocked) skipped.push('openPrice');
+    if (closePriceLocked) skipped.push('closePrice');
     if (skipped.length > 0) console.log('  ' + ownerName + ': skipped locked: ' + skipped.join(', '));
  
     // Optimistic concurrency on `base` (the only field this diffs into a
@@ -203,7 +221,17 @@ module.exports = async function handler(req, res) {
       continue;
     }
 
-    var { error: stockUpdateErr } = await supabase.from('stock_prices').update({ close_price: r.closePrice, open_price: r.openPrice, split_adjusted_through: r.splitAdjustedThrough }).eq('pick_id', r.id);
+    var stockUpdate = {};
+    if (!closePriceLocked) stockUpdate.close_price = r.closePrice;
+    if (!openPriceLocked) {
+      stockUpdate.open_price = r.openPrice;
+      stockUpdate.split_adjusted_through = r.splitAdjustedThrough;
+      // Record the true pre-split price once, the first time a split is
+      // ever applied, so rebasing open_price for comparison against
+      // closePrice doesn't permanently erase what was actually drafted.
+      if (r.preSplitOpenPrice !== null) stockUpdate.pre_split_open_price = r.preSplitOpenPrice;
+    }
+    var { error: stockUpdateErr } = await supabase.from('stock_prices').update(stockUpdate).eq('pick_id', r.id);
     if (stockUpdateErr) { console.error('  Failed to update stock_prices ' + r.member_id + ':', stockUpdateErr.message); continue; }
 
     updated++;

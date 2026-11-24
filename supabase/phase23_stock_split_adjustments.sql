@@ -25,3 +25,16 @@ alter table public.stock_prices
 
 comment on column public.stock_prices.split_adjusted_through is
   'Unix seconds (Yahoo split event timestamp) of the most recent stock split already folded into open_price. Null = none applied yet; the next check starts from the season''s draft_date instead.';
+
+-- open_price is mutated in place by the fix above so it stays directly
+-- comparable to close_price (and to what Scoreboard.jsx/SeasonSettings.jsx
+-- already label "Open $") — but that means the actual pre-split price
+-- drafted at would otherwise be lost the moment the first split is
+-- applied, with no way to recover it later. This column records it once,
+-- the first time a split is ever applied to a given pick, and is never
+-- touched again after that.
+alter table public.stock_prices
+  add column if not exists pre_split_open_price numeric;
+
+comment on column public.stock_prices.pre_split_open_price is
+  'The true price drafted at, before any split adjustment. Null until this pick''s first split is applied, then fixed forever.';
