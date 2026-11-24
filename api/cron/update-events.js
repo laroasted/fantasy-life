@@ -34,12 +34,14 @@
  *   `bonus` field, and never guesses — an unresolved pick's existing
  *   bonus (including a manual commissioner entry) is left untouched.
  *
- * CHANGELOG (2026-11-22) — F1 breakdown rows
- *   The F1 bonus total/note were automated but the per-GP breakdown under
+ * CHANGELOG (2026-11-22) — Breakdown rows
+ *   The bonus total/note were automated but the per-event breakdown under
  *   an expanded Scoreboard row (event_majors) was still hand-entered, so
- *   the 2026 Las Vegas GP bonus landed with no matching row. F1 now also
- *   upserts one event_majors row per featured GP per pick (syncF1EventRows).
- *   Tennis/Golf breakdown rows are still manual.
+ *   the 2026 Las Vegas GP bonus landed with no matching row. All three
+ *   leagues now upsert one event_majors row per finished bonus event per
+ *   pick (syncEventRows), including while a league is frozen (rows only,
+ *   base/bonus untouched). Tennis rows are coarser than Golf/F1: the
+ *   source only lists semifinalists, so everyone else reads "Before SF".
  */
  
 const { createClient } = require('@supabase/supabase-js');
@@ -122,11 +124,11 @@ async function fetchFeaturedGPPodiums(seasonYear) {
   try {
     var url = 'https://api.jolpi.ca/ergast/f1/' + seasonYear + '/races.json?limit=40';
     var res = await fetch(url, { headers: { 'User-Agent': 'FantasyLifeHub/1.0' }, signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return podiums;
+    if (!res.ok) return { podiums: podiums, races: races };
     var data = await res.json();
-    var races = data?.MRData?.RaceTable?.Races || [];
+    var schedule = data?.MRData?.RaceTable?.Races || [];
     var now = Date.now();
-    for (var race of races) {
+    for (var race of schedule) {
       var raceName = (race.raceName || '').toLowerCase();
       var gp = FEATURED_GPS.find(function (g) { return g.keywords.some(function (k) { return raceName.includes(k); }); });
       if (!gp) continue;
@@ -179,56 +181,82 @@ function finishText(f) {
   return { R: 'DNF', D: 'DSQ', W: 'DNS', N: 'NC', E: 'EX', F: 'DNQ' }[f.positionText] || f.positionText || '—';
 }
 
-// Writes the per-GP breakdown shown under a pick's expanded Scoreboard row
-// (event_majors). Before this, only picks.bonus/bonus_note were automated,
-// so the bonus total moved but the breakdown table — hand-entered rows —
-// never gained the new GP. Same guardrails as the bonus write: skips a
-// pick whose bonus is locked (the commissioner owns that pick's bonus,
-// breakdown included) and skips any individual row locked in Settings
-// (`F1|<owner>|row<idx>`, idx = position in event_order order, the same
-// index Scoreboard.jsx's rowLockIcon and SeasonSettings.jsx use). Only
-// writes when something actually differs, so a re-run is a no-op.
-async function syncF1EventRows(supabase, picks, races, locks, memberNameById) {
-  if (!races.length || !picks.length) return;
+// Writes the per-event breakdown shown under an expanded Scoreboard row
+// (event_majors) for Tennis, Golf and F1. Before this, only
+// picks.bonus/bonus_note were automated, so a bonus total could move while
+// the breakdown table (hand-entered rows) never gained the new event.
+//
+// `events`: [{ label, rowMatch(lowerName) → bool, rowFor(pickName) →
+// { result, score, pts } }], one per bonus event that has finished. Every
+// pick gets a row per event ("Outside P3" / "Before SF" included), so the
+// table reads the same for everyone and its total matches the bonus.
+//
+// Guardrails, same as the bonus write: skips a pick whose bonus is locked
+// (the commissioner owns that pick's bonus, breakdown included) and any
+// single row locked in Settings (`<League>|<owner>|row<idx>`, idx =
+// position in event_order order, the index Scoreboard.jsx's rowLockIcon
+// and SeasonSettings.jsx use). Existing rows are matched by name and
+// updated in place, never duplicated; unchanged rows aren't rewritten.
+async function syncEventRows(supabase, league, picks, events, locks, memberNameById) {
+  // Display-only: a failure here is logged and must never stop the
+  // base/bonus scoring that runs after it.
+  try { await syncEventRowsInner(supabase, league, picks, events, locks, memberNameById); }
+  catch (err) { console.error('  ' + league + ': breakdown row sync failed:', err.message); }
+}
+
+async function syncEventRowsInner(supabase, league, picks, events, locks, memberNameById) {
+  if (!events.length || !picks.length) return;
   var pickIds = picks.map(function (p) { return p.id; });
   var { data: existing, error: exErr } = await supabase.from('event_majors')
     .select('id, pick_id, event_name, event_order, result, score, pts').in('pick_id', pickIds);
-  if (exErr) { console.error('  F1: event_majors read failed, skipping breakdown sync:', exErr.message); return; }
+  if (exErr) { console.error('  ' + league + ': event_majors read failed, skipping breakdown sync:', exErr.message); return; }
   var byPick = {};
   (existing || []).forEach(function (row) { (byPick[row.pick_id] = byPick[row.pick_id] || []).push(row); });
 
   var inserted = 0, changed = 0;
   for (var pick of picks) {
     var ownerName = memberNameById[pick.member_id] || pick.member_id;
-    if (isFieldLocked(locks, 'F1', ownerName, 'bonus')) continue;
+    if (isFieldLocked(locks, league, ownerName, 'bonus')) continue;
     var rows = (byPick[pick.id] || []).slice().sort(function (a, b) { return (Number(a.event_order) || 0) - (Number(b.event_order) || 0); });
     var maxOrder = rows.reduce(function (m, r) { return Math.max(m, Number(r.event_order) || 0); }, 0);
 
-    for (var race of races) {
-      var f = matchAthlete(pick.pick, race.finishers);
-      var pos = f && /^\d+$/.test(f.positionText) ? f.position : null;
-      var want = {
-        result: pos && PODIUM_LABEL[pos] ? PODIUM_LABEL[pos] : 'Outside P3',
-        score: finishText(f),
-        pts: pos && FEATURED_GP_BONUS[pos] ? FEATURED_GP_BONUS[pos] : 0,
-      };
-      var idx = rows.findIndex(function (r) { return race.gp.rowMatch((r.event_name || '').toLowerCase()); });
+    for (var ev of events) {
+      var want = ev.rowFor(pick.pick);
+      var idx = rows.findIndex(function (r) { return ev.rowMatch((r.event_name || '').toLowerCase()); });
       if (idx >= 0) {
         var row = rows[idx];
-        if (locks['F1|' + ownerName + '|row' + idx]) continue;
+        if (locks[league + '|' + ownerName + '|row' + idx]) continue;
         if (row.result === want.result && row.score === want.score && Number(row.pts) === want.pts) continue;
         var { error: upErr } = await supabase.from('event_majors').update(want).eq('id', row.id);
-        if (upErr) console.error('  F1: event_majors update failed for ' + ownerName + ' / ' + race.gp.label + ':', upErr.message);
+        if (upErr) console.error('  ' + league + ': event_majors update failed for ' + ownerName + ' / ' + ev.label + ':', upErr.message);
         else changed++;
       } else {
         maxOrder += 1;
-        var { error: insErr } = await supabase.from('event_majors').insert(Object.assign({ pick_id: pick.id, event_name: race.gp.label, event_order: maxOrder, note: '' }, want));
-        if (insErr) console.error('  F1: event_majors insert failed for ' + ownerName + ' / ' + race.gp.label + ':', insErr.message);
+        var { error: insErr } = await supabase.from('event_majors').insert(Object.assign({ pick_id: pick.id, event_name: ev.label, event_order: maxOrder, note: '' }, want));
+        if (insErr) console.error('  ' + league + ': event_majors insert failed for ' + ownerName + ' / ' + ev.label + ':', insErr.message);
         else inserted++;
       }
     }
   }
-  console.log('  F1: breakdown rows — ' + inserted + ' added, ' + changed + ' updated');
+  console.log('  ' + league + ': breakdown rows — ' + inserted + ' added, ' + changed + ' updated');
+}
+
+function f1BreakdownEvents(races) {
+  return races.map(function (race) {
+    return {
+      label: race.gp.label,
+      rowMatch: race.gp.rowMatch,
+      rowFor: function (pickName) {
+        var f = matchAthlete(pickName, race.finishers);
+        var pos = f && /^\d+$/.test(f.positionText) ? f.position : null;
+        return {
+          result: pos && PODIUM_LABEL[pos] ? PODIUM_LABEL[pos] : 'Outside P3',
+          score: finishText(f),
+          pts: pos && FEATURED_GP_BONUS[pos] ? FEATURED_GP_BONUS[pos] : 0,
+        };
+      },
+    };
+  });
 }
 
 // Sums podium bonus per driver across every featured GP already run this
@@ -265,16 +293,39 @@ const MAJOR_NAMES = {
 const TENNIS_MAJOR_BONUS = { win: 5, final: 3, semifinal: 2 };
 const GOLF_MAJOR_BONUS = { win: 5, runnerup: 3, top10: 2 };
 
+// Canonical display name + breakdown-row matcher per major. `rowMatch`
+// recognizes an existing event_majors row however it was originally typed
+// (rows were hand-entered before this automation), so the cron updates it
+// in place rather than adding a duplicate. Ordered so the more specific
+// name is checked first ("U.S. Open" before "The Open").
+const GOLF_MAJORS = [
+  { label: 'Masters', match: function (n) { return n.includes('masters'); } },
+  { label: 'PGA Championship', match: function (n) { return n.includes('pga'); } },
+  { label: 'U.S. Open', match: function (n) { return n.includes('u.s. open') || n.includes('us open'); } },
+  { label: 'The Open Championship', match: function (n) { return n.includes('open championship') || n.includes('british open') || n.trim() === 'the open' || n.trim() === 'open'; } },
+];
+const TENNIS_MAJORS = [
+  { label: 'Australian Open', match: function (n) { return n.includes('australian open') || n.includes('aus open'); } },
+  { label: 'French Open', match: function (n) { return n.includes('french open') || n.includes('roland garros') || n.includes('roland-garros'); } },
+  { label: 'Wimbledon', match: function (n) { return n.includes('wimbledon'); } },
+  { label: 'US Open', match: function (n) { return n.includes('us open') || n.includes('u.s. open'); } },
+];
+function findMajor(list, lowerName) { return list.find(function (m) { return m.match(lowerName); }) || null; }
+
+// Golf: returns { byAthlete, events }. byAthlete feeds the bonus exactly as
+// before. events has one breakdown entry per completed major with the
+// whole field, so every pick gets a row (Winner / Runner-up / Top 10 /
+// Outside top 10 / Missed cut / Did not play).
 async function fetchGolfMajorBonus() {
-  var byGolfer = {};
+  var byGolfer = {}, events = [];
   try {
     var year = new Date().getFullYear();
     var url = 'https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?dates=' + year + '0101-' + year + '1231';
     var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return byGolfer;
+    if (!res.ok) return { byAthlete: byGolfer, events: events };
     var data = await res.json();
-    var events = data?.events || [];
-    var majors = events.filter(function (e) {
+    var allEvents = data?.events || [];
+    var majors = allEvents.filter(function (e) {
       var name = (e.name || e.shortName || '').toLowerCase();
       var completed = !!e?.status?.type?.completed;
       return completed && MAJOR_NAMES.Golf.some(function (m) { return name.includes(m); });
@@ -286,38 +337,67 @@ async function fetchGolfMajorBonus() {
         if (!lres.ok) continue;
         var ldata = await lres.json();
         var competitors = ldata?.events?.[0]?.competitions?.[0]?.competitors || [];
+        var field = [];
         for (var c of competitors) {
-          var posRaw = c?.status?.position?.displayValue ?? c?.status?.position?.id ?? '';
-          var posMatch = String(posRaw).match(/\d+/);
-          if (!posMatch) continue;
-          var pos = parseInt(posMatch[0], 10);
+          var name = c?.athlete?.displayName || c?.athlete?.name;
+          var posRaw = String(c?.status?.position?.displayValue ?? c?.status?.position?.id ?? '');
+          var posMatch = posRaw.match(/\d+/);
+          var pos = posMatch ? parseInt(posMatch[0], 10) : null;
+          if (name) field.push({ name: name, position: pos, positionText: posRaw });
+          if (!pos || !name) continue;
           var tier = 0, label = '';
           if (pos === 1) { tier = GOLF_MAJOR_BONUS.win; label = 'Won ' + major.name; }
           else if (pos === 2) { tier = GOLF_MAJOR_BONUS.runnerup; label = 'Runner-up ' + major.name; }
           else if (pos <= 10) { tier = GOLF_MAJOR_BONUS.top10; label = 'Top 10 ' + major.name; }
           if (tier === 0) continue;
-          var name = c?.athlete?.displayName || c?.athlete?.name;
-          if (!name) continue;
           if (!byGolfer[name]) byGolfer[name] = { total: 0, notes: [] };
           byGolfer[name].total += tier;
           byGolfer[name].notes.push(label);
         }
+        var def = findMajor(GOLF_MAJORS, (major.name || '').toLowerCase());
+        if (def && field.length > 0) events.push(golfBreakdownEvent(def, field));
+        else if (!def) console.log('  Golf: completed major "' + major.name + '" has no breakdown-row mapping, skipping its row');
       } catch (err) { console.error('  Golf major leaderboard fetch failed for ' + major.name + ':', err.message); }
     }
   } catch (err) { console.error('  Golf major scoreboard fetch failed:', err.message); }
-  return byGolfer;
+  return { byAthlete: byGolfer, events: events };
 }
 
+function golfBreakdownEvent(def, field) {
+  return {
+    label: def.label,
+    rowMatch: def.match,
+    rowFor: function (pickName) {
+      var g = matchAthlete(pickName, field);
+      if (!g) return { result: 'Did not play', score: '—', pts: 0 };
+      var pos = g.position, text = g.positionText || '—';
+      if (pos === 1) return { result: 'Winner', score: text, pts: GOLF_MAJOR_BONUS.win };
+      if (pos === 2) return { result: 'Runner-up', score: text, pts: GOLF_MAJOR_BONUS.runnerup };
+      if (pos && pos <= 10) return { result: 'Top 10', score: text, pts: GOLF_MAJOR_BONUS.top10 };
+      if (pos) return { result: 'Outside top 10', score: text, pts: 0 };
+      if (/wd/i.test(text)) return { result: 'Withdrew', score: text, pts: 0 };
+      if (/dq/i.test(text)) return { result: 'DQ', score: text, pts: 0 };
+      return { result: 'Missed cut', score: text || 'CUT', pts: 0 };
+    },
+  };
+}
+
+// Tennis: returns { byAthlete, events }. Unlike Golf, this source only
+// shows who reached the semifinals and final of each major, not the whole
+// draw. So a pick who isn't among the last four gets "Before SF" with no
+// finer detail: it can't tell an early loss from not entering. A
+// breakdown row is only written for a major once its final has been seen
+// (i.e. the major is over), so a mid-tournament run never labels anyone.
 async function fetchTennisMajorBonus() {
-  var byPlayer = {};
+  var byPlayer = {}, finalists = {};
   try {
     var year = new Date().getFullYear();
     var url = 'https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard?dates=' + year + '0101-' + year + '1231';
     var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return byPlayer;
+    if (!res.ok) return { byAthlete: byPlayer, events: [] };
     var data = await res.json();
-    var events = data?.events || [];
-    for (var e of events) {
+    var allEvents = data?.events || [];
+    for (var e of allEvents) {
       if (!e?.status?.type?.completed) continue;
       var textParts = [e?.name, e?.shortName].concat((e?.competitions?.[0]?.notes || []).map(function (n) { return n?.headline; })).filter(Boolean);
       var lower = textParts.join(' | ').toLowerCase();
@@ -332,25 +412,45 @@ async function fetchTennisMajorBonus() {
       var isFinal = lower.includes('final') && !isSemi && !isQuarterfinal;
       if (!isFinal && !isSemi) continue;
 
+      var def = findMajor(TENNIS_MAJORS, majorName);
+      var bucket = def ? (finalists[def.label] = finalists[def.label] || { def: def, finalSeen: false, players: [] }) : null;
+      if (bucket && isFinal) bucket.finalSeen = true;
+
       var competitors = e?.competitions?.[0]?.competitors || [];
       for (var c of competitors) {
         var name = c?.athlete?.displayName || c?.athlete?.name;
         if (!name) continue;
         var won = !!c?.winner;
-        var tier = 0, label = '';
-        if (isFinal && won) { tier = TENNIS_MAJOR_BONUS.win; label = 'Won ' + majorName; }
-        else if (isFinal && !won) { tier = TENNIS_MAJOR_BONUS.final; label = 'Runner-up ' + majorName; }
-        else if (isSemi && !won) { tier = TENNIS_MAJOR_BONUS.semifinal; label = 'Lost ' + majorName + ' SF'; }
+        var tier = 0, label = '', rowResult = '';
+        if (isFinal && won) { tier = TENNIS_MAJOR_BONUS.win; label = 'Won ' + majorName; rowResult = 'Winner'; }
+        else if (isFinal && !won) { tier = TENNIS_MAJOR_BONUS.final; label = 'Runner-up ' + majorName; rowResult = 'Runner-up'; }
+        else if (isSemi && !won) { tier = TENNIS_MAJOR_BONUS.semifinal; label = 'Lost ' + majorName + ' SF'; rowResult = 'Semifinal'; }
         if (tier === 0) continue;
         if (!byPlayer[name]) byPlayer[name] = { total: 0, notes: [] };
         byPlayer[name].total += tier;
         byPlayer[name].notes.push(label);
+        if (bucket) bucket.players.push({ name: name, result: rowResult, pts: tier });
       }
     }
   } catch (err) { console.error('  Tennis major fetch failed:', err.message); }
-  return byPlayer;
+  var events = Object.keys(finalists).map(function (k) { return finalists[k]; })
+    .filter(function (b) { return b.finalSeen; })
+    .map(tennisBreakdownEvent);
+  return { byAthlete: byPlayer, events: events };
 }
- 
+
+function tennisBreakdownEvent(bucket) {
+  return {
+    label: bucket.def.label,
+    rowMatch: bucket.def.match,
+    rowFor: function (pickName) {
+      var p = matchAthlete(pickName, bucket.players);
+      if (!p) return { result: 'Before SF', score: '—', pts: 0 };
+      return { result: p.result, score: '—', pts: p.pts };
+    },
+  };
+}
+
 function isActive(config) {
   var now = new Date(), month = now.getMonth() + 1, day = now.getDate(), today = month * 100 + day;
   var start = config.activeStart.month * 100 + config.activeStart.day, freeze = config.freezeDate.month * 100 + config.freezeDate.day;
@@ -585,6 +685,19 @@ function matchAthlete(pickName, espnAthletes) {
   return null;
 }
  
+// One place that knows each league's bonus source. Returns { byAthlete,
+// events }: byAthlete drives picks.bonus/bonus_note, events drives the
+// event_majors breakdown rows (see syncEventRows).
+async function fetchBonusData(league, seasonYear) {
+  if (league === 'F1') {
+    var gpData = await fetchFeaturedGPPodiums(seasonYear);
+    return { byAthlete: aggregateF1Bonus(gpData.podiums), events: f1BreakdownEvents(gpData.races) };
+  }
+  if (league === 'Golf') return fetchGolfMajorBonus();
+  if (league === 'Tennis') return fetchTennisMajorBonus();
+  return { byAthlete: {}, events: [] };
+}
+
 module.exports = async function handler(req, res) {
   var authHeader = req.headers['authorization'], cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || authHeader !== 'Bearer ' + cronSecret) return res.status(401).json({ error: 'Unauthorized' });
@@ -609,7 +722,20 @@ module.exports = async function handler(req, res) {
 
   for (var [league, config] of Object.entries(EVENT_LEAGUES)) {
     console.log('Processing ' + league + '...');
-    if (!isActive(config)) { results[league] = { status: 'frozen', reason: 'Past freeze date' }; continue; }
+    if (!isActive(config)) {
+      // Frozen: base and bonus stay exactly as they are. Breakdown rows are
+      // still synced, since they're display-only and their points come
+      // from the same data that set the (now frozen) bonus. Without this,
+      // a league that froze before this sync existed (Golf, Aug 31) would
+      // never get rows for the majors it already scored.
+      var { data: frozenPicks } = await supabase.from('picks').select('id, member_id, pick').eq('season_year', seasonYear).eq('category', league);
+      if (frozenPicks && frozenPicks.length > 0) {
+        var frozenBonus = await fetchBonusData(league, seasonYear);
+        await syncEventRows(supabase, league, frozenPicks, frozenBonus.events, locks, memberNameById);
+      }
+      results[league] = { status: 'frozen', reason: 'Past freeze date (breakdown rows synced only)' };
+      continue;
+    }
  
     var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', seasonYear).eq('category', league);
     if (pickErr || !picks || picks.length === 0) { results[league] = { status: 'skipped', reason: 'no picks' }; continue; }
@@ -645,16 +771,9 @@ module.exports = async function handler(req, res) {
     // See FEATURED_GPS/MAJOR_NAMES + the 2026-11 changelog at the top of
     // this file. Keyed by athlete display name so matchAthlete() resolves
     // a pick against it exactly the same way it resolves base-score names.
-    var bonusByAthlete = {};
-    if (league === 'F1') {
-      var gpData = await fetchFeaturedGPPodiums(seasonYear);
-      bonusByAthlete = aggregateF1Bonus(gpData.podiums);
-      await syncF1EventRows(supabase, picks, gpData.races, locks, memberNameById);
-    } else if (league === 'Golf') {
-      bonusByAthlete = await fetchGolfMajorBonus();
-    } else if (league === 'Tennis') {
-      bonusByAthlete = await fetchTennisMajorBonus();
-    }
+    var bonusData = await fetchBonusData(league, seasonYear);
+    var bonusByAthlete = bonusData.byAthlete;
+    await syncEventRows(supabase, league, picks, bonusData.events, locks, memberNameById);
     var bonusAthleteList = Object.keys(bonusByAthlete).map(function (name) { return { name: name }; });
 
     var updated = 0, rankings = [];
