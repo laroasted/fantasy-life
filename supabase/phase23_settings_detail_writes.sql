@@ -14,12 +14,15 @@
 -- Rather than reopen table-wide writes, this adds one narrow
 -- security-definer function:
 --
---   replace_pick_detail_rows(p_table, p_pick_id, p_rows)
+--   replace_pick_detail_rows(p_table, p_pick_id, p_rows, p_expected)
 --
 -- which, for one pick, deletes that pick's rows in one of the five tables
 -- and inserts p_rows in their place, in a single transaction (a failed
 -- insert rolls the delete back, so a bad save can never leave a pick with
--- no rows). It checks is_commissioner() itself, accepts only the five
+-- no rows). p_expected is the set of rows the browser last read for that
+-- pick; the function locks the pick's rows and refuses (SQLSTATE 40001)
+-- if they no longer match, so a cron write that lands between the
+-- browser's read and this call is never silently wiped. It checks is_commissioner() itself, accepts only the five
 -- known table names, and inserts only each table's known columns, so
 -- nothing about the table name or the JSON can steer it anywhere else.
 -- The crons keep writing these tables with the service role key, as
@@ -34,7 +37,8 @@
 create or replace function public.replace_pick_detail_rows(
   p_table text,
   p_pick_id text,
-  p_rows jsonb
+  p_rows jsonb,
+  p_expected jsonb default null
 )
 returns integer
 language plpgsql
@@ -43,6 +47,8 @@ set search_path = public
 as $func$
 declare
   v_count integer;
+  v_cols text[];
+  v_current jsonb;
 begin
   if not public.is_commissioner() then
     raise exception 'Commissioner access required' using errcode = '42501';
@@ -54,6 +60,34 @@ begin
 
   if not exists (select 1 from public.picks where id::text = p_pick_id) then
     raise exception 'Unknown pick %', p_pick_id;
+  end if;
+
+  -- Same column lists as the inserts below (and DETAIL_TABLES[...].cols
+  -- in src/utils/seasonEdits.js). Constants only: never built from input.
+  v_cols := case p_table
+    when 'sport_rounds'  then array['round_name','opponent','result','series','pts','note','round_order']
+    when 'film_entries'  then array['title','release_date','box_office','rotten_tom','score','note']
+    when 'music_songs'   then array['title','weeks','num_one_weeks','note']
+    when 'music_grammys' then array['category','result','entry','pts','note']
+    when 'event_majors'  then array['event_name','result','opponent','score','pts','note','event_order']
+  end;
+  if v_cols is null then
+    raise exception 'Unsupported table %', p_table;
+  end if;
+
+  if p_expected is not null then
+    -- Lock this pick's rows, then compare them (as a multiset over the
+    -- known columns) with what the browser last read.
+    execute format('select 1 from public.%I where pick_id::text = $1 for update', p_table) using p_pick_id;
+    execute format(
+      'select coalesce(jsonb_agg(jsonb_build_object(%s)), ''[]''::jsonb) from public.%I where pick_id::text = $1',
+      (select string_agg(format('%L, %I', c, c), ', ') from unnest(v_cols) c),
+      p_table
+    ) into v_current using p_pick_id;
+    if not (jsonb_array_length(v_current) = jsonb_array_length(p_expected)
+            and v_current @> p_expected and p_expected @> v_current) then
+      raise exception 'These rows changed on the server since this page loaded' using errcode = '40001';
+    end if;
   end if;
 
   -- Every inserted row is forced onto p_pick_id below, whatever pick_id
@@ -102,5 +136,5 @@ begin
 end;
 $func$;
 
-revoke all on function public.replace_pick_detail_rows(text, text, jsonb) from public;
-grant execute on function public.replace_pick_detail_rows(text, text, jsonb) to authenticated;
+revoke all on function public.replace_pick_detail_rows(text, text, jsonb, jsonb) from public;
+grant execute on function public.replace_pick_detail_rows(text, text, jsonb, jsonb) to authenticated;

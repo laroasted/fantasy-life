@@ -43,6 +43,8 @@ export const DETAIL_TABLES = {
   rounds: {
     table: "sport_rounds",
     orderCol: "round_order",
+    cols: ["round_name", "opponent", "result", "series", "pts", "note", "round_order"],
+    isPlaceholder: (r) => r.round === "New Round" && r.opponent === "TBD" && !num(r.pts),
     toDb: (r, i) => ({ round_name: r.round, opponent: nullIfEmpty(r.opponent), result: dashNull(r.result), series: dashNull(r.series), pts: num(r.pts), note: nullIfEmpty(r.note), round_order: i + 1 }),
     fromDb: (r) => ({ round: r.round_name, opponent: r.opponent || "", result: r.result || "—", series: r.series || "—", pts: num(r.pts), note: r.note || "" }),
     compareSkip: [],
@@ -50,6 +52,8 @@ export const DETAIL_TABLES = {
   films: {
     table: "film_entries",
     orderCol: null,
+    cols: ["title", "release_date", "box_office", "rotten_tom", "score", "note"],
+    isPlaceholder: (f) => f.title === "New Film" && !num(f.bo) && !num(f.rt),
     toDb: (f) => ({ title: f.title, release_date: f.date || "", box_office: num(f.bo), rotten_tom: num(f.rt), score: num(f.score), note: nullIfEmpty(f.note) }),
     fromDb: (f) => ({ title: f.title, date: f.release_date || "", bo: num(f.box_office), rt: num(f.rotten_tom), score: num(f.score), note: f.note || undefined }),
     compareSkip: ["score"],
@@ -57,6 +61,8 @@ export const DETAIL_TABLES = {
   songs: {
     table: "music_songs",
     orderCol: null,
+    cols: ["title", "weeks", "num_one_weeks", "note"],
+    isPlaceholder: (s) => s.title === "New Song" && !num(s.weeks) && !num(s.numOneWeeks),
     toDb: (s) => ({ title: s.title, weeks: num(s.weeks), num_one_weeks: num(s.numOneWeeks), note: nullIfEmpty(s.note) }),
     fromDb: (s) => ({ title: s.title, weeks: num(s.weeks), numOneWeeks: num(s.num_one_weeks), note: s.note || undefined }),
     compareSkip: [],
@@ -64,6 +70,8 @@ export const DETAIL_TABLES = {
   grammys: {
     table: "music_grammys",
     orderCol: null,
+    cols: ["category", "result", "entry", "pts", "note"],
+    isPlaceholder: (g) => g.category === "New Category" && !num(g.pts) && !g.entry,
     toDb: (g) => ({ category: g.category, result: g.result, entry: nullIfEmpty(g.entry), pts: num(g.pts), note: nullIfEmpty(g.note) }),
     fromDb: (g) => ({ category: g.category, result: g.result, entry: g.entry || "", pts: num(g.pts), note: g.note || "" }),
     compareSkip: [],
@@ -71,11 +79,20 @@ export const DETAIL_TABLES = {
   majors: {
     table: "event_majors",
     orderCol: "event_order",
+    cols: ["event_name", "result", "opponent", "score", "pts", "note", "event_order"],
+    isPlaceholder: (m) => m.event === "New Event" && !num(m.pts),
     toDb: (m, i) => ({ event_name: m.event, result: dashNull(m.result), opponent: dashNull(m.opponent), score: dashNull(m.score), pts: num(m.pts), note: nullIfEmpty(m.note), event_order: i + 1 }),
     fromDb: (m) => ({ event: m.event_name, result: m.result || "—", opponent: m.opponent || "—", score: m.score || "—", pts: num(m.pts), note: m.note || "" }),
     compareSkip: [],
   },
 };
+
+// "+ Add" in Settings creates a blank template row (SeasonSettings.jsx's
+// newDetailRow) and saves right away. Those blanks are kept out of the
+// database, so a half-finished "New Film, $0, 0%" row never shows up on
+// the public Scoreboard or survives a cron run. Once its fields are
+// filled in it stops matching the template and is written like any row.
+function realRows(spec, rows) { return (rows || []).filter((r) => !spec.isPlaceholder(r)); }
 
 // Comparable signature of a UI row: its DB form minus derived fields and
 // minus the order column (order is compared by array position instead).
@@ -134,8 +151,10 @@ export function diffSeasonEdits(prev, next) {
         Object.keys(DETAIL_TABLES).forEach((key) => {
           if (!Array.isArray(nd[key]) && !Array.isArray(pd[key])) return;
           const spec = DETAIL_TABLES[key];
-          if (sameRows(spec, pd[key], nd[key])) return;
-          detailReplacements.push({ category: cat, owner, key, table: spec.table, prevRows: pd[key] || [], nextRows: nd[key] || [] });
+          const prevRows = realRows(spec, pd[key]);
+          const nextRows = realRows(spec, nd[key]);
+          if (sameRows(spec, prevRows, nextRows)) return;
+          detailReplacements.push({ category: cat, owner, key, table: spec.table, prevRows, nextRows });
         });
       }
     });
@@ -199,7 +218,15 @@ export async function persistSeasonEdits(client, season, diff) {
     }
 
     const rows = r.nextRows.map((row, i) => spec.toDb(row, i));
-    const { error } = await client.rpc("replace_pick_detail_rows", { p_table: spec.table, p_pick_id: String(pickId), p_rows: rows });
+    // The rows just read and compared above, sent back so the RPC can
+    // re-check them under a row lock in the same transaction as the
+    // replace. That closes the gap between this read and the write.
+    const expected = (current || []).map((row) => {
+      const o = {};
+      spec.cols.forEach((c) => { o[c] = row[c] === undefined ? null : row[c]; });
+      return o;
+    });
+    const { error } = await client.rpc("replace_pick_detail_rows", { p_table: spec.table, p_pick_id: String(pickId), p_rows: rows, p_expected: expected });
     if (error) failures.push(label + ": " + error.message);
     else written++;
   }

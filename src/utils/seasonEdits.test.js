@@ -109,3 +109,27 @@ test("reports a stale score instead of overwriting it", async () => {
   const r = await persistSeasonEdits(mockClient(dbMajors, calls, 2), next, diffSeasonEdits(prev, next));
   expect(r.failures.join(" ")).toMatch(/score changed/);
 });
+
+test("blank 'New Event' rows are never written; filled-in ones are", () => {
+  const withBlank = clone(prev);
+  withBlank.detailedData.F1[0].majors.push({ event: "New Event", result: DASH, opponent: DASH, score: DASH, pts: 0, note: "" });
+  expect(diffSeasonEdits(prev, withBlank).detailReplacements).toHaveLength(0);
+  const filled = clone(withBlank);
+  filled.detailedData.F1[0].majors[2] = { event: "Las Vegas GP", result: "Winner", opponent: DASH, score: "P1", pts: 3, note: "" };
+  const d = diffSeasonEdits(withBlank, filled);
+  expect(d.detailReplacements).toHaveLength(1);
+  // prevRows exclude the blank, so the server-side check compares against what's really stored
+  expect(d.detailReplacements[0].prevRows).toHaveLength(2);
+  expect(d.detailReplacements[0].nextRows).toHaveLength(3);
+});
+
+test("sends the rows it read so the RPC can re-check them atomically", async () => {
+  const next = vegasEdit();
+  const calls = [];
+  await persistSeasonEdits(mockClient(dbMajors, calls), next, diffSeasonEdits(prev, next));
+  const [, args] = calls.find((c) => c[0] === "replace_pick_detail_rows");
+  expect(args.p_expected).toEqual([
+    { event_name: "Australian GP", result: "Outside P3", opponent: null, score: null, pts: 0, note: null, event_order: 1 },
+    { event_name: "US GP", result: "3rd", opponent: null, score: null, pts: 1, note: "", event_order: 2 },
+  ]);
+});
