@@ -46,6 +46,7 @@
  
 const { createClient } = require('@supabase/supabase-js');
 const { writeScoreEventsAndNotify } = require('../_lib/push');
+const { resolveFantasyYearEnd, fetchWikipediaWikitext } = require('../_lib/fantasyYear');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://cyojbvijcfbyprrlunyn.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -269,6 +270,8 @@ async function syncEventRowsInner(supabase, league, picks, events, locks, member
         var { error: upErr } = await supabase.from('event_majors').update(patch).eq('id', row.id);
         if (upErr) console.error('  ' + league + ': event_majors update failed for ' + ownerName + ' / ' + ev.label + ':', upErr.message);
         else changed++;
+      } else if (ev.updateOnly) {
+        continue;
       } else {
         maxOrder += 1;
         var { error: insErr } = await supabase.from('event_majors').insert(Object.assign({ pick_id: pick.id, event_name: ev.label, event_order: maxOrder, note: null }, want));
@@ -350,21 +353,57 @@ const TENNIS_MAJORS = [
   { label: 'Wimbledon', match: function (n) { return n.includes('wimbledon'); } },
   { label: 'US Open', match: function (n) { return /\bus open\b|\bu\.s\. open\b/.test(n); } },
 ];
+// Tennis and Golf majors count toward the fantasy season they fall in:
+// draft (seasons.fy_start) through Oscar night (resolveFantasyYearEnd). For
+// Tennis that's French Open → Wimbledon → US Open → the NEXT January's
+// Australian Open; the AO played just before a season's draft belongs to
+// the previous season. ESPN's scoreboard is queried per calendar year, so
+// fetch every year the window touches and keep events dated inside it.
+// With no window (fy_start missing), fall back to the current calendar
+// year, the old behavior.
+function windowYears(win) {
+  if (!win) return [new Date().getFullYear()];
+  var a = parseInt(win.start.slice(0, 4), 10), b = parseInt(win.end.slice(0, 4), 10), out = [];
+  for (var y = a; y <= b; y++) out.push(y);
+  return out;
+}
+function inWindow(win, e) {
+  if (!win) return true;
+  var d = (e && (e.date || e.competitions?.[0]?.date || e.endDate)) || '';
+  if (!d) return false;
+  var day = d.slice(0, 10);
+  return day >= win.start && day <= win.end;
+}
+async function fetchEspnYears(base, win) {
+  var all = [];
+  for (var year of windowYears(win)) {
+    var res = await fetch(base + '?dates=' + year + '0101-' + year + '1231', { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + year);
+    var data = await res.json();
+    (data?.events || []).forEach(function (e) { if (inWindow(win, e)) all.push(e); });
+  }
+  return all;
+}
+
+// A breakdown entry for a major that hasn't been played yet this season.
+// Only ever updates an existing row (never inserts), so a row carried over
+// from the previous window, e.g. last January's Australian Open, stops
+// showing last season's result and points.
+function pendingMajorEvent(def) {
+  return { label: def.label, rowMatch: def.match, updateOnly: true, rowFor: function () { return { result: 'Not yet played', score: null, pts: 0 }; } };
+}
+
 function findMajor(list, lowerName) { return list.find(function (m) { return m.match(lowerName); }) || null; }
 
 // Golf: returns { byAthlete, events }. byAthlete feeds the bonus exactly as
 // before. events has one breakdown entry per completed major with the
 // whole field, so every pick gets a row (Winner / Runner-up / Top 10 /
 // Outside top 10 / Missed cut / Did not play).
-async function fetchGolfMajorBonus() {
-  var byGolfer = {}, events = [];
+async function fetchGolfMajorBonus(win) {
+  var byGolfer = {}, events = [], ok = false;
   try {
-    var year = new Date().getFullYear();
-    var url = 'https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard?dates=' + year + '0101-' + year + '1231';
-    var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return { byAthlete: byGolfer, events: events };
-    var data = await res.json();
-    var allEvents = data?.events || [];
+    var allEvents = await fetchEspnYears('https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard', win);
+    ok = true;
     var majors = allEvents.filter(function (e) {
       var name = (e.name || e.shortName || '').toLowerCase();
       var completed = !!e?.status?.type?.completed;
@@ -397,10 +436,14 @@ async function fetchGolfMajorBonus() {
         var def = findMajor(GOLF_MAJORS, (major.name || '').toLowerCase());
         if (def && field.length > 0) events.push(golfBreakdownEvent(def, field));
         else if (!def) console.log('  Golf: completed major "' + major.name + '" has no breakdown-row mapping, skipping its row');
-      } catch (err) { console.error('  Golf major leaderboard fetch failed for ' + major.name + ':', err.message); }
+      } catch (err) { ok = false; console.error('  Golf major leaderboard fetch failed for ' + major.name + ':', err.message); }
     }
   } catch (err) { console.error('  Golf major scoreboard fetch failed:', err.message); }
-  return { byAthlete: byGolfer, events: events };
+  if (ok) {
+    var played = events.map(function (e) { return e.label; });
+    GOLF_MAJORS.forEach(function (def) { if (played.indexOf(def.label) === -1) events.push(pendingMajorEvent(def)); });
+  }
+  return { byAthlete: byGolfer, events: events, ok: ok };
 }
 
 function golfBreakdownEvent(def, field) {
@@ -428,15 +471,11 @@ function golfBreakdownEvent(def, field) {
 // finer detail: it can't tell an early loss from not entering. A
 // breakdown row is only written for a major once its final has been seen
 // (i.e. the major is over), so a mid-tournament run never labels anyone.
-async function fetchTennisMajorBonus() {
-  var byPlayer = {}, finalists = {};
+async function fetchTennisMajorBonus(win) {
+  var byPlayer = {}, finalists = {}, ok = false;
   try {
-    var year = new Date().getFullYear();
-    var url = 'https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard?dates=' + year + '0101-' + year + '1231';
-    var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return { byAthlete: byPlayer, events: [] };
-    var data = await res.json();
-    var allEvents = data?.events || [];
+    var allEvents = await fetchEspnYears('https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard', win);
+    ok = true;
     for (var e of allEvents) {
       if (!e?.status?.type?.completed) continue;
       var textParts = [e?.name, e?.shortName].concat((e?.competitions?.[0]?.notes || []).map(function (n) { return n?.headline; })).filter(Boolean);
@@ -476,7 +515,11 @@ async function fetchTennisMajorBonus() {
   var events = Object.keys(finalists).map(function (k) { return finalists[k]; })
     .filter(function (b) { return b.finalSeen; })
     .map(tennisBreakdownEvent);
-  return { byAthlete: byPlayer, events: events };
+  if (ok) {
+    var played = events.map(function (e) { return e.label; });
+    TENNIS_MAJORS.forEach(function (def) { if (played.indexOf(def.label) === -1) events.push(pendingMajorEvent(def)); });
+  }
+  return { byAthlete: byPlayer, events: events, ok: ok };
 }
 
 function tennisBreakdownEvent(bucket) {
@@ -756,14 +799,23 @@ function matchAthlete(pickName, espnAthletes) {
 // One place that knows each league's bonus source. Returns { byAthlete,
 // events }: byAthlete drives picks.bonus/bonus_note, events drives the
 // event_majors breakdown rows (see syncEventRows).
-async function fetchBonusData(league, seasonYear) {
+async function fetchBonusData(league, seasonYear, win) {
   if (league === 'F1') {
     var gpData = await fetchFeaturedGPPodiums(seasonYear);
-    return { byAthlete: aggregateF1Bonus(gpData.podiums), events: f1BreakdownEvents(gpData.races) };
+    return { byAthlete: aggregateF1Bonus(gpData.podiums), events: f1BreakdownEvents(gpData.races), ok: false };
   }
-  if (league === 'Golf') return fetchGolfMajorBonus();
-  if (league === 'Tennis') return fetchTennisMajorBonus();
-  return { byAthlete: {}, events: [] };
+  if (league === 'Golf') return fetchGolfMajorBonus(win);
+  if (league === 'Tennis') return fetchTennisMajorBonus(win);
+  return { byAthlete: {}, events: [], ok: false };
+}
+
+// True when every part of a bonus note is one this cron writes for a
+// Tennis/Golf major ("Won wimbledon", "Runner-up ...", "Lost ... SF",
+// "Top 10 ..."). Used to clear a bonus that only came from majors outside
+// this season's window, without ever touching a hand-written note.
+function isAutoMajorNote(note) {
+  if (!note) return false;
+  return String(note).split(' | ').every(function (part) { return /^(Won|Runner-up|Top 10) .+/.test(part) || /^Lost .+ SF$/.test(part); });
 }
 
 module.exports = async function handler(req, res) {
@@ -774,8 +826,18 @@ module.exports = async function handler(req, res) {
   var supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   console.log(' Fantasy Life — Updating Event Rankings...\n');
  
-  var { data: season } = await supabase.from('seasons').select('year, locks').eq('status', 'active').single();
+  var { data: season } = await supabase.from('seasons').select('year, locks, fy_start, fy_end').eq('status', 'active').single();
   if (!season) return res.status(200).json({ message: 'No active season found, skipping' });
+
+  // Draft → Oscar night window for Tennis/Golf majors (see windowYears).
+  var majorWindow = null;
+  if (season.fy_start && season.fy_end) {
+    var fyEnd = await resolveFantasyYearEnd(season.year, season.fy_end, fetchWikipediaWikitext);
+    majorWindow = { start: String(season.fy_start).slice(0, 10), end: String(fyEnd).slice(0, 10) };
+    console.log(' Major window: ' + majorWindow.start + ' → ' + majorWindow.end);
+  } else {
+    console.log(' Active season has no fy_start/fy_end; Tennis/Golf majors fall back to the calendar year');
+  }
  
   var seasonYear = season.year, locks = season.locks || {};
   var { data: membersArr } = await supabase.from('members').select('id, name');
@@ -798,14 +860,14 @@ module.exports = async function handler(req, res) {
       // never get rows for the majors it already scored.
       var { data: frozenPicks } = await supabase.from('picks').select('id, member_id, pick').eq('season_year', seasonYear).eq('category', league);
       if (frozenPicks && frozenPicks.length > 0) {
-        var frozenBonus = await fetchBonusData(league, seasonYear);
+        var frozenBonus = await fetchBonusData(league, seasonYear, majorWindow);
         await syncEventRows(supabase, league, frozenPicks, frozenBonus.events, locks, memberNameById);
       }
       results[league] = { status: 'frozen', reason: 'Past freeze date (breakdown rows synced only)' };
       continue;
     }
  
-    var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base, bonus').eq('season_year', seasonYear).eq('category', league);
+    var { data: picks, error: pickErr } = await supabase.from('picks').select('id, member_id, pick, base, bonus, bonus_note').eq('season_year', seasonYear).eq('category', league);
     if (pickErr || !picks || picks.length === 0) { results[league] = { status: 'skipped', reason: 'no picks' }; continue; }
  
     var espnData = null;
@@ -839,7 +901,7 @@ module.exports = async function handler(req, res) {
     // See FEATURED_GPS/MAJOR_NAMES + the 2026-11 changelog at the top of
     // this file. Keyed by athlete display name so matchAthlete() resolves
     // a pick against it exactly the same way it resolves base-score names.
-    var bonusData = await fetchBonusData(league, seasonYear);
+    var bonusData = await fetchBonusData(league, seasonYear, majorWindow);
     var bonusByAthlete = bonusData.byAthlete;
     await syncEventRows(supabase, league, picks, bonusData.events, locks, memberNameById);
     var bonusAthleteList = Object.keys(bonusByAthlete).map(function (name) { return { name: name }; });
@@ -855,6 +917,15 @@ module.exports = async function handler(req, res) {
 
       var bonusMatch = bonusAthleteList.length > 0 ? matchAthleteStrict(m.pick, bonusAthleteList) : null;
       var bonusEntry = bonusMatch ? bonusByAthlete[bonusMatch.name] : null;
+      // No major in this season's window for this pick, but it still
+      // carries a bonus this cron wrote earlier (e.g. from the Australian
+      // Open just before the draft, which belongs to the previous season):
+      // clear it. Only when the source was read successfully, and never a
+      // hand-written note or a locked bonus.
+      if (!bonusEntry && bonusData.ok && (Number(m.bonus) || 0) !== 0 && isAutoMajorNote(m.bonus_note)) {
+        bonusEntry = { total: 0, notes: [] };
+        console.log('  ' + (memberNameById[m.member_id] || m.member_id) + ': clearing bonus from majors outside this season (' + m.bonus_note + ')');
+      }
       var bonusWritable = !!bonusEntry && !bonusLocked;
       var newBonusVal = bonusWritable ? bonusEntry.total : (Number(m.bonus) || 0);
 
@@ -862,7 +933,7 @@ module.exports = async function handler(req, res) {
       if (!baseLocked) updateObj.base = m.newBase;
       if (!metricLocked) updateObj.metric = m.metric;
       if (!recordLocked) updateObj.record = m.record;
-      if (bonusWritable) { updateObj.bonus = bonusEntry.total; updateObj.bonus_note = bonusEntry.notes.join(' | '); }
+      if (bonusWritable) { updateObj.bonus = bonusEntry.total; updateObj.bonus_note = bonusEntry.notes.length ? bonusEntry.notes.join(' | ') : null; }
 
       var skipped = [];
       if (baseLocked) skipped.push('base');
@@ -904,7 +975,8 @@ module.exports = async function handler(req, res) {
       if (delta !== 0) {
         var causeParts = [];
         if (!baseLocked) causeParts.push(m.espnName ? (m.espnName + ' (' + m.record + ')') : 'Not found');
-        if (bonusWritable) causeParts.push(bonusEntry.notes.join(' | '));
+        if (bonusWritable && bonusEntry.notes.length) causeParts.push(bonusEntry.notes.join(' | '));
+        else if (bonusWritable) causeParts.push('bonus cleared: majors outside this season');
         scoreEvents.push({
           season_year: seasonYear,
           member_id: m.member_id,

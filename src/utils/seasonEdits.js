@@ -14,7 +14,7 @@
  *    conditioned on the value the commissioner was looking at, the same
  *    optimistic-concurrency pattern the crons use, so a stale screen can't
  *    clobber a score a cron moved in the meantime.
- *  - detail rows through the replace_pick_detail_rows RPC (phase23):
+ *  - detail rows through the replace_pick_detail_rows RPC (phase24):
  *    that pick's rows in that table are replaced as a whole, in one
  *    transaction. Before replacing, the rows currently in the database
  *    are compared with what the commissioner was editing; if they differ

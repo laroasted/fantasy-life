@@ -69,16 +69,38 @@ Masters") and updated in place. A pick with a locked bonus, and any single
 locked row, is left alone. Frozen leagues still get rows (never base or
 bonus), so Golf backfills majors it scored before its Aug 31 freeze.
 
-### Settings edits persist (phase 23)
+### Which majors count: the draft-to-Oscars window
+
+Tennis and Golf majors count toward the fantasy season they're played in,
+from the draft (`seasons.fy_start`) to Oscar night (`resolveFantasyYearEnd`
+in `api/_lib/fantasyYear.js`), not the calendar year. For Tennis that means
+French Open, Wimbledon, US Open, then the following January's Australian
+Open; the AO played just before a draft belongs to the previous season.
+Golf's four majors (April to July) always fall inside one window.
+`update-events.js` fetches every calendar year the window touches from
+ESPN and keeps only events dated inside it. If the active season has no
+`fy_start`/`fy_end`, it falls back to the calendar year.
+
+When the source was read successfully, two cleanups keep a season from
+carrying the previous window's results:
+
+- A major not played yet this window has its existing breakdown row reset
+  to "Not yet played", 0 pts (never inserted, and locked rows are skipped).
+- A pick with no major in the window but a bonus this cron wrote earlier
+  (its note is only "Won …" / "Runner-up …" / "Lost … SF" / "Top 10 …")
+  has that bonus cleared. Hand-written notes and locked bonuses are left
+  alone.
+
+### Settings edits persist (phase 24)
 
 Settings → Scores & Bonus edits used to stop at the browser: only locks
 and paywalls reached Supabase, so a manual bonus fix or breakdown-row edit
 reverted on the next live load. `src/utils/seasonEdits.js` now diffs each
 save and writes picks columns (pick/base/bonus/bonus_note, via the phase11
 commissioner policy) and detail rows (via the `replace_pick_detail_rows`
-RPC in `supabase/phase23_settings_detail_writes.sql`). Both refuse to
+RPC in `supabase/phase24_settings_detail_writes.sql`). Both refuse to
 overwrite data a cron changed after the page loaded and surface an error
-instead. **Apply phase23 in the Supabase SQL editor before deploying**, or
+instead. **Apply phase24 (formerly phase23_settings_detail_writes.sql) in the Supabase SQL editor before deploying**, or
 detail-row saves will fail with a "function not found" error (shown in
 Settings; nothing is lost).
 

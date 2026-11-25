@@ -1,4 +1,5 @@
--- Phase 23: let the commissioner's Settings edits to breakdown rows
+-- Phase 24 (originally committed as phase23_settings_detail_writes.sql; renamed
+-- because phase23 was also taken by the stock-split migration): let the commissioner's Settings edits to breakdown rows
 -- actually persist.
 --
 -- Before this, Settings → Scores & Bonus edits (base/bonus, bonus notes,

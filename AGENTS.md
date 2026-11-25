@@ -550,7 +550,7 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   writes locks, paywalls, and (via `src/utils/seasonEdits.js`) any changed
   picks columns and detail rows. Detail rows are written through the
   commissioner-checked `replace_pick_detail_rows` RPC
-  (`supabase/phase23_settings_detail_writes.sql`), never by opening table
+  (`supabase/phase24_settings_detail_writes.sql`), never by opening table
   RLS. If you add an editable field to Settings, add it to
   `diffSeasonEdits`/`DETAIL_TABLES` too, or it will silently stay local.
 - Breakdown rows for Tennis/Golf/F1 (`event_majors`) are also written by
@@ -570,7 +570,9 @@ value_moment" mini plan doesn't map directly. The closest equivalent:
   recently finished postseason.** NBA/NHL/NCAAB for 2026: base is the
   2026-27 regular season, bonus is the spring-2026 playoffs/tournament.
   The March 2027 NCAA tournament and 2027 F1 Australian GP belong to the 2027
-  season. College postseason lookups pin ESPN `season=seasonYear` for this.
+  season. Tennis/Golf majors use the same draft→Oscars window: the 2026
+  Tennis "year" is French Open 2026 → Australian Open Jan 2027 (see "Which
+  majors count" in `docs/bonus-automation.md`). College postseason lookups pin ESPN `season=seasonYear` for this.
   Don't auto-lock NBA/NHL base on regular-season end (see `AUTO_LOCK_RULES`).
   NBA/NHL base scores Oct–Feb plus March through Oscar night, the latter
   only while the ending season is still active (`extendBaseToOscarNight`).
